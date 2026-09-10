@@ -1,3 +1,7 @@
+// Shaders.metal
+// Basic pass-through shaders for AetherEngine's Metal backend.
+// AetherEngine-iOS · Clean-room.
+
 #include <metal_stdlib>
 using namespace metal;
 
