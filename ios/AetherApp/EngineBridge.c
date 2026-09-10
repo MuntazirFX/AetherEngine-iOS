@@ -1,5 +1,6 @@
 // EngineBridge.c
 // Implementation of the bridge between Swift and AetherEngine.
+// Xash3D-style: basedir = Documents, game folders inside it.
 // AetherEngine-iOS · Clean-room.
 
 #include "EngineBridge.h"
@@ -14,6 +15,7 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 /* ---------- Global state ---------- */
 static aether_engine_t       *g_engine       = NULL;
@@ -23,6 +25,7 @@ static aether_settings_t     *g_settings     = NULL;
 static aether_fs_t           *g_fs           = NULL;
 static aether_audio_t        *g_audio        = NULL;
 static aether_renderer_t     *g_renderer     = NULL;
+static char                   g_base_path[512] = {0};
 
 /* ---------- Metal backend (implemented in MetalCallbacks.swift) ---------- */
 extern int32_t aether_metal_init_swift    (void *user, uint32_t w, uint32_t h);
@@ -30,7 +33,6 @@ extern int32_t aether_metal_resize_swift  (void *user, uint32_t w, uint32_t h);
 extern int32_t aether_metal_submit_swift  (void *user, const void *cmd);
 extern int32_t aether_metal_shutdown_swift(void *user);
 
-/* Prototypes live in AetherRender.h, so these definitions are safe. */
 aether_result_t aether_metal_init    (void *user, u32 w, u32 h) {
     return (aether_result_t)aether_metal_init_swift(user, (uint32_t)w, (uint32_t)h);
 }
@@ -67,16 +69,16 @@ void engine_init(const char *base_path, const char *asset_path) {
         return;
     }
 
+    /* Save base path for later use. */
+    aether_str_copy(g_base_path, sizeof g_base_path, base_path);
+    aether_log(AETHER_LOG_INFO, "bridge", "base_path = %s", g_base_path);
+
     /* 1. Settings */
     g_settings = aether_settings_create();
     aether_settings_register_engine_defaults(g_settings);
 
-    /* 2. Virtual filesystem — root is the writable Documents directory.
-          PAK files will be auto-mounted when a game is launched. */
+    /* 2. VFS — created empty; roots added per-game. */
     g_fs = aether_fs_create(base_path);
-    if (g_fs) {
-        (void)aether_fs_auto_mount_paks(g_fs);
-    }
 
     /* 3. Input */
     g_input = aether_input_create();
@@ -85,7 +87,7 @@ void engine_init(const char *base_path, const char *asset_path) {
     g_audio = aether_audio_create();
     aether_audio_init(g_audio);
 
-    /* 5. Renderer (Metal backend installed later from Swift) */
+    /* 5. Renderer */
     g_renderer = aether_renderer_create(AETHER_RENDER_METAL, NULL);
 
     /* 6. Engine */
@@ -95,23 +97,18 @@ void engine_init(const char *base_path, const char *asset_path) {
         .flags      = 0
     };
     g_engine = aether_engine_create(&desc);
-    if (!g_engine) {
-        aether_log(AETHER_LOG_ERROR, "bridge", "engine_create failed");
-        return;
-    }
+    if (!g_engine) { aether_log(AETHER_LOG_ERROR, "bridge", "engine_create failed"); return; }
 
     aether_result_t r = aether_engine_start(g_engine);
     if (r != AETHER_OK) {
-        aether_log(AETHER_LOG_ERROR, "bridge", "engine_start failed: %s",
-                   aether_result_string(r));
+        aether_log(AETHER_LOG_ERROR, "bridge", "engine_start failed: %s", aether_result_string(r));
         return;
     }
 
-    /* 7. Game manager */
+    /* 7. Game manager — this also auto-creates all game folders. */
     g_game_manager = aether_game_manager_create(g_engine, base_path);
 
-    aether_log(AETHER_LOG_INFO, "bridge", "engine fully initialized (%s)",
-               AETHER_VERSION_STRING);
+    aether_log(AETHER_LOG_INFO, "bridge", "engine fully initialized (%s)", AETHER_VERSION_STRING);
 }
 
 void engine_shutdown(void) {
@@ -127,7 +124,7 @@ void engine_shutdown(void) {
 
 /* ---------- Game lifecycle ---------- */
 void engine_launch_game(const char *game_dir) {
-    if (!g_game_manager || !game_dir) return;
+    if (!g_game_manager || !g_fs || !game_dir) return;
 
     const aether_game_info_t *info = aether_game_info_by_dir(game_dir);
     if (!info) {
@@ -138,21 +135,29 @@ void engine_launch_game(const char *game_dir) {
     if (aether_game_select(g_game_manager, info->id) != AETHER_OK) return;
     if (aether_game_initialize(g_game_manager)      != AETHER_OK) return;
 
-    /* Recreate the VFS rooted at this game's data directory, then
-       auto-mount pak0.pak, pak1.pak, ... from there. */
-    if (g_fs) {
-        aether_fs_destroy(g_fs);
-        g_fs = NULL;
+    /* ---- Xash3D-style VFS setup ---- */
+    aether_fs_clear_roots(g_fs);
+
+    /* Always mount `valve` first (base game — required by all mods). */
+    char valve_dir[600];
+    snprintf(valve_dir, sizeof valve_dir, "%s/valve", g_base_path);
+    if (aether_fs_add_root(g_fs, valve_dir) == AETHER_OK) {
+        (void)aether_fs_auto_mount_paks(g_fs, valve_dir);
     }
-    char game_dir_full[600];
-    if (aether_game_resolve_path(g_game_manager, info->id,
-                                 game_dir_full, sizeof game_dir_full) == AETHER_OK) {
-        g_fs = aether_fs_create(game_dir_full);
-        if (g_fs) {
-            (void)aether_fs_auto_mount_paks(g_fs);
+
+    /* If launching an expansion/mod (not valve), mount its folder on top.
+     * Its files win because roots are searched in reverse order. */
+    if (!aether_str_eq(info->dir_name, "valve")) {
+        char game_dir_full[600];
+        if (aether_game_resolve_path(g_game_manager, info->id,
+                                     game_dir_full, sizeof game_dir_full) == AETHER_OK) {
+            if (aether_fs_add_root(g_fs, game_dir_full) == AETHER_OK) {
+                (void)aether_fs_auto_mount_paks(g_fs, game_dir_full);
+            }
         }
     }
 
+    aether_log(AETHER_LOG_INFO, "bridge", "VFS ready: %u roots", aether_fs_root_count(g_fs));
     aether_game_launch(g_game_manager);
 }
 
@@ -162,62 +167,25 @@ void engine_stop_game(void) {
 }
 
 /* ---------- Input ---------- */
-void engine_input_set_move(float x, float y) {
-    if (g_input) aether_input_set_move(g_input, x, y);
-}
-
-void engine_input_add_look(float dx, float dy) {
-    if (g_input) aether_input_add_look(g_input, dx, dy);
-}
-
-void engine_input_set_action(const char *action_name, bool pressed) {
-    if (!g_input || !action_name) return;
-    aether_input_action_t a = map_action_name(action_name);
-    if (a != AETHER_ACTION_NONE) {
-        aether_input_set_action(g_input, a, pressed);
-    }
+void engine_input_set_move(float x, float y) { if (g_input) aether_input_set_move(g_input, x, y); }
+void engine_input_add_look(float dx, float dy) { if (g_input) aether_input_add_look(g_input, dx, dy); }
+void engine_input_set_action(const char *name, bool pressed) {
+    if (!g_input || !name) return;
+    aether_input_action_t a = map_action_name(name);
+    if (a != AETHER_ACTION_NONE) aether_input_set_action(g_input, a, pressed);
 }
 
 /* ---------- Settings ---------- */
-void engine_settings_save(const char *filepath) {
-    if (g_settings && filepath) {
-        (void)aether_settings_save(g_settings, filepath);
-    }
-}
-
-void engine_settings_load(const char *filepath) {
-    if (g_settings && filepath) {
-        (void)aether_settings_load(g_settings, filepath);
-    }
-}
+void engine_settings_save(const char *filepath) { if (g_settings && filepath) (void)aether_settings_save(g_settings, filepath); }
+void engine_settings_load(const char *filepath) { if (g_settings && filepath) (void)aether_settings_load(g_settings, filepath); }
 
 /* ---------- Audio ---------- */
-void engine_audio_init(void) {
-    if (!g_audio) g_audio = aether_audio_create();
-    aether_audio_init(g_audio);
-}
-
-void engine_audio_shutdown(void) {
-    if (g_audio) aether_audio_shutdown(g_audio);
-}
-
-void engine_audio_set_master_volume(float vol) {
-    if (g_audio) aether_audio_set_master_volume(g_audio, vol);
-}
-
-void engine_audio_set_mute(bool muted) {
-    if (g_audio) aether_audio_set_mute(g_audio, muted);
-}
-
-void engine_audio_play(const char *asset_path, float volume, bool loop) {
-    if (g_audio && asset_path) {
-        (void)aether_audio_play_effect(g_audio, asset_path, volume, loop);
-    }
-}
-
-void engine_audio_stop_all(void) {
-    if (g_audio) aether_audio_stop_all(g_audio);
-}
+void engine_audio_init(void)              { if (!g_audio) g_audio = aether_audio_create(); aether_audio_init(g_audio); }
+void engine_audio_shutdown(void)          { if (g_audio) aether_audio_shutdown(g_audio); }
+void engine_audio_set_master_volume(float v){ if (g_audio) aether_audio_set_master_volume(g_audio, v); }
+void engine_audio_set_mute(bool m)        { if (g_audio) aether_audio_set_mute(g_audio, m); }
+void engine_audio_play(const char *p, float v, bool l) { if (g_audio && p) (void)aether_audio_play_effect(g_audio, p, v, l); }
+void engine_audio_stop_all(void)          { if (g_audio) aether_audio_stop_all(g_audio); }
 
 /* ---------- Renderer ---------- */
 void engine_renderer_attach_metal(void *mtkView) {
@@ -225,22 +193,9 @@ void engine_renderer_attach_metal(void *mtkView) {
     (void)aether_renderer_install_metal(g_renderer, mtkView);
     (void)aether_renderer_init(g_renderer, 1080, 1920);
 }
-
-void engine_renderer_resize(unsigned int width, unsigned int height) {
-    if (g_renderer) (void)aether_renderer_resize(g_renderer, width, height);
-}
-
-void engine_renderer_begin_frame(void) {
-    if (g_renderer) {
-        (void)aether_renderer_begin_frame(g_renderer, 0.05f, 0.05f, 0.08f, 1.0f);
-    }
-}
-
-void engine_renderer_end_frame(void) {
-    if (g_renderer) (void)aether_renderer_end_frame(g_renderer);
-}
+void engine_renderer_resize(unsigned int w, unsigned int h) { if (g_renderer) (void)aether_renderer_resize(g_renderer, w, h); }
+void engine_renderer_begin_frame(void) { if (g_renderer) (void)aether_renderer_begin_frame(g_renderer, 0.05f, 0.05f, 0.08f, 1.0f); }
+void engine_renderer_end_frame(void)   { if (g_renderer) (void)aether_renderer_end_frame(g_renderer); }
 
 /* ---------- Utility ---------- */
-const char *engine_version(void) {
-    return AETHER_VERSION_STRING;
-}
+const char *engine_version(void) { return AETHER_VERSION_STRING; }
