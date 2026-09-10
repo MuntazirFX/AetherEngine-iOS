@@ -9,7 +9,6 @@ options:
     iOS: "14.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
-  # Force Xcode 15 compatibility
   xcodeVersion: "15.4"
   objectVersion: 56
 
@@ -20,6 +19,8 @@ settings:
     CLANG_ENABLE_MODULES: YES
     CLANG_ENABLE_OBJC_ARC: YES
     GCC_C_LANGUAGE_STANDARD: c11
+    # Relax strict C warnings so engine builds cleanly under Xcode.
+    OTHER_CFLAGS: "$(inherited) -Wno-sign-compare -Wno-missing-prototypes -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter -Wno-shorten-64-to-32"
     HEADER_SEARCH_PATHS:
       - "$(SRCROOT)/../engine/core"
       - "$(SRCROOT)/../engine/game"
