@@ -9,7 +9,8 @@ options:
     iOS: "14.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
-  # FIX: Force older project format so Xcode 15.4 on GitHub runners can open it
+  # Force Xcode 15 compatibility
+  xcodeVersion: "15.4"
   objectVersion: 56
 
 settings:
@@ -47,7 +48,7 @@ targets:
         INFOPLIST_FILE: configs/Info.plist
         PRODUCT_BUNDLE_IDENTIFIER: com.muntazirfx.aether.app
         PRODUCT_NAME: AetherEngine
-        TARGETED_DEVICE_FAMILY: "1,2"    # iPhone + iPad
+        TARGETED_DEVICE_FAMILY: "1,2"
         SUPPORTS_MACCATALYST: NO
         IPHONEOS_DEPLOYMENT_TARGET: "14.0"
         GENERATE_INFOPLIST_FILE: NO
