@@ -1,5 +1,4 @@
 /* AetherRender.h — Renderer abstraction layer.
- * Multiple backends possible: Metal (iOS), Null (tests/host).
  * AetherEngine-iOS · Clean-room.
  */
 #ifndef AETHER_RENDER_H
@@ -13,13 +12,11 @@ extern "C" {
 #endif
 
 typedef enum aether_render_backend {
-    AETHER_RENDER_METAL = 0,   /* iOS default */
-    AETHER_RENDER_NULL,        /* headless / tests */
+    AETHER_RENDER_METAL = 0,
+    AETHER_RENDER_NULL,
     AETHER_RENDER_COUNT
 } aether_render_backend_t;
 
-/* A renderer command is the boundary between engine and backend.
- * Backends interpret these; the engine never touches platform APIs directly. */
 typedef enum aether_render_cmd_type {
     AETHER_CMD_NONE = 0,
     AETHER_CMD_BEGIN_FRAME,
@@ -39,7 +36,6 @@ typedef struct aether_render_cmd {
     u32                      viewport_h;
 } aether_render_cmd_t;
 
-/* Backend vtable — implemented by the platform (Metal / Null). */
 typedef struct aether_render_backend_vtbl {
     const char       *name;
     aether_result_t (*init)    (void *user, u32 w, u32 h);
@@ -48,22 +44,25 @@ typedef struct aether_render_backend_vtbl {
     aether_result_t (*shutdown)(void *user);
 } aether_render_backend_vtbl_t;
 
+/* ---------- Metal backend entry points (implemented by iOS bridge) ---------- */
+aether_result_t aether_metal_init    (void *user, u32 w, u32 h);
+aether_result_t aether_metal_resize  (void *user, u32 w, u32 h);
+aether_result_t aether_metal_submit  (void *user, const aether_render_cmd_t *cmd);
+aether_result_t aether_metal_shutdown(void *user);
+
+/* ---------- Renderer instance ---------- */
 typedef struct aether_renderer aether_renderer_t;
 
 aether_renderer_t *aether_renderer_create(aether_render_backend_t backend,
                                           void *backend_user);
-
-/* Plug in a custom backend (iOS Swift Metal bridge). */
 aether_result_t aether_renderer_set_backend_vtbl(aether_renderer_t *r,
                                                  const aether_render_backend_vtbl_t *vt,
                                                  void *user);
-
 void            aether_renderer_destroy(aether_renderer_t *r);
 aether_result_t aether_renderer_init(aether_renderer_t *r, u32 w, u32 h);
 aether_result_t aether_renderer_resize(aether_renderer_t *r, u32 w, u32 h);
 aether_result_t aether_renderer_shutdown(aether_renderer_t *r);
 
-/* Engine-side frame API */
 aether_result_t aether_renderer_begin_frame(aether_renderer_t *r,
                                              f32 r_, f32 g, f32 b, f32 a);
 aether_result_t aether_renderer_set_camera(aether_renderer_t *r,
@@ -76,8 +75,6 @@ aether_result_t aether_renderer_end_frame (aether_renderer_t *r);
 u32 aether_renderer_width (const aether_renderer_t *r);
 u32 aether_renderer_height(const aether_renderer_t *r);
 
-/* Convenience: install the Metal backend vtable.
- * Called by EngineBridge.c on iOS. */
 aether_result_t aether_renderer_install_metal(aether_renderer_t *r, void *user);
 
 #ifdef __cplusplus
