@@ -1,0 +1,10 @@
+{
+    "id": "condition-zero",
+    "display_name": "Counter-Strike: Condition Zero",
+    "dir_name": "czero",
+    "short_code": "czero",
+    "game_version": "1.0.0.0",
+    "start_map": "cz_de_dust2",
+    "modules": ["czero.so"],
+    "features": ["singleplayer", "multiplayer", "custom_maps"]
+}
