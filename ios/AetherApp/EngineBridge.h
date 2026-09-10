@@ -20,21 +20,25 @@ void engine_launch_game(const char *game_dir);
 void engine_stop_game(void);
 
 /* ---------- Input: movement ---------- */
-/* x: -1.0 (left)  .. 1.0 (right)
-   y: -1.0 (back)  .. 1.0 (forward) */
 void engine_input_set_move(float x, float y);
 
-/* ---------- Input: look delta (accumulated per frame) ---------- */
+/* ---------- Input: look delta ---------- */
 void engine_input_add_look(float dx, float dy);
 
 /* ---------- Input: actions ---------- */
-/* Accepted action names: "fire", "jump", "duck", "use", "reload",
-   "weapon_next", "weapon_prev", "pause", "scoreboard" */
 void engine_input_set_action(const char *action_name, bool pressed);
 
 /* ---------- Settings ---------- */
 void engine_settings_save(const char *filepath);
 void engine_settings_load(const char *filepath);
+
+/* ---------- Audio ---------- */
+void engine_audio_init(void);
+void engine_audio_shutdown(void);
+void engine_audio_set_master_volume(float vol);
+void engine_audio_set_mute(bool muted);
+void engine_audio_play(const char *asset_path, float volume, bool loop);
+void engine_audio_stop_all(void);
 
 /* ---------- Utility ---------- */
 const char *engine_version(void);
@@ -43,11 +47,3 @@ const char *engine_version(void);
 }
 #endif
 #endif /* ENGINE_BRIDGE_H */
-
-/* ---------- Audio ---------- */
-void        engine_audio_init(void);
-void        engine_audio_shutdown(void);
-void        engine_audio_set_master_volume(float vol);
-void        engine_audio_set_mute(bool muted);
-void        engine_audio_play(const char *asset_path, float volume, bool loop);
-void        engine_audio_stop_all(void);
