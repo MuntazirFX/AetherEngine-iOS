@@ -1,3 +1,6 @@
+/* AetherEvent.c — Event bus implementation.
+ * AetherEngine-iOS · Clean-room.
+ */
 #include "AetherEvent.h"
 #include <stdlib.h>
 #include <string.h>
@@ -17,7 +20,9 @@ struct aether_event_bus {
 aether_event_bus_t *aether_event_bus_create(void) {
     aether_event_bus_t *bus = (aether_event_bus_t*)calloc(1, sizeof *bus);
     if (bus) {
-        aether_log(AETHER_LOG_INFO, "event", "event bus created (max %d handlers)", AETHER_MAX_EVENT_HANDLERS);
+        aether_log(AETHER_LOG_INFO, "event",
+                   "event bus created (max %d handlers)",
+                   AETHER_MAX_EVENT_HANDLERS);
     }
     return bus;
 }
@@ -28,27 +33,32 @@ void aether_event_bus_destroy(aether_event_bus_t *bus) {
     aether_log(AETHER_LOG_INFO, "event", "event bus destroyed");
 }
 
-i32 aether_event_subscribe(aether_event_bus_t *bus, aether_event_type_t type,
-                           aether_event_handler_fn handler, void *user) {
-    if (!bus || !handler || type >= AETHER_EVENT_COUNT) return -1;
+i32 aether_event_subscribe(aether_event_bus_t *bus,
+                           aether_event_type_t type,
+                           aether_event_handler_fn handler,
+                           void *user) {
+    if (!bus || !handler) return -1;
+    if ((int)type < 0 || (int)type >= (int)AETHER_EVENT_COUNT) return -1;
 
-    /* Find a free slot */
-    for (u32 i = 0; i < AETHER_MAX_EVENT_HANDLERS; ++i) {
+    /* Find a free slot. */
+    for (u32 i = 0; i < (u32)AETHER_MAX_EVENT_HANDLERS; ++i) {
         if (!bus->subs[i].active) {
             bus->subs[i].type    = type;
             bus->subs[i].handler = handler;
             bus->subs[i].user    = user;
             bus->subs[i].active  = true;
-            if (i >= bus->count) bus->count = i + 1;
+            if (i >= bus->count) bus->count = i + 1u;
             return (i32)i;
         }
     }
-    aether_log(AETHER_LOG_WARN, "event", "subscription failed: max handlers reached");
+    aether_log(AETHER_LOG_WARN, "event",
+               "subscription failed: max handlers reached");
     return -1;
 }
 
 void aether_event_unsubscribe(aether_event_bus_t *bus, i32 handle) {
-    if (!bus || handle < 0 || handle >= (i32)AETHER_MAX_EVENT_HANDLERS) return;
+    if (!bus || handle < 0) return;
+    if (handle >= (i32)AETHER_MAX_EVENT_HANDLERS) return;
     bus->subs[handle].active = false;
 }
 
