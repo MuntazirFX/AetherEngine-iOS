@@ -1,6 +1,5 @@
 // MetalRenderer.swift
 // iOS Metal backend for AetherEngine.
-// Receives commands from the C renderer abstraction and translates them into Metal API calls.
 // AetherEngine-iOS · Clean-room.
 
 import MetalKit
@@ -23,8 +22,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         mtkView.delegate = self
         buildPipeline(mtkView: mtkView)
 
-        // Tell the C engine which Metal state to use
-        engine_renderer_attach_metal(mtkView)
+        // FIX: Convert MTKView (Swift class) to raw pointer for the C bridge.
+        let opaque = Unmanaged.passUnretained(mtkView).toOpaque()
+        engine_renderer_attach_metal(opaque)
     }
 
     private func buildPipeline(mtkView: MTKView) {
@@ -54,7 +54,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         rpd.colorAttachments[0].clearColor = clearColor
         rpd.colorAttachments[0].loadAction = .clear
 
-        // Begin frame in C engine
         engine_renderer_begin_frame()
 
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else {
@@ -64,7 +63,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         if let ps = pipelineState { enc.setRenderPipelineState(ps) }
         enc.endEncoding()
 
-        // End frame in C engine
         engine_renderer_end_frame()
 
         cmd.present(drawable)
