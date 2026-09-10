@@ -1,0 +1,10 @@
+{
+    "id": "counter-strike-1.6",
+    "display_name": "Counter-Strike 1.6",
+    "dir_name": "cstrike",
+    "short_code": "cs16",
+    "game_version": "1.1.2.0",
+    "start_map": "de_dust2",
+    "modules": ["cs16.so"],
+    "features": ["multiplayer", "custom_maps"]
+}
