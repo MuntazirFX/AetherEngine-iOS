@@ -1,7 +1,3 @@
-# build-arm64.yml
-# Builds AetherEngine-iOS for ARM64 on macOS runner and produces an unsigned IPA.
-# AetherEngine-iOS · Clean-room.
-
 name: Build ARM64 IPA
 
 on:
@@ -10,15 +6,6 @@ on:
   pull_request:
     branches: [ main ]
   workflow_dispatch:
-    inputs:
-      configuration:
-        description: "Build configuration"
-        required: true
-        default: "Release"
-        type: choice
-        options:
-          - Release
-          - Debug
 
 env:
   XCODE_VERSION: "15.4"
@@ -29,22 +16,15 @@ jobs:
   build-arm64:
     name: Build ARM64 iOS IPA
     runs-on: macos-14
-
     timeout-minutes: 45
 
     steps:
-      # ---------------------------------------------------------------
-      # 1. Checkout
-      # ---------------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
           submodules: false
 
-      # ---------------------------------------------------------------
-      # 2. Toolchain versions
-      # ---------------------------------------------------------------
       - name: Show toolchain versions
         run: |
           echo "=== Xcode ==="
@@ -52,14 +32,9 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-path
           echo "=== Swift ==="
           swift --version
-          echo "=== CMake ==="
-          cmake --version || echo "cmake not pre-installed"
           echo "=== Host arch ==="
           uname -m
 
-      # ---------------------------------------------------------------
-      # 3. Install dependencies (CMake, XcodeGen)
-      # ---------------------------------------------------------------
       - name: Install CMake
         run: |
           if ! command -v cmake >/dev/null 2>&1; then
@@ -73,17 +48,11 @@ jobs:
           fi
           xcodegen --version
 
-      # ---------------------------------------------------------------
-      # 4. Make scripts executable
-      # ---------------------------------------------------------------
       - name: Make build scripts executable
         run: |
           chmod +x build/scripts/build_ios.sh
           chmod +x build/scripts/package_ipa.sh
 
-      # ---------------------------------------------------------------
-      # 5. Quick C compile sanity check (before heavy build)
-      # ---------------------------------------------------------------
       - name: Sanity compile engine (host)
         run: |
           set -euo pipefail
@@ -95,7 +64,7 @@ jobs:
             "$GITHUB_WORKSPACE/engine/core/AetherMath.c" \
             "$GITHUB_WORKSPACE/engine/core/AetherArray.c" \
             "$GITHUB_WORKSPACE/engine/core/AetherEvent.c" \
-            "$GITHUB_WORKSPACE/engine/game/AetherGameManager.c" \
+            "$GITHUB_WORKSPACE/engine/core/AetherGameManager.c" \
             "$GITHUB_WORKSPACE/engine/game/AetherManifest.c" \
             "$GITHUB_WORKSPACE/engine/input/AetherInput.c" \
             "$GITHUB_WORKSPACE/engine/input/AetherTouch.c" \
@@ -106,27 +75,24 @@ jobs:
             "$GITHUB_WORKSPACE/engine/render/AetherRender.c" \
           ; do
             echo "→ cc -c $f"
-            cc -std=c11 -Wall -Wextra -Wno-unused-parameter -Iengine/core -Iengine/game -Iengine/input -Iengine/config -Iengine/fs -Iengine/audio -Iengine/render -c "$f" -o "$(basename "$f" .c).o"
+            cc -std=c11 -Wall -Wextra -Wno-unused-parameter \
+              -I"$GITHUB_WORKSPACE/engine/core" \
+              -I"$GITHUB_WORKSPACE/engine/game" \
+              -I"$GITHUB_WORKSPACE/engine/input" \
+              -I"$GITHUB_WORKSPACE/engine/config" \
+              -I"$GITHUB_WORKSPACE/engine/fs" \
+              -I"$GITHUB_WORKSPACE/engine/audio" \
+              -I"$GITHUB_WORKSPACE/engine/render" \
+              -c "$f" -o "$(basename "$f" .c).o"
           done
           echo "✔ Sanity compile passed"
 
-      # ---------------------------------------------------------------
-      # 6. Run build script (CMake + XcodeGen + xcodebuild)
-      # ---------------------------------------------------------------
       - name: Build iOS app (unsigned)
-        run: |
-          bash build/scripts/build_ios.sh
+        run: bash build/scripts/build_ios.sh
 
-      # ---------------------------------------------------------------
-      # 7. Package unsigned IPA
-      # ---------------------------------------------------------------
       - name: Package unsigned IPA
-        run: |
-          bash build/scripts/package_ipa.sh
+        run: bash build/scripts/package_ipa.sh
 
-      # ---------------------------------------------------------------
-      # 8. Verify IPA exists and dump its contents
-      # ---------------------------------------------------------------
       - name: Verify IPA
         run: |
           set -euo pipefail
@@ -137,9 +103,6 @@ jobs:
           echo "Contents:"
           unzip -l "$IPA_PATH" | head -n 30
 
-      # ---------------------------------------------------------------
-      # 9. Upload artifacts
-      # ---------------------------------------------------------------
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
@@ -167,9 +130,6 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-      # ---------------------------------------------------------------
-      # 10. Summary
-      # ---------------------------------------------------------------
       - name: Summary
         if: always()
         run: |
