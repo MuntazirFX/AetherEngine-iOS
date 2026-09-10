@@ -9,6 +9,7 @@
 #include "../../engine/input/AetherInput.h"
 #include "../../engine/config/AetherSettings.h"
 #include "../../engine/fs/AetherFS.h"
+#include "../../engine/audio/AetherAudio.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -19,6 +20,7 @@ static aether_game_manager_t *g_game_manager  = NULL;
 static aether_input_t        *g_input         = NULL;
 static aether_settings_t     *g_settings      = NULL;
 static aether_fs_t           *g_fs            = NULL;
+static aether_audio_t        *g_audio         = NULL;
 
 /* ---------- Helpers ---------- */
 static aether_input_action_t map_action_name(const char *name) {
@@ -54,6 +56,10 @@ void engine_init(const char *base_path, const char *asset_path) {
 
     /* 3. Input */
     g_input = aether_input_create();
+
+    /* Audio */
+    g_audio = aether_audio_create();
+    aether_audio_init(g_audio);
 
     /* 4. Engine */
     aether_engine_desc_t desc = {
