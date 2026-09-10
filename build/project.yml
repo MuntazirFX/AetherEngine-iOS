@@ -1,6 +1,5 @@
 # project.yml
 # XcodeGen configuration for the AetherEngine iOS application.
-# Run: `xcodegen generate` inside `build/` to produce AetherApp.xcodeproj
 # AetherEngine-iOS · Clean-room.
 
 name: AetherApp
