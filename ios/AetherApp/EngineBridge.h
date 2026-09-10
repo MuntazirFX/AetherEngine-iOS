@@ -1,21 +1,43 @@
 // EngineBridge.h
-// C header to expose AetherEngine functions to Swift.
+// C header exposing AetherEngine functions to Swift.
+// AetherEngine-iOS · Clean-room.
 
 #ifndef ENGINE_BRIDGE_H
 #define ENGINE_BRIDGE_H
+
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// Initialize the engine
+/* ---------- Engine lifecycle ---------- */
 void engine_init(const char *base_path, const char *asset_path);
-
-// Launch a specific game
-void engine_launch_game(const char *game_dir);
-
-// Shutdown the engine
 void engine_shutdown(void);
+
+/* ---------- Game lifecycle ---------- */
+void engine_launch_game(const char *game_dir);
+void engine_stop_game(void);
+
+/* ---------- Input: movement ---------- */
+/* x: -1.0 (left)  .. 1.0 (right)
+   y: -1.0 (back)  .. 1.0 (forward) */
+void engine_input_set_move(float x, float y);
+
+/* ---------- Input: look delta (accumulated per frame) ---------- */
+void engine_input_add_look(float dx, float dy);
+
+/* ---------- Input: actions ---------- */
+/* Accepted action names: "fire", "jump", "duck", "use", "reload",
+   "weapon_next", "weapon_prev", "pause", "scoreboard" */
+void engine_input_set_action(const char *action_name, bool pressed);
+
+/* ---------- Settings ---------- */
+void engine_settings_save(const char *filepath);
+void engine_settings_load(const char *filepath);
+
+/* ---------- Utility ---------- */
+const char *engine_version(void);
 
 #ifdef __cplusplus
 }
