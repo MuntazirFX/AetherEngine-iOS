@@ -35,7 +35,7 @@ jobs:
             engine/input/AetherTouch.c \
             engine/config/AetherSettings.c \
             engine/fs/AetherFS.c \
-            engine/fs/AetherPAK.c \
+            engine/fs/AetherPak.c \
             engine/audio/AetherAudio.c \
             engine/render/AetherRender.c \
           ; do
@@ -63,7 +63,7 @@ jobs:
             engine/input/AetherTouch.c \
             engine/config/AetherSettings.c \
             engine/fs/AetherFS.c \
-            engine/fs/AetherPAK.c \
+            engine/fs/AetherPak.c \
             engine/audio/AetherAudio.c \
             engine/render/AetherRender.c \
           ; do
