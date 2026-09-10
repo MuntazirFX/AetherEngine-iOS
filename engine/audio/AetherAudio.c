@@ -2,145 +2,179 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct aether_voice {
-    bool   active;
-    bool   is_music;
-    u32    sample_rate;
-    u32    channels;
-    u32    byte_size;
-    u8    *pcm;             /* owned copy (host stub); on iOS we hand to AVAudioEngine */
-    char   vpath[256];      /* for music */
-} aether_voice_t;
-
 struct aether_audio {
-    f32  volumes[AETHER_CHANNEL_COUNT];
-    bool muted;
-    u32  next_id;
-    aether_voice_t voices[AETHER_AUDIO_MAX_VOICES];
+    aether_audio_state_t      state;
+    f32                       volume[AETHER_AUDIO_CHANNEL_COUNT];
+    bool                      muted;
+
+    aether_audio_voice_t      voices[AETHER_MAX_AUDIO_VOICES];
+    u32                       voice_count;
+
+    aether_audio_platform_fn  platform_fn;
+    void                     *platform_user;
 };
 
+/* ---------- Lifecycle ---------- */
 aether_audio_t *aether_audio_create(void) {
     aether_audio_t *a = (aether_audio_t*)calloc(1, sizeof *a);
     if (!a) return NULL;
-    a->volumes[AETHER_CHANNEL_MASTER]  = 1.0f;
-    a->volumes[AETHER_CHANNEL_MUSIC]   = 0.7f;
-    a->volumes[AETHER_CHANNEL_EFFECTS] = 1.0f;
-    a->next_id = 1;
+
+    a->state = AETHER_AUDIO_STATE_UNINIT;
+    a->muted = false;
+    for (int i = 0; i < AETHER_AUDIO_CHANNEL_COUNT; ++i) a->volume[i] = 1.0f;
+    a->volume[AETHER_AUDIO_CHANNEL_MUSIC] = 0.7f;
+
     aether_log(AETHER_LOG_INFO, "audio", "audio system created");
     return a;
 }
 
 void aether_audio_destroy(aether_audio_t *a) {
     if (!a) return;
-    aether_audio_stop_all(a);
     free(a);
+    aether_log(AETHER_LOG_INFO, "audio", "audio system destroyed");
 }
 
-void aether_audio_set_volume(aether_audio_t *a, aether_audio_channel_t ch, f32 v) {
-    if (!a || ch < 0 || ch >= AETHER_CHANNEL_COUNT) return;
-    if (v < 0) v = 0; if (v > 1) v = 1;
-    a->volumes[ch] = v;
-    aether_log(AETHER_LOG_DEBUG, "audio", "volume[%d] = %.2f", (int)ch, v);
+aether_result_t aether_audio_init(aether_audio_t *a) {
+    if (!a) return AETHER_ERR_INVALID_ARG;
+    a->state = AETHER_AUDIO_STATE_READY;
+    aether_log(AETHER_LOG_INFO, "audio", "audio initialized (ready)");
+    return AETHER_OK;
 }
 
-f32 aether_audio_get_volume(const aether_audio_t *a, aether_audio_channel_t ch) {
-    if (!a || ch < 0 || ch >= AETHER_CHANNEL_COUNT) return 0.0f;
-    return a->volumes[ch];
+aether_result_t aether_audio_shutdown(aether_audio_t *a) {
+    if (!a) return AETHER_ERR_INVALID_ARG;
+    aether_audio_stop_all(a);
+    a->state = AETHER_AUDIO_STATE_UNINIT;
+    aether_log(AETHER_LOG_INFO, "audio", "audio shutdown");
+    return AETHER_OK;
 }
 
-void aether_audio_set_master_mute(aether_audio_t *a, bool mute) {
+/* ---------- Volume ---------- */
+static f32 clamp01(f32 v) {
+    if (v < 0.0f) return 0.0f;
+    if (v > 1.0f) return 1.0f;
+    return v;
+}
+
+void aether_audio_set_master_volume(aether_audio_t *a, f32 vol) {
     if (!a) return;
-    a->muted = mute;
-    aether_log(AETHER_LOG_INFO, "audio", "master mute = %s", mute ? "on" : "off");
+    a->volume[AETHER_AUDIO_CHANNEL_MASTER] = clamp01(vol);
+    aether_log(AETHER_LOG_DEBUG, "audio", "master volume = %.2f", a->volume[AETHER_AUDIO_CHANNEL_MASTER]);
 }
 
-static aether_voice_t *find_free_voice(aether_audio_t *a) {
-    for (u32 i = 0; i < AETHER_AUDIO_MAX_VOICES; ++i) {
-        if (!a->voices[i].active) return &a->voices[i];
+void aether_audio_set_channel_volume(aether_audio_t *a, aether_audio_channel_t ch, f32 vol) {
+    if (!a || ch < 0 || ch >= AETHER_AUDIO_CHANNEL_COUNT) return;
+    a->volume[ch] = clamp01(vol);
+}
+
+f32 aether_audio_get_master_volume(const aether_audio_t *a) {
+    return a ? a->volume[AETHER_AUDIO_CHANNEL_MASTER] : 0.0f;
+}
+
+f32 aether_audio_get_channel_volume(const aether_audio_t *a, aether_audio_channel_t ch) {
+    if (!a || ch < 0 || ch >= AETHER_AUDIO_CHANNEL_COUNT) return 0.0f;
+    return a->volume[ch];
+}
+
+void aether_audio_set_mute(aether_audio_t *a, bool muted) {
+    if (a) a->muted = muted;
+}
+
+bool aether_audio_is_muted(const aether_audio_t *a) {
+    return a ? a->muted : true;
+}
+
+/* ---------- Voice management ---------- */
+static void dispatch_voice(aether_audio_t *a, const aether_audio_voice_t *v, const char *cmd) {
+    if (a->platform_fn) {
+        a->platform_fn(v, cmd, a->platform_user);
     }
-    return NULL;
 }
 
-aether_audio_handle_t aether_audio_play_sfx(aether_audio_t *a,
-                                            const u8 *pcm16, u32 byte_size,
-                                            u32 sample_rate, u32 channels) {
-    aether_audio_handle_t h = {0};
-    if (!a || !pcm16 || byte_size == 0) return h;
-
-    aether_voice_t *v = find_free_voice(a);
-    if (!v) {
-        aether_log(AETHER_LOG_WARN, "audio", "no free voice for SFX");
-        return h;
+i32 aether_audio_play_effect(aether_audio_t *a, const char *asset_path,
+                             f32 volume, bool loop) {
+    if (!a || !asset_path) return -1;
+    if (a->voice_count >= AETHER_MAX_AUDIO_VOICES) {
+        aether_log(AETHER_LOG_WARN, "audio", "voice limit reached");
+        return -1;
     }
-    v->active      = true;
-    v->is_music    = false;
-    v->sample_rate = sample_rate;
-    v->channels    = channels;
-    v->byte_size   = byte_size;
-    v->pcm         = (u8*)malloc(byte_size);
-    if (!v->pcm) { v->active = false; return h; }
-    memcpy(v->pcm, pcm16, byte_size);
-    h.id = a->next_id++;
-    return h;
+
+    aether_audio_voice_t *v = &a->voices[a->voice_count];
+    v->id      = a->voice_count;
+    aether_str_copy(v->asset, sizeof v->asset, asset_path);
+    v->channel = AETHER_AUDIO_CHANNEL_EFFECTS;
+    v->volume  = clamp01(volume);
+    v->loop    = loop;
+    v->playing = true;
+
+    a->voice_count++;
+
+    /* Notify platform to start playback. */
+    dispatch_voice(a, v, "play");
+
+    aether_log(AETHER_LOG_DEBUG, "audio", "play voice %d: %s (vol=%.2f, loop=%d)",
+               (int)v->id, v->asset, v->volume, v->loop ? 1 : 0);
+    return (i32)v->id;
 }
 
-aether_audio_handle_t aether_audio_play_music(aether_audio_t *a, const char *vpath) {
-    aether_audio_handle_t h = {0};
-    if (!a || !vpath) return h;
+aether_result_t aether_audio_stop_voice(aether_audio_t *a, i32 voice_id) {
+    if (!a || voice_id < 0 || voice_id >= (i32)a->voice_count) return AETHER_ERR_INVALID_ARG;
+    aether_audio_voice_t *v = &a->voices[voice_id];
+    if (!v->playing) return AETHER_ERR_NOT_READY;
 
-    /* Stop existing music. */
-    for (u32 i = 0; i < AETHER_AUDIO_MAX_VOICES; ++i) {
-        if (a->voices[i].active && a->voices[i].is_music) {
-            free(a->voices[i].pcm); a->voices[i].pcm = NULL;
-            a->voices[i].active = false;
+    v->playing = false;
+    dispatch_voice(a, v, "stop");
+    return AETHER_OK;
+}
+
+void aether_audio_stop_channel(aether_audio_t *a, aether_audio_channel_t ch) {
+    if (!a || ch < 0 || ch >= AETHER_AUDIO_CHANNEL_COUNT) return;
+    for (u32 i = 0; i < a->voice_count; ++i) {
+        if (a->voices[i].playing && a->voices[i].channel == ch) {
+            a->voices[i].playing = false;
+            dispatch_voice(a, &a->voices[i], "stop");
         }
-    }
-
-    aether_voice_t *v = find_free_voice(a);
-    if (!v) return h;
-    v->active   = true;
-    v->is_music = true;
-    aether_str_copy(v->vpath, sizeof v->vpath, vpath);
-    h.id = a->next_id++;
-    aether_log(AETHER_LOG_INFO, "audio", "music queued: %s", vpath);
-    return h;
-}
-
-void aether_audio_stop_music(aether_audio_t *a) {
-    if (!a) return;
-    for (u32 i = 0; i < AETHER_AUDIO_MAX_VOICES; ++i) {
-        if (a->voices[i].active && a->voices[i].is_music) {
-            free(a->voices[i].pcm); a->voices[i].pcm = NULL;
-            a->voices[i].active = false;
-        }
-    }
-}
-
-void aether_audio_stop(aether_audio_t *a, aether_audio_handle_t h) {
-    if (!a || h.id == 0) return;
-    /* Handle id is opaque; we clear first voice with matching tag.
-       For simplicity, use id modulo 32 as slot. */
-    u32 slot = (h.id - 1) % AETHER_AUDIO_MAX_VOICES;
-    aether_voice_t *v = &a->voices[slot];
-    if (v->active) {
-        free(v->pcm); v->pcm = NULL;
-        v->active = false;
     }
 }
 
 void aether_audio_stop_all(aether_audio_t *a) {
     if (!a) return;
-    for (u32 i = 0; i < AETHER_AUDIO_MAX_VOICES; ++i) {
-        if (a->voices[i].active) {
-            free(a->voices[i].pcm);
-            a->voices[i].pcm = NULL;
-            a->voices[i].active = false;
+    for (u32 i = 0; i < a->voice_count; ++i) {
+        if (a->voices[i].playing) {
+            a->voices[i].playing = false;
+            dispatch_voice(a, &a->voices[i], "stop");
         }
     }
+    a->voice_count = 0;
 }
 
-void aether_audio_tick(aether_audio_t *a, f32 dt) {
+u32 aether_audio_voice_count(const aether_audio_t *a) {
+    return a ? a->voice_count : 0;
+}
+
+const aether_audio_voice_t *aether_audio_voice_at(const aether_audio_t *a, u32 idx) {
+    if (!a || idx >= a->voice_count) return NULL;
+    return &a->voices[idx];
+}
+
+void aether_audio_set_platform_callback(aether_audio_t *a,
+                                        aether_audio_platform_fn fn,
+                                        void *user) {
     if (!a) return;
-    (void)dt;
-    /* Future: fade-outs, music transitions, DSP. */
+    a->platform_fn   = fn;
+    a->platform_user = user;
+}
+
+void aether_audio_flush(aether_audio_t *a) {
+    if (!a) return;
+    /* Compact dead voices from the front. */
+    u32 write = 0;
+    for (u32 i = 0; i < a->voice_count; ++i) {
+        if (a->voices[i].playing) {
+            if (write != i) a->voices[write] = a->voices[i];
+            a->voices[write].id = write;
+            write++;
+        }
+    }
+    a->voice_count = write;
 }
