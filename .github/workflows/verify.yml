@@ -1,0 +1,146 @@
+# verify.yml
+# Quick verification — compiles every C file for Linux/macOS host
+# so structural problems are caught on every push (fast, no Xcode needed).
+# AetherEngine-iOS · Clean-room.
+
+name: Verify C Sources
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  compile-c-sources:
+    name: Compile all C sources (host)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify repo structure
+        run: |
+          echo "=== Repo tree ==="
+          find . -type f \( -name '*.c' -o -name '*.h' -o -name '*.swift' -o -name '*.metal' \) | sort
+          echo ""
+          echo "=== Expected C files ==="
+          for f in \
+            engine/core/AetherCore.c \
+            engine/core/AetherEngine.c \
+            engine/core/AetherMath.c \
+            engine/core/AetherArray.c \
+            engine/core/AetherEvent.c \
+            engine/game/AetherGameManager.c \
+            engine/game/AetherManifest.c \
+            engine/input/AetherInput.c \
+            engine/input/AetherTouch.c \
+            engine/config/AetherSettings.c \
+            engine/fs/AetherFS.c \
+            engine/fs/AetherPAK.c \
+            engine/audio/AetherAudio.c \
+            engine/render/AetherRender.c \
+          ; do
+            if [ ! -f "$f" ]; then
+              echo "MISSING: $f"
+              exit 1
+            fi
+            echo "OK: $f"
+          done
+
+      - name: Compile every C file (strict)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/obj
+          FAIL=0
+          for f in \
+            engine/core/AetherCore.c \
+            engine/core/AetherEngine.c \
+            engine/core/AetherMath.c \
+            engine/core/AetherArray.c \
+            engine/core/AetherEvent.c \
+            engine/game/AetherGameManager.c \
+            engine/game/AetherManifest.c \
+            engine/input/AetherInput.c \
+            engine/input/AetherTouch.c \
+            engine/config/AetherSettings.c \
+            engine/fs/AetherFS.c \
+            engine/fs/AetherPAK.c \
+            engine/audio/AetherAudio.c \
+            engine/render/AetherRender.c \
+          ; do
+            echo "→ cc -c $f"
+            cc -std=c11 -Wall -Wextra -Wno-unused-parameter \
+              -Iengine/core -Iengine/game -Iengine/input -Iengine/config \
+              -Iengine/fs -Iengine/audio -Iengine/render \
+              -c "$f" -o "/tmp/obj/$(basename "$f" .c).o" || FAIL=1
+          done
+          if [ "$FAIL" -ne 0 ]; then
+            echo "❌ Compile errors detected"
+            exit 1
+          fi
+          echo "✅ All C sources compile cleanly"
+
+      - name: Link a minimal smoke binary
+        run: |
+          cat > /tmp/smoke.c <<'EOF'
+          #include "AetherEngine.h"
+          #include "AetherGameManager.h"
+          #include <stdio.h>
+          int main(void) {
+              aether_engine_desc_t d = { .base_path="/tmp", .asset_path="/tmp", .flags=0 };
+              aether_engine_t *e = aether_engine_create(&d);
+              if (!e) return 1;
+              aether_engine_start(e);
+              aether_game_manager_t *m = aether_game_manager_create(e, "/tmp");
+              for (unsigned i = 0; i < aether_game_count(); ++i) {
+                  const aether_game_info_t *g = aether_game_at(i);
+                  printf("  game[%u]: %s (%s)\n", i, g->display_name, g->dir_name);
+              }
+              aether_game_manager_destroy(m);
+              aether_engine_stop(e);
+              aether_engine_destroy(e);
+              return 0;
+          }
+          EOF
+          cc -std=c11 -Iengine/core -Iengine/game \
+             /tmp/smoke.c \
+             /tmp/obj/AetherCore.o /tmp/obj/AetherEngine.o \
+             /tmp/obj/AetherGameManager.o /tmp/obj/AetherMath.o \
+             /tmp/obj/AetherEvent.o /tmp/obj/AetherArray.o \
+             /tmp/obj/AetherManifest.o \
+             -o /tmp/smoke -lm
+          echo "Running smoke test:"
+          /tmp/smoke
+
+      - name: Verify manifests present
+        run: |
+          for m in valve bshift gearbox cstrike czero; do
+            if [ ! -f "engine/game/manifests/$m.json" ]; then
+              echo "MISSING manifest: engine/game/manifests/$m.json"
+              exit 1
+            fi
+            echo "OK manifest: $m.json"
+          done
+
+      - name: Verify Swift sources present
+        run: |
+          for s in \
+            AetherApp.swift \
+            DashboardView.swift \
+            SettingsView.swift \
+            TouchControlsView.swift \
+            EngineBridge.swift \
+            AetherAudioiOS.swift \
+            MetalRenderer.swift \
+            MetalCallbacks.swift \
+          ; do
+            if [ ! -f "ios/AetherApp/$s" ]; then
+              echo "MISSING: ios/AetherApp/$s"
+            else
+              echo "OK: $s"
+            fi
+          done
