@@ -10,9 +10,7 @@ final class AetherAudioiOS {
 
     private let engine = AVAudioEngine()
     private var players: [Int: AVAudioPlayerNode] = [:]
-    private var musicPlayer: AVAudioPlayerNode?
     private var masterMixer: AVAudioMixerNode { engine.mainMixerNode }
-
     private var initialized = false
 
     private init() {}
@@ -23,7 +21,6 @@ final class AetherAudioiOS {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)
-
             try engine.start()
             initialized = true
             print("[AetherAudioiOS] Engine started")
@@ -36,7 +33,6 @@ final class AetherAudioiOS {
         guard initialized else { return }
         engine.stop()
         players.removeAll()
-        musicPlayer = nil
         initialized = false
         print("[AetherAudioiOS] Engine stopped")
     }
@@ -49,7 +45,6 @@ final class AetherAudioiOS {
         masterMixer.outputVolume = muted ? 0 : 1
     }
 
-    /// Called from C bridge when a voice starts.
     func playVoice(id: Int, asset: String, volume: Float, loop: Bool) {
         guard initialized else { return }
         guard let url = resolve(asset) else {
@@ -63,15 +58,9 @@ final class AetherAudioiOS {
             engine.connect(node, to: masterMixer, format: file.processingFormat)
             node.volume = max(0, min(1, volume))
 
-            if loop {
-                node.scheduleFile(file, at: nil, completionHandler: nil)
-                // simple loop by re-scheduling after file end
-                // (full looping handled by separate music path below)
-            } else {
-                node.scheduleFile(file, at: nil) { [weak self] in
-                    DispatchQueue.main.async {
-                        self?.stopVoice(id: id)
-                    }
+            node.scheduleFile(file, at: nil) { [weak self] in
+                DispatchQueue.main.async {
+                    if !loop { self?.stopVoice(id: id) }
                 }
             }
             node.play()
@@ -95,21 +84,12 @@ final class AetherAudioiOS {
             engine.detach(node)
         }
         players.removeAll()
-        if let m = musicPlayer {
-            m.stop()
-            engine.detach(m)
-            musicPlayer = nil
-        }
     }
 
-    // MARK: - Asset resolution
     private func resolve(_ virtualPath: String) -> URL? {
-        // Try Documents first, then bundle
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let docURL = docs.appendingPathComponent(virtualPath)
         if FileManager.default.fileExists(atPath: docURL.path) { return docURL }
-
-        let bundleURL = Bundle.main.url(forResource: virtualPath, withExtension: nil)
-        return bundleURL
+        return Bundle.main.url(forResource: virtualPath, withExtension: nil)
     }
 }
