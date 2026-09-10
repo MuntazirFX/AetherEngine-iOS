@@ -14,13 +14,13 @@
 #include <string.h>
 #include <stdlib.h>
 
-/* ---------- Global state (owned by the bridge) ---------- */
-static aether_engine_t       *g_engine        = NULL;
-static aether_game_manager_t *g_game_manager  = NULL;
-static aether_input_t        *g_input         = NULL;
-static aether_settings_t     *g_settings      = NULL;
-static aether_fs_t           *g_fs            = NULL;
-static aether_audio_t        *g_audio         = NULL;
+/* ---------- Global state ---------- */
+static aether_engine_t       *g_engine       = NULL;
+static aether_game_manager_t *g_game_manager = NULL;
+static aether_input_t        *g_input        = NULL;
+static aether_settings_t     *g_settings     = NULL;
+static aether_fs_t           *g_fs           = NULL;
+static aether_audio_t        *g_audio        = NULL;
 
 /* ---------- Helpers ---------- */
 static aether_input_action_t map_action_name(const char *name) {
@@ -39,7 +39,7 @@ static aether_input_action_t map_action_name(const char *name) {
 
 /* ---------- Engine lifecycle ---------- */
 void engine_init(const char *base_path, const char *asset_path) {
-    if (g_engine) return;  /* already initialized */
+    if (g_engine) return;
     if (!base_path || !asset_path) {
         aether_log(AETHER_LOG_ERROR, "bridge", "engine_init: null paths");
         return;
@@ -51,17 +51,17 @@ void engine_init(const char *base_path, const char *asset_path) {
 
     /* 2. Virtual filesystem */
     g_fs = aether_fs_create();
-    aether_fs_mount_dir(g_fs, base_path);    /* writable (Documents) */
-    aether_fs_mount_dir(g_fs, asset_path);   /* read-only (bundle) */
+    aether_fs_mount_dir(g_fs, base_path);
+    aether_fs_mount_dir(g_fs, asset_path);
 
     /* 3. Input */
     g_input = aether_input_create();
 
-    /* Audio */
+    /* 4. Audio */
     g_audio = aether_audio_create();
     aether_audio_init(g_audio);
 
-    /* 4. Engine */
+    /* 5. Engine */
     aether_engine_desc_t desc = {
         .base_path  = base_path,
         .asset_path = asset_path,
@@ -80,7 +80,7 @@ void engine_init(const char *base_path, const char *asset_path) {
         return;
     }
 
-    /* 5. Game manager */
+    /* 6. Game manager */
     g_game_manager = aether_game_manager_create(g_engine, base_path);
 
     aether_log(AETHER_LOG_INFO, "bridge", "engine fully initialized (%s)",
@@ -93,6 +93,7 @@ void engine_shutdown(void) {
     if (g_input)        { aether_input_destroy(g_input); g_input = NULL; }
     if (g_fs)           { aether_fs_destroy(g_fs); g_fs = NULL; }
     if (g_settings)     { aether_settings_destroy(g_settings); g_settings = NULL; }
+    if (g_audio)        { aether_audio_shutdown(g_audio); aether_audio_destroy(g_audio); g_audio = NULL; }
     aether_log(AETHER_LOG_INFO, "bridge", "engine shutdown complete");
 }
 
@@ -109,7 +110,6 @@ void engine_launch_game(const char *game_dir) {
     if (aether_game_select(g_game_manager, info->id) != AETHER_OK) return;
     if (aether_game_initialize(g_game_manager)      != AETHER_OK) return;
 
-    /* Mount this game's data directory into the VFS at highest priority. */
     if (g_fs) {
         char game_dir_full[600];
         if (aether_game_resolve_path(g_game_manager, info->id,
@@ -143,7 +143,7 @@ void engine_input_set_action(const char *action_name, bool pressed) {
     }
 }
 
-/* ---------- Settings persistence ---------- */
+/* ---------- Settings ---------- */
 void engine_settings_save(const char *filepath) {
     if (g_settings && filepath) {
         (void)aether_settings_save(g_settings, filepath);
@@ -154,6 +154,34 @@ void engine_settings_load(const char *filepath) {
     if (g_settings && filepath) {
         (void)aether_settings_load(g_settings, filepath);
     }
+}
+
+/* ---------- Audio ---------- */
+void engine_audio_init(void) {
+    if (!g_audio) g_audio = aether_audio_create();
+    aether_audio_init(g_audio);
+}
+
+void engine_audio_shutdown(void) {
+    if (g_audio) aether_audio_shutdown(g_audio);
+}
+
+void engine_audio_set_master_volume(float vol) {
+    if (g_audio) aether_audio_set_master_volume(g_audio, vol);
+}
+
+void engine_audio_set_mute(bool muted) {
+    if (g_audio) aether_audio_set_mute(g_audio, muted);
+}
+
+void engine_audio_play(const char *asset_path, float volume, bool loop) {
+    if (g_audio && asset_path) {
+        (void)aether_audio_play_effect(g_audio, asset_path, volume, loop);
+    }
+}
+
+void engine_audio_stop_all(void) {
+    if (g_audio) aether_audio_stop_all(g_audio);
 }
 
 /* ---------- Utility ---------- */
