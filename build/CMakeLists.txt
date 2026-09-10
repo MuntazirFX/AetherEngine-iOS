@@ -16,7 +16,7 @@ if(AETHER_BUILD_IOS)
     set(CMAKE_SYSTEM_NAME iOS)
     set(CMAKE_OSX_ARCHITECTURES arm64)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
-    set(CMAKE_OSX_SYSROOT iphoneos)
+    # Sysroot is now passed from the command line in build_ios.sh
 endif()
 
 # ---------- Engine source files ----------
@@ -32,7 +32,7 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherTouch.c
     ${CMAKE_SOURCE_DIR}/../engine/config/AetherSettings.c
     ${CMAKE_SOURCE_DIR}/../engine/fs/AetherFS.c
-    ${CMAKE_SOURCE_DIR}/../engine/fs/AetherPAK.c
+    ${CMAKE_SOURCE_DIR}/../engine/fs/AetherPak.c
     ${CMAKE_SOURCE_DIR}/../engine/audio/AetherAudio.c
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender.c
 )
@@ -49,7 +49,7 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherTouch.h
     ${CMAKE_SOURCE_DIR}/../engine/config/AetherSettings.h
     ${CMAKE_SOURCE_DIR}/../engine/fs/AetherFS.h
-    ${CMAKE_SOURCE_DIR}/../engine/fs/AetherPAK.h
+    ${CMAKE_SOURCE_DIR}/../engine/fs/AetherPak.h
     ${CMAKE_SOURCE_DIR}/../engine/audio/AetherAudio.h
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender.h
 )
