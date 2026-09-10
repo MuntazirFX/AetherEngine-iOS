@@ -32,6 +32,14 @@ void engine_input_add_look(float dx, float dy);
    "weapon_next", "weapon_prev", "pause", "scoreboard" */
 void engine_input_set_action(const char *action_name, bool pressed);
 
+/* ---------- Audio ---------- */
+void        engine_audio_init(void);
+void        engine_audio_shutdown(void);
+void        engine_audio_set_master_volume(float vol);
+void        engine_audio_set_mute(bool muted);
+void        engine_audio_play(const char *asset_path, float volume, bool loop);
+void        engine_audio_stop_all(void);
+
 /* ---------- Settings ---------- */
 void engine_settings_save(const char *filepath);
 void engine_settings_load(const char *filepath);
