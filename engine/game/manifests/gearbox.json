@@ -1,0 +1,10 @@
+{
+    "id": "opposing-force",
+    "display_name": "Half-Life: Opposing Force",
+    "dir_name": "gearbox",
+    "short_code": "opfor",
+    "game_version": "1.0.0.0",
+    "start_map": "of0a0",
+    "modules": ["opfor.so"],
+    "features": ["singleplayer", "multiplayer", "custom_maps"]
+}
