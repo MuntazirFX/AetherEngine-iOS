@@ -40,6 +40,12 @@ void engine_audio_set_mute(bool muted);
 void engine_audio_play(const char *asset_path, float volume, bool loop);
 void engine_audio_stop_all(void);
 
+/* ---------- Renderer ---------- */
+void engine_renderer_attach_metal(void *mtkView);
+void engine_renderer_resize(unsigned int width, unsigned int height);
+void engine_renderer_begin_frame(void);
+void engine_renderer_end_frame(void);
+
 /* ---------- Utility ---------- */
 const char *engine_version(void);
 
