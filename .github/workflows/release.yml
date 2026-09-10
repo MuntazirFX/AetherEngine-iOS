@@ -1,0 +1,138 @@
+# release.yml
+# Auto-publishes a GitHub Release with the unsigned IPA attached.
+# Trigger: push a tag like v0.1.0 or v0.2.0
+# AetherEngine-iOS · Clean-room.
+
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'          # e.g. v0.1.0, v1.2.3
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name (e.g. v0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write         # needed to create releases
+
+jobs:
+  release:
+    name: Build & Publish IPA
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag name
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Releasing tag: $TAG"
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          uname -m
+
+      - name: Install CMake & XcodeGen
+        run: |
+          command -v cmake    >/dev/null 2>&1 || brew install cmake
+          command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+          cmake --version
+          xcodegen --version
+
+      - name: Make scripts executable
+        run: |
+          chmod +x build/scripts/build_ios.sh
+          chmod +x build/scripts/package_ipa.sh
+
+      - name: Build iOS app (unsigned)
+        run: bash build/scripts/build_ios.sh
+
+      - name: Package unsigned IPA
+        run: bash build/scripts/package_ipa.sh
+
+      - name: Compute IPA checksum + size
+        id: meta
+        run: |
+          IPA=build/out/AetherEngine.ipa
+          test -f "$IPA" || (echo "IPA missing!" && exit 1)
+          SIZE=$(du -sh "$IPA" | cut -f1)
+          SHA=$(shasum -a 256 "$IPA" | awk '{print $1}')
+          echo "size=$SIZE" >> $GITHUB_OUTPUT
+          echo "sha=$SHA"  >> $GITHUB_OUTPUT
+          echo "IPA size: $SIZE"
+          echo "SHA256:  $SHA"
+
+      - name: Build release notes
+        run: |
+          cat > /tmp/notes.md <<EOF
+          ## AetherEngine-iOS — ${{ steps.ver.outputs.tag }}
+
+          **Unsigned IPA build (ARM64 · iOS 14+)**
+
+          ### 📦 Download
+          - \`AetherEngine.ipa\` — sideload via Sideloadly / AltStore / TrollStore
+
+          ### 📋 Metadata
+          - **Size**: ${{ steps.meta.outputs.size }}
+          - **SHA256**: \`${{ steps.meta.outputs.sha }}\`
+          - **Commit**: \`${{ github.sha }}\`
+
+          ### 🎮 Supported Games
+          | Game | Folder |
+          |------|--------|
+          | Half-Life | \`valve\` |
+          | Half-Life: Blue Shift | \`bshift\` |
+          | Half-Life: Opposing Force | \`gearbox\` |
+          | Counter-Strike 1.6 | \`cstrike\` |
+          | Counter-Strike: Condition Zero | \`czero\` |
+
+          ### ⚠️ Legal
+          No copyrighted assets bundled. User must provide their own
+          legally-obtained game data in \`Documents/<game_folder>/\`.
+
+          ### 🔧 Install
+          1. Download \`AetherEngine.ipa\`
+          2. Use Sideloadly / AltStore / TrollStore
+          3. Open the app — it will auto-create the 5 game folders in Files app
+          4. Drop your legally-owned game data into the correct folder
+          EOF
+          cat /tmp/notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: AetherEngine-iOS ${{ steps.ver.outputs.tag }}
+          body_path: /tmp/notes.md
+          draft: false
+          prerelease: false
+          files: |
+            build/out/AetherEngine.ipa
+            build/out/cmake-ios/libaether_engine.a
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### ✅ Release published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag:** ${{ steps.ver.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **IPA size:** ${{ steps.meta.outputs.size }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **SHA256:** \`${{ steps.meta.outputs.sha }}\`" >> $GITHUB_STEP_SUMMARY
