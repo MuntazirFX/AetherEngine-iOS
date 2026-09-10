@@ -2,28 +2,45 @@
 #include <stdlib.h>
 #include <string.h>
 
-struct aether_renderer {
-    aether_render_backend_t        backend;
-    const aether_render_backend_vtbl_t *vt;
-    void                          *user;
-    u32                            w, h;
-    bool                           initialized;
+/* ---------- Forward declarations for Metal backend (implemented in EngineBridge.c) ---------- */
+extern aether_result_t aether_metal_init    (void *user, u32 w, u32 h);
+extern aether_result_t aether_metal_resize  (void *user, u32 w, u32 h);
+extern aether_result_t aether_metal_submit  (void *user, const aether_render_cmd_t *cmd);
+extern aether_result_t aether_metal_shutdown(void *user);
+
+static const aether_render_backend_vtbl_t k_metal_vtbl = {
+    "metal",
+    aether_metal_init,
+    aether_metal_resize,
+    aether_metal_submit,
+    aether_metal_shutdown
 };
 
-/* ---- Null backend (always available, useful for tests/host) ---- */
-static aether_result_t null_init(void *user, u32 w, u32 h)   { (void)user; (void)w; (void)h; return AETHER_OK; }
-static aether_result_t null_resize(void *user, u32 w, u32 h) { (void)user; (void)w; (void)h; return AETHER_OK; }
-static aether_result_t null_submit(void *user, const aether_render_cmd_t *c) { (void)user; (void)c; return AETHER_OK; }
-static aether_result_t null_shutdown(void *user)             { (void)user; return AETHER_OK; }
+/* ---------- Internal renderer struct ---------- */
+struct aether_renderer {
+    aether_render_backend_t            backend;
+    const aether_render_backend_vtbl_t *vt;
+    void                              *user;
+    u32                                w, h;
+    bool                               initialized;
+};
+
+/* ---------- Null backend (always available, useful for tests/host) ---------- */
+static aether_result_t null_init    (void *user, u32 w, u32 h) { (void)user; (void)w; (void)h; return AETHER_OK; }
+static aether_result_t null_resize  (void *user, u32 w, u32 h) { (void)user; (void)w; (void)h; return AETHER_OK; }
+static aether_result_t null_submit  (void *user, const aether_render_cmd_t *c) { (void)user; (void)c; return AETHER_OK; }
+static aether_result_t null_shutdown(void *user) { (void)user; return AETHER_OK; }
 
 static const aether_render_backend_vtbl_t k_null_vtbl = {
     "null", null_init, null_resize, null_submit, null_shutdown
 };
 
+/* ---------- Create / destroy ---------- */
 aether_renderer_t *aether_renderer_create(aether_render_backend_t backend,
                                           void *backend_user) {
     aether_renderer_t *r = (aether_renderer_t*)calloc(1, sizeof *r);
     if (!r) return NULL;
+
     r->backend = backend;
     r->user    = backend_user;
 
@@ -32,14 +49,15 @@ aether_renderer_t *aether_renderer_create(aether_render_backend_t backend,
             r->vt = &k_null_vtbl;
             break;
         case AETHER_RENDER_METAL:
-            /* iOS Swift will set the vtable via aether_renderer_set_backend_vtbl. */
+            /* Metal vtable is installed later via aether_renderer_install_metal(). */
             r->vt = NULL;
             break;
         default:
-            free(r); return NULL;
+            free(r);
+            return NULL;
     }
-    aether_log(AETHER_LOG_INFO, "render", "renderer created (backend=%d)",
-               (int)backend);
+
+    aether_log(AETHER_LOG_INFO, "render", "renderer created (backend=%d)", (int)backend);
     return r;
 }
 
@@ -54,12 +72,18 @@ aether_result_t aether_renderer_set_backend_vtbl(aether_renderer_t *r,
     return AETHER_OK;
 }
 
+aether_result_t aether_renderer_install_metal(aether_renderer_t *r, void *user) {
+    if (!r) return AETHER_ERR_INVALID_ARG;
+    return aether_renderer_set_backend_vtbl(r, &k_metal_vtbl, user);
+}
+
 void aether_renderer_destroy(aether_renderer_t *r) {
     if (!r) return;
     if (r->initialized) aether_renderer_shutdown(r);
     free(r);
 }
 
+/* ---------- Lifecycle ---------- */
 aether_result_t aether_renderer_init(aether_renderer_t *r, u32 w, u32 h) {
     if (!r || !r->vt) return AETHER_ERR_NOT_READY;
     aether_result_t res = r->vt->init(r->user, w, h);
@@ -80,30 +104,40 @@ aether_result_t aether_renderer_shutdown(aether_renderer_t *r) {
     if (!r || !r->vt) return AETHER_ERR_NOT_READY;
     aether_result_t res = r->vt->shutdown(r->user);
     r->initialized = false;
+    aether_log(AETHER_LOG_INFO, "render", "shutdown");
     return res;
 }
 
+/* ---------- Command submission ---------- */
 static aether_result_t submit(aether_renderer_t *r, const aether_render_cmd_t *c) {
     if (!r || !r->vt || !r->vt->submit) return AETHER_ERR_NOT_READY;
     return r->vt->submit(r->user, c);
 }
 
-aether_result_t aether_renderer_begin_frame(aether_renderer_t *r, f32 cr, f32 cg, f32 cb, f32 ca) {
+aether_result_t aether_renderer_begin_frame(aether_renderer_t *r,
+                                             f32 cr, f32 cg, f32 cb, f32 ca) {
     if (!r) return AETHER_ERR_INVALID_ARG;
     aether_render_cmd_t c = {0};
     c.type = AETHER_CMD_BEGIN_FRAME;
-    c.viewport_w = r->w; c.viewport_h = r->h;
-    c.clear_rgba[0] = cr; c.clear_rgba[1] = cg; c.clear_rgba[2] = cb; c.clear_rgba[3] = ca;
+    c.viewport_w = r->w;
+    c.viewport_h = r->h;
+    c.clear_rgba[0] = cr;
+    c.clear_rgba[1] = cg;
+    c.clear_rgba[2] = cb;
+    c.clear_rgba[3] = ca;
     return submit(r, &c);
 }
 
 aether_result_t aether_renderer_set_camera(aether_renderer_t *r,
-                                           aether_mat4_t view, aether_mat4_t proj) {
+                                           aether_mat4_t view,
+                                           aether_mat4_t proj) {
     if (!r) return AETHER_ERR_INVALID_ARG;
     aether_render_cmd_t c = {0};
     c.type = AETHER_CMD_SET_VIEWPORT;
-    c.view = view; c.projection = proj;
-    c.viewport_w = r->w; c.viewport_h = r->h;
+    c.view = view;
+    c.projection = proj;
+    c.viewport_w = r->w;
+    c.viewport_h = r->h;
     return submit(r, &c);
 }
 
