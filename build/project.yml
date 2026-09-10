@@ -1,0 +1,66 @@
+# project.yml
+# XcodeGen configuration for the AetherEngine iOS application.
+# Run: `xcodegen generate` inside `build/` to produce AetherApp.xcodeproj
+# AetherEngine-iOS · Clean-room.
+
+name: AetherApp
+options:
+  bundleIdPrefix: com.muntazirfx.aether
+  deploymentTarget:
+    iOS: "14.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    ENABLE_BITCODE: NO
+    CLANG_ENABLE_MODULES: YES
+    CLANG_ENABLE_OBJC_ARC: YES
+    GCC_C_LANGUAGE_STANDARD: c11
+    HEADER_SEARCH_PATHS:
+      - "$(SRCROOT)/../engine/core"
+      - "$(SRCROOT)/../engine/game"
+      - "$(SRCROOT)/../engine/input"
+      - "$(SRCROOT)/../engine/config"
+      - "$(SRCROOT)/../engine/fs"
+      - "$(SRCROOT)/../engine/audio"
+      - "$(SRCROOT)/../engine/render"
+    SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/../ios/AetherApp/Bridging-Header.h"
+    CODE_SIGNING_ALLOWED: NO
+    CODE_SIGN_IDENTITY: ""
+    CODE_SIGNING_REQUIRED: NO
+
+targets:
+  AetherApp:
+    type: application
+    platform: iOS
+    sources:
+      - path: ../ios/AetherApp
+      - path: ../engine
+        type: group
+        excludes:
+          - "**/*.md"
+    settings:
+      base:
+        INFOPLIST_FILE: configs/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.muntazirfx.aether.app
+        PRODUCT_NAME: AetherEngine
+        TARGETED_DEVICE_FAMILY: "1,2"    # iPhone + iPad
+        SUPPORTS_MACCATALYST: NO
+        IPHONEOS_DEPLOYMENT_TARGET: "14.0"
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_EMIT_LOC_STRINGS: YES
+        ONLY_ACTIVE_ARCH: NO
+        VALID_ARCHS: arm64
+        ARCHS: arm64
+      configs:
+        Release:
+          SWIFT_OPTIMIZATION_LEVEL: "-O"
+          GCC_OPTIMIZATION_LEVEL: "s"
+        Debug:
+          SWIFT_OPTIMIZATION_LEVEL: "-Onone"
+          GCC_OPTIMIZATION_LEVEL: "0"
+    scheme:
+      testTargets: []
+      gatherCoverageData: false
