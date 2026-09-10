@@ -30,7 +30,7 @@ extern int32_t aether_metal_resize_swift  (void *user, uint32_t w, uint32_t h);
 extern int32_t aether_metal_submit_swift  (void *user, const void *cmd);
 extern int32_t aether_metal_shutdown_swift(void *user);
 
-/* Prototypes are now in AetherRender.h, so these definitions are safe. */
+/* Prototypes live in AetherRender.h, so these definitions are safe. */
 aether_result_t aether_metal_init    (void *user, u32 w, u32 h) {
     return (aether_result_t)aether_metal_init_swift(user, (uint32_t)w, (uint32_t)h);
 }
@@ -67,20 +67,28 @@ void engine_init(const char *base_path, const char *asset_path) {
         return;
     }
 
+    /* 1. Settings */
     g_settings = aether_settings_create();
     aether_settings_register_engine_defaults(g_settings);
 
-    g_fs = aether_fs_create();
-    aether_fs_mount_dir(g_fs, base_path);
-    aether_fs_mount_dir(g_fs, asset_path);
+    /* 2. Virtual filesystem — root is the writable Documents directory.
+          PAK files will be auto-mounted when a game is launched. */
+    g_fs = aether_fs_create(base_path);
+    if (g_fs) {
+        (void)aether_fs_auto_mount_paks(g_fs);
+    }
 
+    /* 3. Input */
     g_input = aether_input_create();
 
+    /* 4. Audio */
     g_audio = aether_audio_create();
     aether_audio_init(g_audio);
 
+    /* 5. Renderer (Metal backend installed later from Swift) */
     g_renderer = aether_renderer_create(AETHER_RENDER_METAL, NULL);
 
+    /* 6. Engine */
     aether_engine_desc_t desc = {
         .base_path  = base_path,
         .asset_path = asset_path,
@@ -99,6 +107,7 @@ void engine_init(const char *base_path, const char *asset_path) {
         return;
     }
 
+    /* 7. Game manager */
     g_game_manager = aether_game_manager_create(g_engine, base_path);
 
     aether_log(AETHER_LOG_INFO, "bridge", "engine fully initialized (%s)",
@@ -119,20 +128,31 @@ void engine_shutdown(void) {
 /* ---------- Game lifecycle ---------- */
 void engine_launch_game(const char *game_dir) {
     if (!g_game_manager || !game_dir) return;
+
     const aether_game_info_t *info = aether_game_info_by_dir(game_dir);
     if (!info) {
         aether_log(AETHER_LOG_ERROR, "bridge", "game not found: %s", game_dir);
         return;
     }
+
     if (aether_game_select(g_game_manager, info->id) != AETHER_OK) return;
     if (aether_game_initialize(g_game_manager)      != AETHER_OK) return;
+
+    /* Recreate the VFS rooted at this game's data directory, then
+       auto-mount pak0.pak, pak1.pak, ... from there. */
     if (g_fs) {
-        char game_dir_full[600];
-        if (aether_game_resolve_path(g_game_manager, info->id,
-                                     game_dir_full, sizeof game_dir_full) == AETHER_OK) {
-            aether_fs_mount_dir(g_fs, game_dir_full);
+        aether_fs_destroy(g_fs);
+        g_fs = NULL;
+    }
+    char game_dir_full[600];
+    if (aether_game_resolve_path(g_game_manager, info->id,
+                                 game_dir_full, sizeof game_dir_full) == AETHER_OK) {
+        g_fs = aether_fs_create(game_dir_full);
+        if (g_fs) {
+            (void)aether_fs_auto_mount_paks(g_fs);
         }
     }
+
     aether_game_launch(g_game_manager);
 }
 
@@ -145,21 +165,30 @@ void engine_stop_game(void) {
 void engine_input_set_move(float x, float y) {
     if (g_input) aether_input_set_move(g_input, x, y);
 }
+
 void engine_input_add_look(float dx, float dy) {
     if (g_input) aether_input_add_look(g_input, dx, dy);
 }
+
 void engine_input_set_action(const char *action_name, bool pressed) {
     if (!g_input || !action_name) return;
     aether_input_action_t a = map_action_name(action_name);
-    if (a != AETHER_ACTION_NONE) aether_input_set_action(g_input, a, pressed);
+    if (a != AETHER_ACTION_NONE) {
+        aether_input_set_action(g_input, a, pressed);
+    }
 }
 
 /* ---------- Settings ---------- */
 void engine_settings_save(const char *filepath) {
-    if (g_settings && filepath) (void)aether_settings_save(g_settings, filepath);
+    if (g_settings && filepath) {
+        (void)aether_settings_save(g_settings, filepath);
+    }
 }
+
 void engine_settings_load(const char *filepath) {
-    if (g_settings && filepath) (void)aether_settings_load(g_settings, filepath);
+    if (g_settings && filepath) {
+        (void)aether_settings_load(g_settings, filepath);
+    }
 }
 
 /* ---------- Audio ---------- */
@@ -167,18 +196,25 @@ void engine_audio_init(void) {
     if (!g_audio) g_audio = aether_audio_create();
     aether_audio_init(g_audio);
 }
+
 void engine_audio_shutdown(void) {
     if (g_audio) aether_audio_shutdown(g_audio);
 }
+
 void engine_audio_set_master_volume(float vol) {
     if (g_audio) aether_audio_set_master_volume(g_audio, vol);
 }
+
 void engine_audio_set_mute(bool muted) {
     if (g_audio) aether_audio_set_mute(g_audio, muted);
 }
+
 void engine_audio_play(const char *asset_path, float volume, bool loop) {
-    if (g_audio && asset_path) (void)aether_audio_play_effect(g_audio, asset_path, volume, loop);
+    if (g_audio && asset_path) {
+        (void)aether_audio_play_effect(g_audio, asset_path, volume, loop);
+    }
 }
+
 void engine_audio_stop_all(void) {
     if (g_audio) aether_audio_stop_all(g_audio);
 }
@@ -189,12 +225,17 @@ void engine_renderer_attach_metal(void *mtkView) {
     (void)aether_renderer_install_metal(g_renderer, mtkView);
     (void)aether_renderer_init(g_renderer, 1080, 1920);
 }
+
 void engine_renderer_resize(unsigned int width, unsigned int height) {
     if (g_renderer) (void)aether_renderer_resize(g_renderer, width, height);
 }
+
 void engine_renderer_begin_frame(void) {
-    if (g_renderer) (void)aether_renderer_begin_frame(g_renderer, 0.05f, 0.05f, 0.08f, 1.0f);
+    if (g_renderer) {
+        (void)aether_renderer_begin_frame(g_renderer, 0.05f, 0.05f, 0.08f, 1.0f);
+    }
 }
+
 void engine_renderer_end_frame(void) {
     if (g_renderer) (void)aether_renderer_end_frame(g_renderer);
 }
