@@ -1,6 +1,5 @@
 # CMakeLists.txt
 # Top-level build for AetherEngine C core.
-# Produces a static library "libaether_engine.a" that links into the iOS app.
 # AetherEngine-iOS · Clean-room.
 
 cmake_minimum_required(VERSION 3.20)
@@ -27,7 +26,7 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherMath.c
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherArray.c
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherEvent.c
-    ${CMAKE_SOURCE_DIR}/../engine/core/AetherGameManager.c
+    ${CMAKE_SOURCE_DIR}/../engine/game/AetherGameManager.c
     ${CMAKE_SOURCE_DIR}/../engine/game/AetherManifest.c
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherInput.c
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherTouch.c
@@ -44,7 +43,7 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherMath.h
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherArray.h
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherEvent.h
-    ${CMAKE_SOURCE_DIR}/../engine/core/AetherGameManager.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/AetherGameManager.h
     ${CMAKE_SOURCE_DIR}/../engine/game/AetherManifest.h
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherInput.h
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherTouch.h
