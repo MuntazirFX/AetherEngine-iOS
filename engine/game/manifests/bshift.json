@@ -1,0 +1,10 @@
+{
+    "id": "blue-shift",
+    "display_name": "Half-Life: Blue Shift",
+    "dir_name": "bshift",
+    "short_code": "bshift",
+    "game_version": "1.0.0.0",
+    "start_map": "ba_tram1",
+    "modules": ["bshift.so"],
+    "features": ["singleplayer", "custom_maps"]
+}
