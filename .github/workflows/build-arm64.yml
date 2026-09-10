@@ -64,7 +64,7 @@ jobs:
             "$GITHUB_WORKSPACE/engine/core/AetherMath.c" \
             "$GITHUB_WORKSPACE/engine/core/AetherArray.c" \
             "$GITHUB_WORKSPACE/engine/core/AetherEvent.c" \
-            "$GITHUB_WORKSPACE/engine/core/AetherGameManager.c" \
+            "$GITHUB_WORKSPACE/engine/game/AetherGameManager.c" \
             "$GITHUB_WORKSPACE/engine/game/AetherManifest.c" \
             "$GITHUB_WORKSPACE/engine/input/AetherInput.c" \
             "$GITHUB_WORKSPACE/engine/input/AetherTouch.c" \
