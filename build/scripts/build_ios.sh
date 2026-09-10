@@ -61,15 +61,16 @@ LIB_PATH="$(find "${OUT_DIR}/cmake-ios" -name 'libaether_engine.a' | head -n1)"
 [ -n "${LIB_PATH}" ] || fail "libaether_engine.a not found"
 log "Engine library: ${LIB_PATH}"
 
-# ---------- 3. Generate Xcode project ----------
+# ---------- 3. Generate Xcode project (inside build/) ----------
 log "Running xcodegen..."
 cd "${BUILD_DIR}"
-xcodegen generate --spec project.yml --project "${OUT_DIR}/AetherApp.xcodeproj"
+rm -rf AetherApp.xcodeproj
+xcodegen generate --spec project.yml --project .
 
 # ---------- 4. Build the iOS app ----------
 log "Building iOS app (unsigned)..."
 xcodebuild \
-    -project "${OUT_DIR}/AetherApp.xcodeproj" \
+    -project "AetherApp.xcodeproj" \
     -scheme AetherApp \
     -configuration Release \
     -sdk iphoneos \
