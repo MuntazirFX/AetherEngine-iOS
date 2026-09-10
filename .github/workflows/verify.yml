@@ -1,8 +1,3 @@
-# verify.yml
-# Quick verification — compiles every C file for Linux/macOS host
-# so structural problems are caught on every push (fast, no Xcode needed).
-# AetherEngine-iOS · Clean-room.
-
 name: Verify C Sources
 
 on:
@@ -34,7 +29,7 @@ jobs:
             engine/core/AetherMath.c \
             engine/core/AetherArray.c \
             engine/core/AetherEvent.c \
-            engine/game/AetherGameManager.c \
+            engine/core/AetherGameManager.c \
             engine/game/AetherManifest.c \
             engine/input/AetherInput.c \
             engine/input/AetherTouch.c \
@@ -62,7 +57,7 @@ jobs:
             engine/core/AetherMath.c \
             engine/core/AetherArray.c \
             engine/core/AetherEvent.c \
-            engine/game/AetherGameManager.c \
+            engine/core/AetherGameManager.c \
             engine/game/AetherManifest.c \
             engine/input/AetherInput.c \
             engine/input/AetherTouch.c \
