@@ -10,6 +10,7 @@
 #include "../../engine/config/AetherSettings.h"
 #include "../../engine/fs/AetherFS.h"
 #include "../../engine/audio/AetherAudio.h"
+#include "../../engine/render/AetherRender.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -21,6 +22,26 @@ static aether_input_t        *g_input        = NULL;
 static aether_settings_t     *g_settings     = NULL;
 static aether_fs_t           *g_fs           = NULL;
 static aether_audio_t        *g_audio        = NULL;
+static aether_renderer_t     *g_renderer     = NULL;
+
+/* ---------- Swift callbacks for Metal backend ---------- */
+extern int32_t aether_metal_init_swift    (void *user, uint32_t w, uint32_t h);
+extern int32_t aether_metal_resize_swift  (void *user, uint32_t w, uint32_t h);
+extern int32_t aether_metal_submit_swift  (void *user, const void *cmd);
+extern int32_t aether_metal_shutdown_swift(void *user);
+
+aether_result_t aether_metal_init    (void *user, u32 w, u32 h) {
+    return (aether_result_t)aether_metal_init_swift(user, (uint32_t)w, (uint32_t)h);
+}
+aether_result_t aether_metal_resize  (void *user, u32 w, u32 h) {
+    return (aether_result_t)aether_metal_resize_swift(user, (uint32_t)w, (uint32_t)h);
+}
+aether_result_t aether_metal_submit  (void *user, const aether_render_cmd_t *cmd) {
+    return (aether_result_t)aether_metal_submit_swift(user, cmd);
+}
+aether_result_t aether_metal_shutdown(void *user) {
+    return (aether_result_t)aether_metal_shutdown_swift(user);
+}
 
 /* ---------- Helpers ---------- */
 static aether_input_action_t map_action_name(const char *name) {
@@ -61,7 +82,10 @@ void engine_init(const char *base_path, const char *asset_path) {
     g_audio = aether_audio_create();
     aether_audio_init(g_audio);
 
-    /* 5. Engine */
+    /* 5. Renderer (Metal backend installed later from Swift) */
+    g_renderer = aether_renderer_create(AETHER_RENDER_METAL, NULL);
+
+    /* 6. Engine */
     aether_engine_desc_t desc = {
         .base_path  = base_path,
         .asset_path = asset_path,
@@ -80,7 +104,7 @@ void engine_init(const char *base_path, const char *asset_path) {
         return;
     }
 
-    /* 6. Game manager */
+    /* 7. Game manager */
     g_game_manager = aether_game_manager_create(g_engine, base_path);
 
     aether_log(AETHER_LOG_INFO, "bridge", "engine fully initialized (%s)",
@@ -94,6 +118,7 @@ void engine_shutdown(void) {
     if (g_fs)           { aether_fs_destroy(g_fs); g_fs = NULL; }
     if (g_settings)     { aether_settings_destroy(g_settings); g_settings = NULL; }
     if (g_audio)        { aether_audio_shutdown(g_audio); aether_audio_destroy(g_audio); g_audio = NULL; }
+    if (g_renderer)     { aether_renderer_shutdown(g_renderer); aether_renderer_destroy(g_renderer); g_renderer = NULL; }
     aether_log(AETHER_LOG_INFO, "bridge", "engine shutdown complete");
 }
 
@@ -182,6 +207,27 @@ void engine_audio_play(const char *asset_path, float volume, bool loop) {
 
 void engine_audio_stop_all(void) {
     if (g_audio) aether_audio_stop_all(g_audio);
+}
+
+/* ---------- Renderer ---------- */
+void engine_renderer_attach_metal(void *mtkView) {
+    if (!g_renderer) return;
+    (void)aether_renderer_install_metal(g_renderer, mtkView);
+    (void)aether_renderer_init(g_renderer, 1080, 1920);
+}
+
+void engine_renderer_resize(unsigned int width, unsigned int height) {
+    if (g_renderer) (void)aether_renderer_resize(g_renderer, width, height);
+}
+
+void engine_renderer_begin_frame(void) {
+    if (g_renderer) {
+        (void)aether_renderer_begin_frame(g_renderer, 0.05f, 0.05f, 0.08f, 1.0f);
+    }
+}
+
+void engine_renderer_end_frame(void) {
+    if (g_renderer) (void)aether_renderer_end_frame(g_renderer);
 }
 
 /* ---------- Utility ---------- */
