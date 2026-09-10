@@ -1,5 +1,7 @@
 # project.yml
 # XcodeGen configuration for the AetherEngine iOS application.
+# Uses pre-built libaether_engine.a (from CMake) — engine C files are NOT
+# recompiled by Xcode, avoiding double-build and warning conflicts.
 # AetherEngine-iOS · Clean-room.
 
 name: AetherApp
@@ -19,8 +21,13 @@ settings:
     CLANG_ENABLE_MODULES: YES
     CLANG_ENABLE_OBJC_ARC: YES
     GCC_C_LANGUAGE_STANDARD: c11
-    # Relax strict C warnings so engine builds cleanly under Xcode.
-    OTHER_CFLAGS: "$(inherited) -Wno-sign-compare -Wno-missing-prototypes -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter -Wno-shorten-64-to-32"
+    # Silence C warnings that don't apply to pre-built engine
+    GCC_WARN_UNUSED_FUNCTION: NO
+    GCC_WARN_UNUSED_VARIABLE: NO
+    GCC_WARN_UNUSED_VALUE: NO
+    GCC_WARN_SIGN_COMPARE: NO
+    CLANG_WARN_STRICT_PROTOTYPES: NO
+    CLANG_WARN_SHORTEN_64_TO_32: NO
     HEADER_SEARCH_PATHS:
       - "$(SRCROOT)/../engine/core"
       - "$(SRCROOT)/../engine/game"
@@ -39,11 +46,13 @@ targets:
     type: application
     platform: iOS
     sources:
+      # ONLY iOS Swift/ObjC sources — engine C files are linked, not recompiled
       - path: ../ios/AetherApp
-      - path: ../engine
-        type: group
-        excludes:
-          - "**/*.md"
+    dependencies:
+      # Pre-built engine static library from CMake step
+      - framework: out/cmake-ios/libaether_engine.a
+        embed: false
+        link: true
     settings:
       base:
         INFOPLIST_FILE: configs/Info.plist
