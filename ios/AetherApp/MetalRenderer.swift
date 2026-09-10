@@ -1,6 +1,7 @@
 // MetalRenderer.swift
-// iOS Metal backend. Receives commands from the C renderer abstraction
-// and translates them into Metal API calls.
+// iOS Metal backend for AetherEngine.
+// Receives commands from the C renderer abstraction and translates them into Metal API calls.
+// AetherEngine-iOS · Clean-room.
 
 import MetalKit
 import SwiftUI
@@ -11,21 +12,22 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     let queue: MTLCommandQueue
     var pipelineState: MTLRenderPipelineState?
     var clearColor = MTLClearColor(red: 0.05, green: 0.05, blue: 0.08, alpha: 1.0)
-
     var viewSize: CGSize = .zero
 
     init?(mtkView: MTKView) {
         guard let dev = mtkView.device ?? MTLCreateSystemDefaultDevice(),
-              let q   = dev.makeCommandQueue() else { return nil }
+              let q = dev.makeCommandQueue() else { return nil }
         self.device = dev
-        self.queue  = q
+        self.queue = q
         super.init()
         mtkView.delegate = self
         buildPipeline(mtkView: mtkView)
+
+        // Tell the C engine which Metal state to use
+        engine_renderer_attach_metal(mtkView)
     }
 
     private func buildPipeline(mtkView: MTKView) {
-        // Minimal placeholder pipeline. Real world/HUD pipelines added later.
         let lib = device.makeDefaultLibrary()
         let desc = MTLRenderPipelineDescriptor()
         desc.vertexFunction   = lib?.makeFunction(name: "vertex_main")
@@ -41,7 +43,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     // MARK: - MTKViewDelegate
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         viewSize = size
-        // engine_renderer_resize(UInt32(size.width), UInt32(size.height))
+        engine_renderer_resize(UInt32(size.width), UInt32(size.height))
     }
 
     func draw(in view: MTKView) {
@@ -52,15 +54,18 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         rpd.colorAttachments[0].clearColor = clearColor
         rpd.colorAttachments[0].loadAction = .clear
 
-        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else {
-            cmd.commit(); return
-        }
+        // Begin frame in C engine
+        engine_renderer_begin_frame()
 
-        // --- Placeholder: real draw calls come from engine render commands.
-        if let ps = pipelineState {
-            enc.setRenderPipelineState(ps)
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else {
+            cmd.commit()
+            return
         }
+        if let ps = pipelineState { enc.setRenderPipelineState(ps) }
         enc.endEncoding()
+
+        // End frame in C engine
+        engine_renderer_end_frame()
 
         cmd.present(drawable)
         cmd.commit()
