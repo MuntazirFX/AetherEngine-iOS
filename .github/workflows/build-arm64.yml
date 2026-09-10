@@ -70,7 +70,7 @@ jobs:
             "$GITHUB_WORKSPACE/engine/input/AetherTouch.c" \
             "$GITHUB_WORKSPACE/engine/config/AetherSettings.c" \
             "$GITHUB_WORKSPACE/engine/fs/AetherFS.c" \
-            "$GITHUB_WORKSPACE/engine/fs/AetherPAK.c" \
+            "$GITHUB_WORKSPACE/engine/fs/AetherPak.c" \
             "$GITHUB_WORKSPACE/engine/audio/AetherAudio.c" \
             "$GITHUB_WORKSPACE/engine/render/AetherRender.c" \
           ; do
