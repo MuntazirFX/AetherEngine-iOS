@@ -1,5 +1,6 @@
 // AetherApp.swift
 // Main entry point for the AetherEngine iOS application.
+// AetherEngine-iOS · Clean-room.
 
 import SwiftUI
 
