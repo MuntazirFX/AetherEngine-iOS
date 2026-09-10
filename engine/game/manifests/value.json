@@ -1,0 +1,10 @@
+{
+    "id": "half-life",
+    "display_name": "Half-Life",
+    "dir_name": "valve",
+    "short_code": "hl",
+    "game_version": "1.1.2.0",
+    "start_map": "c0a0",
+    "modules": ["hl.so", "menus.so"],
+    "features": ["singleplayer", "multiplayer", "custom_maps"]
+}
