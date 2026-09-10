@@ -61,11 +61,21 @@ LIB_PATH="$(find "${OUT_DIR}/cmake-ios" -name 'libaether_engine.a' | head -n1)"
 [ -n "${LIB_PATH}" ] || fail "libaether_engine.a not found"
 log "Engine library: ${LIB_PATH}"
 
-# ---------- 3. Generate Xcode project (inside build/) ----------
+# ---------- 3. Generate Xcode project ----------
 log "Running xcodegen..."
 cd "${BUILD_DIR}"
 rm -rf AetherApp.xcodeproj
 xcodegen generate --spec project.yml --project .
+
+# ---------- 3b. Force Xcode 15 compatible format (patch objectVersion) ----------
+log "Patching project format for Xcode 15 compatibility..."
+PBXPROJ_FILE="AetherApp.xcodeproj/project.pbxproj"
+if [ -f "${PBXPROJ_FILE}" ]; then
+    sed -i '' -E 's/objectVersion = [0-9]+;/objectVersion = 56;/g' "${PBXPROJ_FILE}"
+    log "Patched ${PBXPROJ_FILE}: $(grep -o 'objectVersion = [0-9]*;' "${PBXPROJ_FILE}" | head -n1)"
+else
+    fail "project.pbxproj not found at ${PBXPROJ_FILE}"
+fi
 
 # ---------- 4. Build the iOS app ----------
 log "Building iOS app (unsigned)..."
