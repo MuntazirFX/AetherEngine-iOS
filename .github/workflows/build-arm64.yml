@@ -1,0 +1,187 @@
+# build-arm64.yml
+# Builds AetherEngine-iOS for ARM64 on macOS runner and produces an unsigned IPA.
+# AetherEngine-iOS · Clean-room.
+
+name: Build ARM64 IPA
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: "Build configuration"
+        required: true
+        default: "Release"
+        type: choice
+        options:
+          - Release
+          - Debug
+
+env:
+  XCODE_VERSION: "15.4"
+  XCODEGEN_VERSION: "2.42.0"
+  CMAKE_VERSION: "3.29.6"
+
+jobs:
+  build-arm64:
+    name: Build ARM64 iOS IPA
+    runs-on: macos-14
+
+    timeout-minutes: 45
+
+    steps:
+      # ---------------------------------------------------------------
+      # 1. Checkout
+      # ---------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: false
+
+      # ---------------------------------------------------------------
+      # 2. Toolchain versions
+      # ---------------------------------------------------------------
+      - name: Show toolchain versions
+        run: |
+          echo "=== Xcode ==="
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          echo "=== Swift ==="
+          swift --version
+          echo "=== CMake ==="
+          cmake --version || echo "cmake not pre-installed"
+          echo "=== Host arch ==="
+          uname -m
+
+      # ---------------------------------------------------------------
+      # 3. Install dependencies (CMake, XcodeGen)
+      # ---------------------------------------------------------------
+      - name: Install CMake
+        run: |
+          if ! command -v cmake >/dev/null 2>&1; then
+            brew install cmake
+          fi
+
+      - name: Install XcodeGen
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+          xcodegen --version
+
+      # ---------------------------------------------------------------
+      # 4. Make scripts executable
+      # ---------------------------------------------------------------
+      - name: Make build scripts executable
+        run: |
+          chmod +x build/scripts/build_ios.sh
+          chmod +x build/scripts/package_ipa.sh
+
+      # ---------------------------------------------------------------
+      # 5. Quick C compile sanity check (before heavy build)
+      # ---------------------------------------------------------------
+      - name: Sanity compile engine (host)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/sanity
+          cd /tmp/sanity
+          for f in \
+            "$GITHUB_WORKSPACE/engine/core/AetherCore.c" \
+            "$GITHUB_WORKSPACE/engine/core/AetherEngine.c" \
+            "$GITHUB_WORKSPACE/engine/core/AetherMath.c" \
+            "$GITHUB_WORKSPACE/engine/core/AetherArray.c" \
+            "$GITHUB_WORKSPACE/engine/core/AetherEvent.c" \
+            "$GITHUB_WORKSPACE/engine/game/AetherGameManager.c" \
+            "$GITHUB_WORKSPACE/engine/game/AetherManifest.c" \
+            "$GITHUB_WORKSPACE/engine/input/AetherInput.c" \
+            "$GITHUB_WORKSPACE/engine/input/AetherTouch.c" \
+            "$GITHUB_WORKSPACE/engine/config/AetherSettings.c" \
+            "$GITHUB_WORKSPACE/engine/fs/AetherFS.c" \
+            "$GITHUB_WORKSPACE/engine/fs/AetherPAK.c" \
+            "$GITHUB_WORKSPACE/engine/audio/AetherAudio.c" \
+            "$GITHUB_WORKSPACE/engine/render/AetherRender.c" \
+          ; do
+            echo "→ cc -c $f"
+            cc -std=c11 -Wall -Wextra -Wno-unused-parameter -Iengine/core -Iengine/game -Iengine/input -Iengine/config -Iengine/fs -Iengine/audio -Iengine/render -c "$f" -o "$(basename "$f" .c).o"
+          done
+          echo "✔ Sanity compile passed"
+
+      # ---------------------------------------------------------------
+      # 6. Run build script (CMake + XcodeGen + xcodebuild)
+      # ---------------------------------------------------------------
+      - name: Build iOS app (unsigned)
+        run: |
+          bash build/scripts/build_ios.sh
+
+      # ---------------------------------------------------------------
+      # 7. Package unsigned IPA
+      # ---------------------------------------------------------------
+      - name: Package unsigned IPA
+        run: |
+          bash build/scripts/package_ipa.sh
+
+      # ---------------------------------------------------------------
+      # 8. Verify IPA exists and dump its contents
+      # ---------------------------------------------------------------
+      - name: Verify IPA
+        run: |
+          set -euo pipefail
+          IPA_PATH="build/out/AetherEngine.ipa"
+          test -f "$IPA_PATH" || (echo "IPA missing!" && exit 1)
+          echo "IPA size:"
+          ls -lh "$IPA_PATH"
+          echo "Contents:"
+          unzip -l "$IPA_PATH" | head -n 30
+
+      # ---------------------------------------------------------------
+      # 9. Upload artifacts
+      # ---------------------------------------------------------------
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: AetherEngine-IPA-${{ github.sha }}
+          path: build/out/AetherEngine.ipa
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload engine static library
+        uses: actions/upload-artifact@v4
+        with:
+          name: libaether_engine-${{ github.sha }}
+          path: build/out/cmake-ios/**/libaether_engine.a
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ github.sha }}
+          path: |
+            build/out/DerivedData/Logs/
+            build/out/cmake-ios/CMakeFiles/CMakeOutput.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+      # ---------------------------------------------------------------
+      # 10. Summary
+      # ---------------------------------------------------------------
+      - name: Summary
+        if: always()
+        run: |
+          echo "### AetherEngine-iOS Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** macOS 14 (Apple Silicon)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target:** iOS 14+, ARM64" >> $GITHUB_STEP_SUMMARY
+          echo "- **Signing:** Disabled (unsigned IPA)" >> $GITHUB_STEP_SUMMARY
+          if [ -f build/out/AetherEngine.ipa ]; then
+            echo "- **IPA size:** $(du -sh build/out/AetherEngine.ipa | cut -f1)" >> $GITHUB_STEP_SUMMARY
+            echo "- **Status:** ✅ Build succeeded" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Status:** ❌ Build failed" >> $GITHUB_STEP_SUMMARY
+          fi
