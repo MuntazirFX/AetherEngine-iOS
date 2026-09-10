@@ -1,73 +1,41 @@
-/* AetherGameManager.c — Implementation of game registry + lifecycle.
+/* AetherGameManager.c — Game registry + lifecycle.
+ * Auto-creates game folders on init (Xash3D-style basedir layout).
  * AetherEngine-iOS · Clean-room.
  */
 #include "AetherGameManager.h"
-
 #include <stdio.h>
-#include <stdlib.h>   /* <-- YEH MISSING THA! calloc, free ke liye zaroori hai */
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <errno.h>
 
 /* Feature bitmask (reserved for future). */
 #define AETHER_FEAT_SINGLEPLAYER (1u << 0)
 #define AETHER_FEAT_MULTIPLAYER  (1u << 1)
 #define AETHER_FEAT_CUSTOM_MAPS  (1u << 2)
 
-/* ---------- Immutable registry ---------- */
 static const aether_game_info_t k_games[AETHER_GAME_COUNT] = {
-    {
-        AETHER_GAME_HALFLIFE,
-        "Half-Life",
-        "valve",
-        "hl",
-        "1.1.2.0",
-        "c0a0",
-        AETHER_FEAT_SINGLEPLAYER | AETHER_FEAT_MULTIPLAYER | AETHER_FEAT_CUSTOM_MAPS,
-    },
-    {
-        AETHER_GAME_BLUESHIFT,
-        "Half-Life: Blue Shift",
-        "bshift",
-        "bshift",
-        "1.0.0.0",
-        "ba_tram1",
-        AETHER_FEAT_SINGLEPLAYER | AETHER_FEAT_CUSTOM_MAPS,
-    },
-    {
-        AETHER_GAME_OPFOR,
-        "Half-Life: Opposing Force",
-        "gearbox",
-        "opfor",
-        "1.0.0.0",
-        "of0a0",
-        AETHER_FEAT_SINGLEPLAYER | AETHER_FEAT_MULTIPLAYER | AETHER_FEAT_CUSTOM_MAPS,
-    },
-    {
-        AETHER_GAME_CS16,
-        "Counter-Strike 1.6",
-        "cstrike",
-        "cs16",
-        "1.1.2.0",
-        "de_dust2",
-        AETHER_FEAT_MULTIPLAYER | AETHER_FEAT_CUSTOM_MAPS,
-    },
-    {
-        AETHER_GAME_CZERO,
-        "Counter-Strike: Condition Zero",
-        "czero",
-        "czero",
-        "1.0.0.0",
-        "cz_de_dust2",
-        AETHER_FEAT_SINGLEPLAYER | AETHER_FEAT_MULTIPLAYER | AETHER_FEAT_CUSTOM_MAPS,
-    },
+    { AETHER_GAME_HALFLIFE, "Half-Life",                   "valve",   "hl",    "1.1.2.2", "c0a0",       AETHER_FEAT_SINGLEPLAYER | AETHER_FEAT_MULTIPLAYER | AETHER_FEAT_CUSTOM_MAPS },
+    { AETHER_GAME_BLUESHIFT, "Half-Life: Blue Shift",      "bshift",  "bshift","1.1.2.2", "ba_tram1",   AETHER_FEAT_SINGLEPLAYER | AETHER_FEAT_CUSTOM_MAPS },
+    { AETHER_GAME_OPFOR,    "Half-Life: Opposing Force",   "gearbox", "opfor", "1.1.2.2", "of0a0",      AETHER_FEAT_SINGLEPLAYER | AETHER_FEAT_MULTIPLAYER | AETHER_FEAT_CUSTOM_MAPS },
+    { AETHER_GAME_CS16,     "Counter-Strike 1.6",          "cstrike", "cs16",  "1.1.2.7", "de_dust2",   AETHER_FEAT_MULTIPLAYER | AETHER_FEAT_CUSTOM_MAPS },
+    { AETHER_GAME_CZERO,    "Counter-Strike: Condition Zero", "czero","czero", "1.1.2.7", "cz_de_dust2",AETHER_FEAT_SINGLEPLAYER | AETHER_FEAT_MULTIPLAYER | AETHER_FEAT_CUSTOM_MAPS },
 };
 
-/* ---------- Manager state ---------- */
 struct aether_game_manager {
     aether_engine_t    *engine;
     char                user_data_root[512];
     aether_game_id_t    selected;
     aether_game_state_t state;
 };
+
+/* ---------- Helpers ---------- */
+static bool mkdir_if_missing(const char *path) {
+    struct stat st;
+    if (stat(path, &st) == 0) return S_ISDIR(st.st_mode);
+    if (mkdir(path, 0755) == 0) return true;
+    return false;
+}
 
 /* ---------- Registry accessors ---------- */
 u32 aether_game_count(void) { return AETHER_GAME_COUNT; }
@@ -105,6 +73,16 @@ aether_game_manager_t *aether_game_manager_create(aether_engine_t *engine,
     m->state    = AETHER_GAME_STATE_IDLE;
     aether_str_copy(m->user_data_root, sizeof m->user_data_root, user_data_root);
 
+    /* Auto-create base directory + all game subdirectories. */
+    (void)mkdir_if_missing(m->user_data_root);
+    for (u32 i = 0; i < AETHER_GAME_COUNT; ++i) {
+        char sub[600];
+        snprintf(sub, sizeof sub, "%s/%s", m->user_data_root, k_games[i].dir_name);
+        if (mkdir_if_missing(sub)) {
+            aether_log(AETHER_LOG_INFO, "game", "ensured game dir: %s", sub);
+        }
+    }
+
     aether_log(AETHER_LOG_INFO, "game",
                "manager created: data_root='%s' games=%u",
                m->user_data_root, (unsigned)AETHER_GAME_COUNT);
@@ -114,7 +92,7 @@ aether_game_manager_t *aether_game_manager_create(aether_engine_t *engine,
 aether_result_t aether_game_manager_destroy(aether_game_manager_t *m) {
     if (!m) return AETHER_ERR_INVALID_ARG;
     if (m->state == AETHER_GAME_STATE_RUNNING) (void)aether_game_shutdown(m);
-    free(m);   /* <-- Yahan free() use ho raha tha */
+    free(m);
     return AETHER_OK;
 }
 
@@ -122,10 +100,8 @@ aether_result_t aether_game_manager_destroy(aether_game_manager_t *m) {
 aether_result_t aether_game_select(aether_game_manager_t *m, aether_game_id_t id) {
     if (!m) return AETHER_ERR_INVALID_ARG;
     if (m->state == AETHER_GAME_STATE_RUNNING) return AETHER_ERR_STATE;
-
     const aether_game_info_t *info = aether_game_info_by_id(id);
     if (!info) return AETHER_ERR_NOT_FOUND;
-
     m->selected = id;
     m->state    = AETHER_GAME_STATE_SELECTED;
     aether_log(AETHER_LOG_INFO, "game", "selected '%s' (dir='%s')",
@@ -148,13 +124,12 @@ aether_result_t aether_game_resolve_path(const aether_game_manager_t *m,
     if (!m || !out || cap == 0) return AETHER_ERR_INVALID_ARG;
     const aether_game_info_t *info = aether_game_info_by_id(id);
     if (!info) return AETHER_ERR_NOT_FOUND;
-
     int n = snprintf(out, cap, "%s/%s", m->user_data_root, info->dir_name);
     if (n < 0 || (size_t)n >= cap) return AETHER_ERR_INVALID_ARG;
     return AETHER_OK;
 }
 
-/* ---------- Lifecycle: initialize / launch / shutdown ---------- */
+/* ---------- Lifecycle ---------- */
 aether_result_t aether_game_initialize(aether_game_manager_t *m) {
     if (!m) return AETHER_ERR_INVALID_ARG;
     if (m->selected == AETHER_GAME_NONE) return AETHER_ERR_NOT_READY;
@@ -165,17 +140,14 @@ aether_result_t aether_game_initialize(aether_game_manager_t *m) {
     if (!info) return AETHER_ERR_NOT_FOUND;
 
     char game_dir[600];
-    aether_result_t r = aether_game_resolve_path(m, m->selected,
-                                                 game_dir, sizeof game_dir);
+    aether_result_t r = aether_game_resolve_path(m, m->selected, game_dir, sizeof game_dir);
     if (r != AETHER_OK) return r;
 
     bool present = aether_dir_exists(game_dir);
-
     aether_log(AETHER_LOG_INFO, "game",
                "initialize '%s' -> dir=%s (%s)",
                info->display_name, game_dir,
                present ? "found" : "missing (user must import)");
-
     m->state = AETHER_GAME_STATE_INITIALIZED;
     return AETHER_OK;
 }
@@ -188,8 +160,7 @@ aether_result_t aether_game_launch(aether_game_manager_t *m) {
     if (!info) return AETHER_ERR_NOT_FOUND;
 
     char game_dir[600];
-    aether_result_t r = aether_game_resolve_path(m, m->selected,
-                                                 game_dir, sizeof game_dir);
+    aether_result_t r = aether_game_resolve_path(m, m->selected, game_dir, sizeof game_dir);
     if (r != AETHER_OK) return r;
 
     if (!aether_dir_exists(game_dir)) {
