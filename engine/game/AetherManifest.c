@@ -1,5 +1,6 @@
 /* AetherManifest.c — Minimal JSON-like parser for game manifests.
  * This is NOT a full JSON parser. It scans for specific keys we need.
+ * AetherEngine-iOS · Clean-room.
  */
 #include "AetherManifest.h"
 #include <stdio.h>
@@ -27,19 +28,8 @@ static bool extract_string(const char *line, const char *key, char *out, size_t 
     return true;
 }
 
-/* Helper: extract an integer value like: "key": 123 */
-static bool extract_int(const char *line, const char *key, u32 *out) {
-    const char *pos = strstr(line, key);
-    if (!pos) return false;
-    
-    pos = strchr(pos, ':');
-    if (!pos) return false;
-    pos++;
-    
-    while (*pos == ' ' || *pos == '\t') pos++;
-    *out = (u32)atoi(pos);
-    return true;
-}
+/* NOTE: extract_int was removed because it was unused (caused -Werror on iOS build).
+ * We can re-add it when we actually parse integer fields from manifests. */
 
 aether_result_t aether_manifest_load(const char *filepath, aether_game_info_t *out_info) {
     if (!filepath || !out_info) return AETHER_ERR_INVALID_ARG;
