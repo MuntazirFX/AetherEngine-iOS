@@ -57,10 +57,6 @@ LIB_PATH="$(find "${OUT_DIR}/cmake-ios" -name 'libaether_engine.a' | head -n1)"
 [ -n "${LIB_PATH}" ] || fail "libaether_engine.a not found"
 log "Engine library: ${LIB_PATH}"
 
-# Copy the lib to a known location so project.yml can find it
-cp "${LIB_PATH}" "${OUT_DIR}/cmake-ios/libaether_engine.a"
-log "Copied library to: ${OUT_DIR}/cmake-ios/libaether_engine.a"
-
 # ---------- 3. Generate Xcode project ----------
 log "Running xcodegen..."
 cd "${BUILD_DIR}"
