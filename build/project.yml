@@ -9,6 +9,8 @@ options:
     iOS: "14.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
+  # FIX: Force older project format so Xcode 15.4 on GitHub runners can open it
+  objectVersion: 56
 
 settings:
   base:
