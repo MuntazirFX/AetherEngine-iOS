@@ -1,7 +1,7 @@
 // EngineBridge.c — AetherEngine-iOS · Clean-room.
 // STEP 14: collision + player physics.
 // STEP 15A/15B: WAD, palette, atlas.
-// STEP 16A: MDL diagnostics.
+// STEP 16A/16B: MDL diagnostics + mesh extraction.
 
 #include "EngineBridge.h"
 
@@ -18,6 +18,7 @@
 #include "../../engine/player/AetherCollision.h"
 #include "../../engine/texture/AetherTexture.h"
 #include "../../engine/model/AetherMDL.h"
+#include "../../engine/model/AetherMDLGeometry.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -34,6 +35,7 @@ static aether_renderer_t       *g_renderer     = NULL;
 static aether_mesh_t           *g_active_mesh  = NULL;
 static aether_collision_t      *g_collision    = NULL;
 static aether_texture_atlas_t  *g_atlas        = NULL;
+static aether_model_mesh_t     *g_mdl_mesh     = NULL;
 static aether_palette_t         g_palette;
 static aether_player_t          g_player;
 static char                     g_base_path[512] = {0};
@@ -89,6 +91,7 @@ void engine_init(const char *base_path, const char *asset_path) {
 }
 
 void engine_shutdown(void) {
+    if (g_mdl_mesh)     { aether_mdl_geometry_free(g_mdl_mesh); g_mdl_mesh = NULL; }
     if (g_atlas)        { aether_texture_atlas_free(g_atlas); g_atlas = NULL; }
     if (g_collision)    { aether_collision_free(g_collision); g_collision = NULL; }
     if (g_active_mesh)  { aether_mesh_free(g_active_mesh); g_active_mesh = NULL; }
@@ -146,7 +149,7 @@ void engine_player_spawn_at_mesh_center(void) {
         g_active_mesh->bounds_center[2] + 50.0f
     };
     aether_player_set_position(&g_player, c);
-    g_player.yaw   = 0.0f;
+    g_player.yaw = 0.0f;
     g_player.pitch = 0.0f;
     aether_log(AETHER_LOG_INFO, "player", "spawned at (%.1f, %.1f, %.1f)", c.x, c.y, c.z);
 }
@@ -242,7 +245,6 @@ int engine_bsp_mesh_build(const char *vp) {
     free(buf);
     if (!b) return 0;
 
-    /* Palette */
     if (!g_palette.loaded) {
         u32 wad_sz = aether_fs_read_file(g_fs, "halflife.wad", NULL, 0);
         if (wad_sz > 0 && wad_sz < 256u*1024u*1024u) {
@@ -259,18 +261,15 @@ int engine_bsp_mesh_build(const char *vp) {
         if (!g_palette.loaded) aether_palette_default(&g_palette);
     }
 
-    /* Atlas */
     g_atlas = aether_texture_atlas_build(b, &g_palette);
     if (g_atlas) aether_texture_atlas_dump(g_atlas);
 
-    /* Mesh */
     aether_mesh_t *m = NULL;
     if (aether_mesh_from_bsp(b, g_atlas, &m) != AETHER_OK || !m) {
         aether_bsp_free(b); return 0;
     }
     g_active_mesh = m;
 
-    /* Collision */
     g_collision = aether_collision_build(b);
     if (g_collision) aether_collision_dump(g_collision);
 
@@ -405,14 +404,11 @@ int engine_texture_atlas_copy_rgba(unsigned char *out, int max_bytes) {
     return (int)needed;
 }
 
-/* ---------- MDL diagnostics (STEP 16A) ---------- */
+/* ---------- MDL diagnostics ---------- */
 int engine_mdl_dump_vfs(const char *mdl_vpath) {
     if (!g_fs || !mdl_vpath) return 0;
     u32 sz = aether_fs_read_file(g_fs, mdl_vpath, NULL, 0);
-    if (sz == 0 || sz > 64u*1024u*1024u) {
-        aether_log(AETHER_LOG_ERROR, "bridge", "MDL not found or too large: %s", mdl_vpath);
-        return 0;
-    }
+    if (sz == 0 || sz > 64u*1024u*1024u) return 0;
     u8 *buf = (u8*)malloc(sz);
     if (!buf) return 0;
     u32 got = aether_fs_read_file(g_fs, mdl_vpath, buf, sz);
@@ -438,12 +434,10 @@ int engine_mdl_summary_text(const char *mdl_vpath, char *out_buf, int out_cap) {
         snprintf(out_buf, (size_t)out_cap, "MDL too large: %u bytes", sz);
         return -1;
     }
-
     u8 *buf = (u8*)malloc(sz);
     if (!buf) return -1;
     u32 got = aether_fs_read_file(g_fs, mdl_vpath, buf, sz);
     if (got != sz) { free(buf); return -1; }
-
     aether_mdl_t *m = aether_mdl_load_from_memory(buf, sz, mdl_vpath);
     free(buf);
     if (!m) {
@@ -454,23 +448,11 @@ int engine_mdl_summary_text(const char *mdl_vpath, char *out_buf, int out_cap) {
     const aether_mdl_info_t *info = aether_mdl_info(m);
     int w = 0;
     w += snprintf(out_buf + w, (size_t)(out_cap - w),
-                  "✅ MDL Parsed Successfully\n\n"
-                  "File: %s\n"
-                  "Size: %u bytes\n\n"
-                  "Name       : %s\n"
-                  "Bones      : %d\n"
-                  "Bodyparts  : %d\n"
-                  "Textures   : %d\n"
-                  "Sequences  : %d\n"
-                  "Hitboxes   : %d\n"
-                  "Attachments: %d\n\n",
-                  mdl_vpath, sz,
-                  info->name,
-                  info->bone_count,
-                  info->bodypart_count,
-                  info->texture_count,
-                  info->sequence_count,
-                  info->hitbox_count,
+                  "✅ MDL Parsed Successfully\n\nFile: %s\nSize: %u bytes\n\n"
+                  "Name       : %s\nBones      : %d\nBodyparts  : %d\nTextures   : %d\n"
+                  "Sequences  : %d\nHitboxes   : %d\nAttachments: %d\n\n",
+                  mdl_vpath, sz, info->name, info->bone_count, info->bodypart_count,
+                  info->texture_count, info->sequence_count, info->hitbox_count,
                   info->attachment_count);
 
     if (info->texture_count > 0) {
@@ -485,9 +467,76 @@ int engine_mdl_summary_text(const char *mdl_vpath, char *out_buf, int out_cap) {
             w += snprintf(out_buf + w, (size_t)(out_cap - w), "  … +%d more\n",
                           info->texture_count - shown);
     }
-
     aether_mdl_free(m);
     return 1;
+}
+
+/* ---------- MDL mesh extraction (STEP 16B) ---------- */
+int engine_mdl_mesh_build(const char *mdl_vpath) {
+    if (!g_fs || !mdl_vpath) return 0;
+    if (g_mdl_mesh) { aether_mdl_geometry_free(g_mdl_mesh); g_mdl_mesh = NULL; }
+
+    u32 sz = aether_fs_read_file(g_fs, mdl_vpath, NULL, 0);
+    if (sz == 0 || sz > 64u*1024u*1024u) {
+        aether_log(AETHER_LOG_ERROR, "bridge", "mdl mesh: not found or huge: %s", mdl_vpath);
+        return 0;
+    }
+    u8 *buf = (u8*)malloc(sz);
+    if (!buf) return 0;
+    u32 got = aether_fs_read_file(g_fs, mdl_vpath, buf, sz);
+    if (got != sz) { free(buf); return 0; }
+
+    aether_mdl_t *mdl = aether_mdl_load_from_memory(buf, sz, mdl_vpath);
+    free(buf);
+    if (!mdl) return 0;
+
+    aether_model_mesh_t *mesh = NULL;
+    aether_result_t r = aether_mdl_geometry_extract(mdl, &mesh);
+    aether_mdl_free(mdl);
+    if (r != AETHER_OK || !mesh) {
+        aether_log(AETHER_LOG_ERROR, "bridge", "mdl geometry extract failed");
+        return 0;
+    }
+
+    g_mdl_mesh = mesh;
+    aether_mdl_geometry_dump(mesh);
+    return 1;
+}
+
+int  engine_mdl_mesh_vertex_count(void)   { return g_mdl_mesh ? (int)g_mdl_mesh->vertex_count   : 0; }
+int  engine_mdl_mesh_triangle_count(void) { return g_mdl_mesh ? (int)g_mdl_mesh->triangle_count : 0; }
+
+void engine_mdl_mesh_get_bounds(float *mn, float *mx, float *ctr) {
+    if (!g_mdl_mesh) return;
+    if (mn)  { mn[0]=g_mdl_mesh->bounds_min[0]; mn[1]=g_mdl_mesh->bounds_min[1]; mn[2]=g_mdl_mesh->bounds_min[2]; }
+    if (mx)  { mx[0]=g_mdl_mesh->bounds_max[0]; mx[1]=g_mdl_mesh->bounds_max[1]; mx[2]=g_mdl_mesh->bounds_max[2]; }
+    if (ctr) { ctr[0]=g_mdl_mesh->bounds_center[0]; ctr[1]=g_mdl_mesh->bounds_center[1]; ctr[2]=g_mdl_mesh->bounds_center[2]; }
+}
+
+int engine_mdl_mesh_copy_positions(float *out, int max_floats) {
+    if (!g_mdl_mesh || !out || max_floats <= 0) return 0;
+    int n = (int)(g_mdl_mesh->vertex_count * 3);
+    if (n > max_floats) n = max_floats;
+    memcpy(out, g_mdl_mesh->positions, (size_t)n * sizeof(f32));
+    return n;
+}
+int engine_mdl_mesh_copy_normals(float *out, int max_floats) {
+    if (!g_mdl_mesh || !out || max_floats <= 0) return 0;
+    int n = (int)(g_mdl_mesh->vertex_count * 3);
+    if (n > max_floats) n = max_floats;
+    memcpy(out, g_mdl_mesh->normals, (size_t)n * sizeof(f32));
+    return n;
+}
+int engine_mdl_mesh_copy_indices(uint32_t *out, int max_idx) {
+    if (!g_mdl_mesh || !out || max_idx <= 0) return 0;
+    int n = (int)(g_mdl_mesh->triangle_count * 3);
+    if (n > max_idx) n = max_idx;
+    memcpy(out, g_mdl_mesh->indices, (size_t)n * sizeof(u32));
+    return n;
+}
+
+void engine_mdl_mesh_release(void) {
+    if (g_mdl_mesh) { aether_mdl_geometry_free(g_mdl_mesh); g_mdl_mesh = NULL; }
 }
 
 /* ---------- Utility ---------- */
