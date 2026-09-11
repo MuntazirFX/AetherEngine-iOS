@@ -1,5 +1,5 @@
 // DashboardView.swift
-// STEP 12 — Add "Render Map" button that shows the BSP mesh on screen.
+// STEP 12 — iOS 14 compatible. No iOS 15+ APIs.
 // AetherEngine-iOS · Clean-room.
 
 import SwiftUI
@@ -50,7 +50,7 @@ struct DashboardView: View {
                     }
                     .padding(.horizontal)
 
-                    // MARK: - Render Map (STEP 12)
+                    // MARK: - Render Map
                     Button(action: renderMap) {
                         HStack {
                             Image(systemName: "cube.fill")
@@ -58,7 +58,7 @@ struct DashboardView: View {
                                 .fontWeight(.semibold)
                             Spacer()
                             if isLoadingMap {
-                                ProgressView().tint(.white)
+                                ProgressView()
                             } else {
                                 Image(systemName: "chevron.right")
                             }
@@ -123,10 +123,11 @@ struct DashboardView: View {
             }
             .background(Color.black.edgesIgnoringSafeArea(.all))
             .navigationBarHidden(true)
-            .alert(alertTitle, isPresented: $showAlert) {
-                Button("OK", role: .cancel) {}
-            } message: {
-                Text(alertMessage)
+            // iOS 14 compatible alert API
+            .alert(isPresented: $showAlert) {
+                Alert(title:    Text(alertTitle),
+                      message:  Text(alertMessage),
+                      dismissButton: .default(Text("OK")))
             }
             .fullScreenCover(isPresented: $showRenderer) {
                 ZStack(alignment: .topLeading) {
@@ -148,19 +149,17 @@ struct DashboardView: View {
                                               in: .userDomainMask)[0].path
         "\(docs)/valve".withCString { engine_launch_game($0) }
         alertTitle = "Game Launched"
-        alertMessage = "VFS mounted:\nvalve"
+        alertMessage = "VFS mounted: valve"
         showAlert = true
     }
 
     private func renderMap() {
         isLoadingMap = true
 
-        // 1. Mount valve so VFS knows where to look
         let docs = FileManager.default.urls(for: .documentDirectory,
                                               in: .userDomainMask)[0].path
         "\(docs)/valve".withCString { engine_launch_game($0) }
 
-        // 2. Build the mesh
         let vpath = "maps/c0a0.bsp"
         let ok: Int32 = vpath.withCString { engine_bsp_mesh_build($0) }
 
@@ -170,7 +169,6 @@ struct DashboardView: View {
             alertTitle = "✅ Mesh Built"
             alertMessage = "Vertices: \(vCount)\nTriangles: \(tCount)\n\nOpening 3D view…"
             showAlert = true
-            // Small delay so alert can show, then open renderer
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
                 isLoadingMap = false
                 showRenderer = true
@@ -178,7 +176,7 @@ struct DashboardView: View {
         } else {
             isLoadingMap = false
             alertTitle = "❌ Mesh Build Failed"
-            alertMessage = "Could not load c0a0.bsp.\n\nMake sure the file exists at:\n\(docs)/valve/maps/c0a0.bsp"
+            alertMessage = "Could not load c0a0.bsp.\n\nExpected at:\n\(docs)/valve/maps/c0a0.bsp"
             showAlert = true
         }
     }
