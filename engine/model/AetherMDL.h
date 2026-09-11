@@ -1,4 +1,4 @@
-/* AetherMDL.h — GoldSrc MDL v10 parser (STEP 16A, diagnostics only).
+/* AetherMDL.h — GoldSrc MDL v10 parser (STEP 16A/B).
  * AetherEngine-iOS · Clean-room.
  */
 #ifndef AETHER_MDL_H
@@ -15,10 +15,9 @@ extern "C" {
 #define AETHER_MDL_NAME_MAX     64
 #define AETHER_MDL_BONE_NAME    32
 
-/* Parsed header (native layout, populated by loader). */
 typedef struct aether_mdl_info {
     char name[AETHER_MDL_NAME_MAX];
-    i32  length;               /* total file bytes */
+    i32  length;
     f32  eye_position[3];
     f32  min[3];
     f32  max[3];
@@ -35,13 +34,11 @@ typedef struct aether_mdl_info {
     i32  attachment_count;
 } aether_mdl_info_t;
 
-/* A single bone (name + parent index). */
 typedef struct aether_mdl_bone {
     char name[AETHER_MDL_BONE_NAME];
     i32  parent;
 } aether_mdl_bone_t;
 
-/* A single texture reference (name + size, no pixel data). */
 typedef struct aether_mdl_skin {
     char name[AETHER_MDL_NAME_MAX];
     i32  width;
@@ -49,7 +46,6 @@ typedef struct aether_mdl_skin {
     i32  flags;
 } aether_mdl_skin_t;
 
-/* A bodypart summary. */
 typedef struct aether_mdl_bodypart {
     char name[AETHER_MDL_NAME_MAX];
     i32  num_models;
@@ -57,21 +53,23 @@ typedef struct aether_mdl_bodypart {
 
 typedef struct aether_mdl aether_mdl_t;
 
-/* Load from disk / memory. Parses header + bones + textures + bodyparts. */
 aether_mdl_t *aether_mdl_load(const char *filepath);
 aether_mdl_t *aether_mdl_load_from_memory(const u8 *data, u32 size, const char *name);
 void          aether_mdl_free(aether_mdl_t *m);
 
-bool                        aether_mdl_is_valid(const aether_mdl_t *m);
-const aether_mdl_info_t    *aether_mdl_info(const aether_mdl_t *m);
-i32                         aether_mdl_bone_count(const aether_mdl_t *m);
-const aether_mdl_bone_t    *aether_mdl_bone_at(const aether_mdl_t *m, i32 idx);
-i32                         aether_mdl_skin_count(const aether_mdl_t *m);
-const aether_mdl_skin_t    *aether_mdl_skin_at(const aether_mdl_t *m, i32 idx);
-i32                         aether_mdl_bodypart_count(const aether_mdl_t *m);
+bool                         aether_mdl_is_valid(const aether_mdl_t *m);
+const aether_mdl_info_t     *aether_mdl_info(const aether_mdl_t *m);
+i32                          aether_mdl_bone_count(const aether_mdl_t *m);
+const aether_mdl_bone_t     *aether_mdl_bone_at(const aether_mdl_t *m, i32 idx);
+i32                          aether_mdl_skin_count(const aether_mdl_t *m);
+const aether_mdl_skin_t     *aether_mdl_skin_at(const aether_mdl_t *m, i32 idx);
+i32                          aether_mdl_bodypart_count(const aether_mdl_t *m);
 const aether_mdl_bodypart_t *aether_mdl_bodypart_at(const aether_mdl_t *m, i32 idx);
 
 void aether_mdl_dump(const aether_mdl_t *m);
+
+/* Raw accessor for geometry extraction (used by AetherMDLGeometry.c). */
+const u8 *aether_mdl_raw_data(const aether_mdl_t *m, u32 *out_size);
 
 #ifdef __cplusplus
 }
