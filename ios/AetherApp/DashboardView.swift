@@ -1,29 +1,33 @@
 // DashboardView.swift
-// The main UI — with BSP diagnostic button (STEP 11).
+// STEP 12 — Add "Render Map" button that shows the BSP mesh on screen.
 // AetherEngine-iOS · Clean-room.
 
 import SwiftUI
 
 struct DashboardView: View {
-    @State private var selectedGame: String = "Half-Life"
-    @State private var engineStatus: String = "Ready"
+    @State private var alertTitle:   String = ""
+    @State private var alertMessage: String = ""
+    @State private var showAlert:    Bool   = false
+    @State private var showRenderer: Bool   = false
+    @State private var isLoadingMap: Bool   = false
 
     let games: [(name: String, dir: String, status: String)] = [
-        ("Half-Life",             "valve",   "Ready"),
-        ("Blue Shift",            "bshift",  "Ready"),
-        ("Opposing Force",        "gearbox", "Ready"),
-        ("Counter-Strike 1.6",    "cstrike", "Ready"),
-        ("Condition Zero",        "czero",   "Ready")
+        ("Half-Life",          "valve",   "Ready"),
+        ("Blue Shift",         "bshift",  "Ready"),
+        ("Opposing Force",     "gearbox", "Ready"),
+        ("Counter-Strike 1.6", "cstrike", "Ready"),
+        ("Condition Zero",     "czero",   "Ready")
     ]
 
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 20) {
+
+                    // MARK: - Header
                     VStack(spacing: 5) {
                         Image(systemName: "cube.transparent")
-                            .resizable()
-                            .scaledToFit()
+                            .resizable().scaledToFit()
                             .frame(width: 80, height: 80)
                             .foregroundColor(.blue)
                         Text("AetherEngine")
@@ -33,51 +37,48 @@ struct DashboardView: View {
                     }
                     .padding(.top, 20)
 
-                    Button(action: {
-                        let docs = FileManager.default.urls(for: .documentDirectory,
-                                                              in: .userDomainMask)[0].path
-                        let gamePath = "\(docs)/valve"
-                        gamePath.withCString { cstr in engine_launch_game(cstr) }
-                    }) {
+                    // MARK: - Launch Game
+                    Button(action: launchGame) {
                         HStack {
                             Image(systemName: "play.fill")
                             Text("Launch Game").fontWeight(.semibold)
                             Spacer()
                             Image(systemName: "chevron.right")
                         }
-                        .padding().background(Color.blue).foregroundColor(.white).cornerRadius(12)
-                    }
-                    .padding(.horizontal)
-
-                    Button(action: {
-                        let docs = FileManager.default.urls(for: .documentDirectory,
-                                                              in: .userDomainMask)[0].path
-                        let gamePath = "\(docs)/valve"
-                        gamePath.withCString { cstr in engine_launch_game(cstr) }
-                        let vpath = "maps/c0a0.bsp"
-                        vpath.withCString { cstr in
-                            let ok = engine_bsp_inspect_vfs(cstr)
-                            print("[BSP] inspect result: \(ok)")
-                        }
-                    }) {
-                        HStack {
-                            Image(systemName: "doc.text.magnifyingglass")
-                            Text("Inspect c0a0.bsp (VFS)").fontWeight(.semibold)
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                        }
-                        .padding().background(Color.gray.opacity(0.35))
+                        .padding().background(Color.blue)
                         .foregroundColor(.white).cornerRadius(12)
                     }
                     .padding(.horizontal)
 
+                    // MARK: - Render Map (STEP 12)
+                    Button(action: renderMap) {
+                        HStack {
+                            Image(systemName: "cube.fill")
+                            Text(isLoadingMap ? "Loading…" : "Render c0a0.bsp")
+                                .fontWeight(.semibold)
+                            Spacer()
+                            if isLoadingMap {
+                                ProgressView().tint(.white)
+                            } else {
+                                Image(systemName: "chevron.right")
+                            }
+                        }
+                        .padding().background(Color.purple.opacity(0.75))
+                        .foregroundColor(.white).cornerRadius(12)
+                    }
+                    .padding(.horizontal)
+                    .disabled(isLoadingMap)
+
+                    // MARK: - Games List
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Text("Installed Games").font(.headline).foregroundColor(.white)
+                            Text("Installed Games")
+                                .font(.headline).foregroundColor(.white)
                             Spacer()
                             Text("View All").font(.subheadline).foregroundColor(.blue)
                         }
                         .padding(.horizontal)
+
                         ForEach(games, id: \.dir) { game in
                             HStack {
                                 Circle()
@@ -88,17 +89,19 @@ struct DashboardView: View {
                                     Text(game.dir).font(.caption).foregroundColor(.gray)
                                 }
                                 Spacer()
-                                Text(game.status)
-                                    .font(.caption)
+                                Text(game.status).font(.caption)
                                     .foregroundColor(game.status == "Ready" ? .green : .red)
                             }
-                            .padding().background(Color(UIColor.secondarySystemBackground))
+                            .padding()
+                            .background(Color(UIColor.secondarySystemBackground))
                             .cornerRadius(10).padding(.horizontal)
                         }
                     }
 
+                    // MARK: - Engine Status
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Engine Status").font(.headline).foregroundColor(.white)
+                        Text("Engine Status")
+                            .font(.headline).foregroundColor(.white)
                         HStack {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundColor(.blue).font(.largeTitle)
@@ -111,13 +114,72 @@ struct DashboardView: View {
                             .font(.subheadline).foregroundColor(.gray)
                         }
                     }
-                    .padding().background(Color(UIColor.secondarySystemBackground))
+                    .padding()
+                    .background(Color(UIColor.secondarySystemBackground))
                     .cornerRadius(12).padding(.horizontal)
+
                     Spacer()
                 }
             }
             .background(Color.black.edgesIgnoringSafeArea(.all))
             .navigationBarHidden(true)
+            .alert(alertTitle, isPresented: $showAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(alertMessage)
+            }
+            .fullScreenCover(isPresented: $showRenderer) {
+                ZStack(alignment: .topLeading) {
+                    MetalView().ignoresSafeArea()
+                    Button(action: { showRenderer = false }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 34))
+                            .foregroundColor(.white)
+                            .padding(20)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Actions
+    private func launchGame() {
+        let docs = FileManager.default.urls(for: .documentDirectory,
+                                              in: .userDomainMask)[0].path
+        "\(docs)/valve".withCString { engine_launch_game($0) }
+        alertTitle = "Game Launched"
+        alertMessage = "VFS mounted:\nvalve"
+        showAlert = true
+    }
+
+    private func renderMap() {
+        isLoadingMap = true
+
+        // 1. Mount valve so VFS knows where to look
+        let docs = FileManager.default.urls(for: .documentDirectory,
+                                              in: .userDomainMask)[0].path
+        "\(docs)/valve".withCString { engine_launch_game($0) }
+
+        // 2. Build the mesh
+        let vpath = "maps/c0a0.bsp"
+        let ok: Int32 = vpath.withCString { engine_bsp_mesh_build($0) }
+
+        if ok == 1 {
+            let vCount = engine_bsp_mesh_vertex_count()
+            let tCount = engine_bsp_mesh_triangle_count()
+            alertTitle = "✅ Mesh Built"
+            alertMessage = "Vertices: \(vCount)\nTriangles: \(tCount)\n\nOpening 3D view…"
+            showAlert = true
+            // Small delay so alert can show, then open renderer
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                isLoadingMap = false
+                showRenderer = true
+            }
+        } else {
+            isLoadingMap = false
+            alertTitle = "❌ Mesh Build Failed"
+            alertMessage = "Could not load c0a0.bsp.\n\nMake sure the file exists at:\n\(docs)/valve/maps/c0a0.bsp"
+            showAlert = true
         }
     }
 }
