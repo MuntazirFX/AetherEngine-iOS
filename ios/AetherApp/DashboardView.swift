@@ -1,5 +1,5 @@
 // DashboardView.swift — AetherEngine-iOS · Clean-room.
-// STEP 15A: texture diagnostics. STEP 16A/16B: MDL diagnostics + mesh extraction.
+// STEP 16C: Render MDL model inside map.
 
 import SwiftUI
 
@@ -60,7 +60,7 @@ struct DashboardView: View {
                         .foregroundColor(.white).cornerRadius(12)
                     }.padding(.horizontal)
 
-                    // Texture diagnostics (STEP 15A)
+                    // Texture diagnostics
                     Button(action: inspectTextures) {
                         HStack {
                             Image(systemName: "photo.on.rectangle.angled")
@@ -72,7 +72,7 @@ struct DashboardView: View {
                         .foregroundColor(.white).cornerRadius(12)
                     }.padding(.horizontal)
 
-                    // MDL diagnostics (STEP 16A)
+                    // MDL diagnostics
                     Button(action: inspectMDL) {
                         HStack {
                             Image(systemName: "person.crop.square.fill")
@@ -84,7 +84,7 @@ struct DashboardView: View {
                         .foregroundColor(.white).cornerRadius(12)
                     }.padding(.horizontal)
 
-                    // MDL Mesh extraction (STEP 16B)
+                    // MDL Mesh extraction
                     Button(action: testMDLMesh) {
                         HStack {
                             Image(systemName: "cube.transparent.fill")
@@ -93,6 +93,18 @@ struct DashboardView: View {
                             Image(systemName: "chevron.right")
                         }
                         .padding().background(Color.teal.opacity(0.7))
+                        .foregroundColor(.white).cornerRadius(12)
+                    }.padding(.horizontal)
+
+                    // Render Model in Map (STEP 16C)
+                    Button(action: renderModel) {
+                        HStack {
+                            Image(systemName: "person.fill.viewfinder")
+                            Text("Render Model in Map").fontWeight(.semibold)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                        }
+                        .padding().background(Color.pink.opacity(0.7))
                         .foregroundColor(.white).cornerRadius(12)
                     }.padding(.horizontal)
 
@@ -129,7 +141,7 @@ struct DashboardView: View {
                                 Text("Renderer: Metal (GPU)")
                                 Text("FPS Limit: 120 FPS")
                                 Text("Textures: Atlas 2048²")
-                                Text("Collision: Enabled")
+                                Text("MDL Models: Loaded")
                             }.font(.subheadline).foregroundColor(.gray)
                         }
                     }
@@ -203,69 +215,85 @@ struct DashboardView: View {
 
     private func inspectMDL() {
         "valve".withCString { engine_launch_game($0) }
-
         let candidates = [
-            "models/barney.mdl",
-            "models/scientist.mdl",
-            "models/gman.mdl",
-            "models/hgrunt.mdl",
-            "models/zombie.mdl",
-            "models/player.mdl"
+            "models/barney.mdl", "models/scientist.mdl", "models/gman.mdl",
+            "models/hgrunt.mdl", "models/zombie.mdl", "models/player.mdl"
         ]
-
         var buffer = [CChar](repeating: 0, count: 8192)
         var chosen = ""
         for path in candidates {
             let r: Int32 = path.withCString { engine_mdl_summary_text($0, &buffer, Int32(buffer.count)) }
-            if r == 1 || r == -2 {
-                chosen = path
-                break
-            }
+            if r == 1 || r == -2 { chosen = path; break }
         }
         let output = String(cString: buffer)
-
         alertTitle = chosen.isEmpty ? "❌ No MDL Found" : "MDL: \(chosen)"
         alertMessage = output
         showAlert = true
-        print("[MDL] \(output)")
     }
 
     private func testMDLMesh() {
         "valve".withCString { engine_launch_game($0) }
-
         let candidates = [
-            "models/barney.mdl",
-            "models/scientist.mdl",
-            "models/gman.mdl",
-            "models/hgrunt.mdl",
-            "models/zombie.mdl",
-            "models/player.mdl"
+            "models/barney.mdl", "models/scientist.mdl", "models/gman.mdl",
+            "models/hgrunt.mdl", "models/zombie.mdl", "models/player.mdl"
         ]
-
         var chosen = ""
         var ok = Int32(0)
         for path in candidates {
             ok = path.withCString { engine_mdl_mesh_build($0) }
             if ok == 1 { chosen = path; break }
         }
-
         if ok == 1 {
             let v = engine_mdl_mesh_vertex_count()
             let t = engine_mdl_mesh_triangle_count()
             alertTitle = "✅ MDL Mesh Extracted"
-            alertMessage = """
-            File: \(chosen)
-
-            Vertices: \(v)
-            Triangles: \(t)
-
-            (Metal rendering in STEP 16C)
-            """
+            alertMessage = "File: \(chosen)\n\nVertices: \(v)\nTriangles: \(t)"
         } else {
             alertTitle = "❌ Extraction Failed"
-            alertMessage = "Could not extract mesh from any known model.\n\nTried: barney, scientist, gman, hgrunt, zombie, player"
+            alertMessage = "Could not extract mesh from any known model."
         }
         showAlert = true
+    }
+
+    private func renderModel() {
+        isLoadingMap = true
+        "valve".withCString { engine_launch_game($0) }
+
+        // 1. Load map
+        let mapOk = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build($0) }
+        if mapOk != 1 {
+            isLoadingMap = false
+            alertTitle = "Map Load Failed"
+            alertMessage = "Could not load c0a0.bsp"
+            showAlert = true
+            return
+        }
+
+        // 2. Extract model
+        let candidates = [
+            "models/barney.mdl", "models/scientist.mdl", "models/gman.mdl",
+            "models/hgrunt.mdl", "models/zombie.mdl", "models/player.mdl"
+        ]
+        var chosen = ""
+        var mdlOk = Int32(0)
+        for path in candidates {
+            mdlOk = path.withCString { engine_mdl_mesh_build($0) }
+            if mdlOk == 1 { chosen = path; break }
+        }
+
+        isLoadingMap = false
+        if mdlOk == 1 {
+            alertTitle = "Rendering in Map"
+            alertMessage = "Map: c0a0.bsp\nModel: \(chosen)\n\nModel is 200 units in front of you."
+            showAlert = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                showRenderer = true
+            }
+        } else {
+            alertTitle = "Model Load Failed"
+            alertMessage = "Could not extract any MDL mesh."
+            showAlert = true
+        }
     }
 }
 
