@@ -1,6 +1,6 @@
 # build-arm64.yml
-# Builds AetherEngine-iOS for ARM64 and auto-publishes a release on every
-# push to main. IPA + static library are attached to the release.
+# Automatic build: runs on every push to main.
+# Auto-publishes release with IPA. No manual trigger.
 # AetherEngine-iOS · Clean-room.
 
 name: Build ARM64 IPA
@@ -10,15 +10,9 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-  workflow_dispatch:
 
 permissions:
-  contents: write         # needed to create releases
-
-env:
-  XCODE_VERSION: "15.4"
-  XCODEGEN_VERSION: "2.42.0"
-  CMAKE_VERSION: "3.29.6"
+  contents: write
 
 jobs:
   build-arm64:
@@ -27,18 +21,12 @@ jobs:
     timeout-minutes: 45
 
     steps:
-      # ---------------------------------------------------------------
-      # 1. Checkout
-      # ---------------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
           submodules: false
 
-      # ---------------------------------------------------------------
-      # 2. Toolchain versions
-      # ---------------------------------------------------------------
       - name: Show toolchain versions
         run: |
           echo "=== Xcode ==="
@@ -46,14 +34,9 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-path
           echo "=== Swift ==="
           swift --version
-          echo "=== CMake ==="
-          cmake --version || echo "cmake not pre-installed"
           echo "=== Host arch ==="
           uname -m
 
-      # ---------------------------------------------------------------
-      # 3. Install dependencies
-      # ---------------------------------------------------------------
       - name: Install CMake
         run: |
           if ! command -v cmake >/dev/null 2>&1; then
@@ -67,17 +50,11 @@ jobs:
           fi
           xcodegen --version
 
-      # ---------------------------------------------------------------
-      # 4. Make scripts executable
-      # ---------------------------------------------------------------
       - name: Make build scripts executable
         run: |
           chmod +x build/scripts/build_ios.sh
           chmod +x build/scripts/package_ipa.sh
 
-      # ---------------------------------------------------------------
-      # 5. Sanity compile engine (host)
-      # ---------------------------------------------------------------
       - name: Sanity compile engine (host)
         run: |
           set -euo pipefail
@@ -98,6 +75,8 @@ jobs:
             "$GITHUB_WORKSPACE/engine/fs/AetherPak.c" \
             "$GITHUB_WORKSPACE/engine/audio/AetherAudio.c" \
             "$GITHUB_WORKSPACE/engine/render/AetherRender.c" \
+            "$GITHUB_WORKSPACE/engine/bsp/AetherBSP.c" \
+            "$GITHUB_WORKSPACE/engine/bsp/AetherBSPGeometry.c" \
           ; do
             echo "→ cc -c $f"
             cc -std=c11 -Wall -Wextra -Wno-unused-parameter \
@@ -108,13 +87,11 @@ jobs:
               -I"$GITHUB_WORKSPACE/engine/fs" \
               -I"$GITHUB_WORKSPACE/engine/audio" \
               -I"$GITHUB_WORKSPACE/engine/render" \
+              -I"$GITHUB_WORKSPACE/engine/bsp" \
               -c "$f" -o "$(basename "$f" .c).o"
           done
           echo "✔ Sanity compile passed"
 
-      # ---------------------------------------------------------------
-      # 6. Build iOS app + IPA
-      # ---------------------------------------------------------------
       - name: Build iOS app (unsigned)
         run: bash build/scripts/build_ios.sh
 
@@ -126,14 +103,8 @@ jobs:
           set -euo pipefail
           IPA_PATH="build/out/AetherEngine.ipa"
           test -f "$IPA_PATH" || (echo "IPA missing!" && exit 1)
-          echo "IPA size:"
           ls -lh "$IPA_PATH"
-          echo "Contents:"
-          unzip -l "$IPA_PATH" | head -n 30
 
-      # ---------------------------------------------------------------
-      # 7. Compute metadata for release
-      # ---------------------------------------------------------------
       - name: Compute IPA metadata
         id: meta
         run: |
@@ -141,21 +112,14 @@ jobs:
           SIZE=$(du -sh "$IPA" | cut -f1)
           SHA=$(shasum -a 256 "$IPA" | awk '{print $1}')
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          DATE=$(date -u +"%Y-%m-%d")
+          DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
           BUILD_NO=${{ github.run_number }}
           echo "size=$SIZE"       >> $GITHUB_OUTPUT
           echo "sha=$SHA"         >> $GITHUB_OUTPUT
           echo "short=$SHORT_SHA" >> $GITHUB_OUTPUT
           echo "date=$DATE"       >> $GITHUB_OUTPUT
           echo "build=$BUILD_NO"  >> $GITHUB_OUTPUT
-          echo "IPA size : $SIZE"
-          echo "SHA256   : $SHA"
-          echo "Short SHA: $SHORT_SHA"
-          echo "Build #  : $BUILD_NO"
 
-      # ---------------------------------------------------------------
-      # 8. Upload artifacts (available on every run)
-      # ---------------------------------------------------------------
       - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
@@ -173,7 +137,7 @@ jobs:
           if-no-files-found: warn
 
       # ---------------------------------------------------------------
-      # 9. AUTO-PUBLISH RELEASE (only on push to main, not on PRs)
+      # AUTO-PUBLISH RELEASE (only on push to main, not on PRs)
       # ---------------------------------------------------------------
       - name: Build release notes
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -211,7 +175,6 @@ jobs:
           3. Open the app — it auto-creates the 5 game folders in Files app
           4. Drop your legally-owned game data into the correct folder
           EOF
-          echo "--- Release notes ---"
           cat /tmp/notes.md
 
       - name: Auto-publish GitHub Release
@@ -230,9 +193,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ---------------------------------------------------------------
-      # 10. Summary
-      # ---------------------------------------------------------------
       - name: Summary
         if: always()
         run: |
@@ -240,15 +200,11 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Run:** #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Runner:** macOS 14 (Apple Silicon)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Runner:** macOS 14" >> $GITHUB_STEP_SUMMARY
           echo "- **Target:** iOS 14+, ARM64" >> $GITHUB_STEP_SUMMARY
-          echo "- **Signing:** Disabled (unsigned IPA)" >> $GITHUB_STEP_SUMMARY
           if [ -f build/out/AetherEngine.ipa ]; then
             echo "- **IPA size:** $(du -sh build/out/AetherEngine.ipa | cut -f1)" >> $GITHUB_STEP_SUMMARY
             echo "- **Status:** ✅ Build succeeded" >> $GITHUB_STEP_SUMMARY
-            if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
-              echo "- **Release:** auto-published as \`build-${{ github.run_number }}\`" >> $GITHUB_STEP_SUMMARY
-            fi
           else
             echo "- **Status:** ❌ Build failed" >> $GITHUB_STEP_SUMMARY
           fi
