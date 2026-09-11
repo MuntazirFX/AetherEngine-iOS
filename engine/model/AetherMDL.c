@@ -6,13 +6,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* On-disk layout constants (little-endian, packed). */
 #define HDR_SIZE        244
 #define BONE_SIZE       112
 #define BODYPART_SIZE   76
 #define TEXTURE_SIZE    80
 
-/* Header field offsets (bytes from start of file). */
 #define OFF_ID          0
 #define OFF_VERSION     4
 #define OFF_NAME        8
@@ -45,18 +43,15 @@
 #define OFF_ATTACHIDX   216
 
 struct aether_mdl {
-    u8                  *raw;
-    u32                  raw_size;
-    bool                 valid;
-
-    aether_mdl_info_t    info;
-
-    aether_mdl_bone_t   *bones;
-    aether_mdl_skin_t   *skins;
+    u8                    *raw;
+    u32                    raw_size;
+    bool                   valid;
+    aether_mdl_info_t      info;
+    aether_mdl_bone_t     *bones;
+    aether_mdl_skin_t     *skins;
     aether_mdl_bodypart_t *bodyparts;
 };
 
-/* ---------- Little-endian readers ---------- */
 static i32 rd_i32(const u8 *p) {
     return (i32)((u32)p[0] | ((u32)p[1]<<8) | ((u32)p[2]<<16) | ((u32)p[3]<<24));
 }
@@ -73,7 +68,6 @@ static void rd_name(const u8 *p, char *out, size_t cap) {
     out[i] = 0;
 }
 
-/* ---------- Loader ---------- */
 static bool parse_mdl(aether_mdl_t *m) {
     if (m->raw_size < HDR_SIZE) return false;
 
@@ -91,7 +85,7 @@ static bool parse_mdl(aether_mdl_t *m) {
     }
 
     rd_name(h + OFF_NAME, m->info.name, sizeof m->info.name);
-    m->info.length       = rd_i32(h + OFF_LENGTH);
+    m->info.length = rd_i32(h + OFF_LENGTH);
     m->info.eye_position[0] = rd_f32(h + OFF_EYE + 0);
     m->info.eye_position[1] = rd_f32(h + OFF_EYE + 4);
     m->info.eye_position[2] = rd_f32(h + OFF_EYE + 8);
@@ -101,16 +95,16 @@ static bool parse_mdl(aether_mdl_t *m) {
         m->info.bbmin[i] = rd_f32(h + OFF_BBMIN + i*4);
         m->info.bbmax[i] = rd_f32(h + OFF_BBMAX + i*4);
     }
-    m->info.bone_count        = rd_i32(h + OFF_NUMBONES);
-    m->info.bodypart_count    = rd_i32(h + OFF_NUMBODY);
-    m->info.texture_count     = rd_i32(h + OFF_NUMTEX);
-    m->info.sequence_count    = rd_i32(h + OFF_NUMSEQ);
-    m->info.skinref_count     = rd_i32(h + OFF_NUMSKINREF);
-    m->info.skinfamily_count  = rd_i32(h + OFF_NUMSKINFAM);
-    m->info.hitbox_count      = rd_i32(h + OFF_NUMHITBOX);
-    m->info.attachment_count  = rd_i32(h + OFF_NUMATTACH);
+    m->info.bone_count       = rd_i32(h + OFF_NUMBONES);
+    m->info.bodypart_count   = rd_i32(h + OFF_NUMBODY);
+    m->info.texture_count    = rd_i32(h + OFF_NUMTEX);
+    m->info.sequence_count   = rd_i32(h + OFF_NUMSEQ);
+    m->info.skinref_count    = rd_i32(h + OFF_NUMSKINREF);
+    m->info.skinfamily_count = rd_i32(h + OFF_NUMSKINFAM);
+    m->info.hitbox_count     = rd_i32(h + OFF_NUMHITBOX);
+    m->info.attachment_count = rd_i32(h + OFF_NUMATTACH);
 
-    /* ---- Bones ---- */
+    /* Bones */
     i32 bone_off = rd_i32(h + OFF_BONEIDX);
     if (m->info.bone_count > 0 && bone_off > 0) {
         m->bones = (aether_mdl_bone_t*)calloc(m->info.bone_count, sizeof(aether_mdl_bone_t));
@@ -125,7 +119,7 @@ static bool parse_mdl(aether_mdl_t *m) {
         }
     }
 
-    /* ---- Textures (skins) ---- */
+    /* Textures */
     i32 tex_off = rd_i32(h + OFF_TEXIDX);
     if (m->info.texture_count > 0 && tex_off > 0) {
         m->skins = (aether_mdl_skin_t*)calloc(m->info.texture_count, sizeof(aether_mdl_skin_t));
@@ -142,7 +136,7 @@ static bool parse_mdl(aether_mdl_t *m) {
         }
     }
 
-    /* ---- Bodyparts ---- */
+    /* Bodyparts */
     i32 body_off = rd_i32(h + OFF_BODYIDX);
     if (m->info.bodypart_count > 0 && body_off > 0) {
         m->bodyparts = (aether_mdl_bodypart_t*)calloc(m->info.bodypart_count, sizeof(aether_mdl_bodypart_t));
@@ -172,11 +166,7 @@ aether_mdl_t *aether_mdl_load_from_memory(const u8 *data, u32 size, const char *
     memcpy(m->raw, data, size);
     m->raw_size = size;
     if (!parse_mdl(m)) {
-        free(m->raw);
-        free(m->bones);
-        free(m->skins);
-        free(m->bodyparts);
-        free(m);
+        free(m->raw); free(m->bones); free(m->skins); free(m->bodyparts); free(m);
         return NULL;
     }
     aether_log(AETHER_LOG_INFO, "mdl", "loaded %s (%u bytes)",
@@ -248,7 +238,6 @@ void aether_mdl_dump(const aether_mdl_t *m) {
     aether_log(AETHER_LOG_INFO, "mdl", "  hitboxes    : %d", info->hitbox_count);
     aether_log(AETHER_LOG_INFO, "mdl", "  attachments : %d", info->attachment_count);
 
-    /* Show first few textures */
     i32 shown = info->texture_count > 5 ? 5 : info->texture_count;
     for (i32 i = 0; i < shown; ++i) {
         const aether_mdl_skin_t *s = &m->skins[i];
@@ -256,10 +245,8 @@ void aether_mdl_dump(const aether_mdl_t *m) {
                    i, s->name, s->width, s->height);
     }
     if (info->texture_count > shown)
-        aether_log(AETHER_LOG_INFO, "mdl", "  … +%d more textures",
-                   info->texture_count - shown);
+        aether_log(AETHER_LOG_INFO, "mdl", "  … +%d more textures", info->texture_count - shown);
 
-    /* Show first few bones */
     i32 bshown = info->bone_count > 5 ? 5 : info->bone_count;
     for (i32 i = 0; i < bshown; ++i) {
         const aether_mdl_bone_t *b = &m->bones[i];
@@ -267,8 +254,13 @@ void aether_mdl_dump(const aether_mdl_t *m) {
                    i, b->name, b->parent);
     }
     if (info->bone_count > bshown)
-        aether_log(AETHER_LOG_INFO, "mdl", "  … +%d more bones",
-                   info->bone_count - bshown);
+        aether_log(AETHER_LOG_INFO, "mdl", "  … +%d more bones", info->bone_count - bshown);
 
     aether_log(AETHER_LOG_INFO, "mdl", "=====================================");
+}
+
+const u8 *aether_mdl_raw_data(const aether_mdl_t *m, u32 *out_size) {
+    if (!m || !m->raw) { if (out_size) *out_size = 0; return NULL; }
+    if (out_size) *out_size = m->raw_size;
+    return m->raw;
 }
