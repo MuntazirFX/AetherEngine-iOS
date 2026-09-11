@@ -34,6 +34,7 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/audio/AetherAudio.c
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender.c
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSP.c
+    ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPGeometry.c
 )
 
 set(AETHER_ENGINE_HEADERS
@@ -52,6 +53,7 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/audio/AetherAudio.h
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender.h
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSP.h
+    ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPGeometry.h
 )
 
 add_library(aether_engine STATIC
