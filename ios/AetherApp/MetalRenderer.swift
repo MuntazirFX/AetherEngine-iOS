@@ -1,5 +1,5 @@
 // MetalRenderer.swift
-// Renders BSP mesh with texture atlas (STEP 15B-2).
+// Renders BSP mesh + MDL model. STEP 16C.
 // AetherEngine-iOS · Clean-room.
 
 import MetalKit
@@ -22,19 +22,28 @@ struct Uniforms {
 final class MetalRenderer: NSObject, MTKViewDelegate {
     let device: MTLDevice
     let queue:  MTLCommandQueue
-    var pipelineState: MTLRenderPipelineState?
-    var depthState:    MTLDepthStencilState?
-    var samplerState:  MTLSamplerState?
 
+    // BSP pipeline
+    var bspPipeline:  MTLRenderPipelineState?
+    var depthState:   MTLDepthStencilState?
+    var samplerState: MTLSamplerState?
+
+    // BSP buffers
     var vertexBuffer: MTLBuffer?
     var indexBuffer:  MTLBuffer?
     var indexCount:   Int = 0
 
     // Texture atlas
     var atlasTexture: MTLTexture?
-    var atlasWidth:   Int = 0
-    var atlasHeight:  Int = 0
     var hasTexture:   Bool = false
+
+    // MDL pipeline + buffers
+    var mdlPipeline:   MTLRenderPipelineState?
+    var mdlVertexBuf:  MTLBuffer?
+    var mdlIndexBuf:   MTLBuffer?
+    var mdlIndexCount: Int = 0
+    var mdlVertexCount: Int = 0
+    var hasMdl:        Bool = false
 
     private var lastTime: CFTimeInterval = CACurrentMediaTime()
 
@@ -51,20 +60,22 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         mtkView.preferredFramesPerSecond = 60
         mtkView.isPaused = false
         mtkView.enableSetNeedsDisplay = false
-        buildPipeline(mtkView: mtkView)
+
+        buildBspPipeline(mtkView: mtkView)
+        buildMdlPipeline(mtkView: mtkView)
         buildDepthState()
         buildSampler()
+
         let opaque = Unmanaged.passUnretained(mtkView).toOpaque()
         engine_renderer_attach_metal(opaque)
     }
 
-    // MARK: - Pipeline
-    private func buildPipeline(mtkView: MTKView) {
+    // MARK: - BSP pipeline
+    private func buildBspPipeline(mtkView: MTKView) {
         guard let lib = device.makeDefaultLibrary(),
               let vfn = lib.makeFunction(name: "aether_vertex_main"),
               let ffn = lib.makeFunction(name: "aether_fragment_main") else {
-            print("[MetalRenderer] Missing shader functions")
-            return
+            print("[MetalRenderer] BSP shader funcs missing"); return
         }
 
         let vd = MTLVertexDescriptor()
@@ -72,26 +83,55 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         vd.attributes[0].offset = 0
         vd.attributes[0].bufferIndex = 0
         vd.attributes[1].format = .float3
-        vd.attributes[1].offset = MemoryLayout<Float>.size * 3
+        vd.attributes[1].offset = 12
         vd.attributes[1].bufferIndex = 0
         vd.attributes[2].format = .float2
-        vd.attributes[2].offset = MemoryLayout<Float>.size * 6
+        vd.attributes[2].offset = 24
         vd.attributes[2].bufferIndex = 0
-        vd.layouts[0].stride = MemoryLayout<Float>.size * 8
+        vd.layouts[0].stride = 32
         vd.layouts[0].stepFunction = .perVertex
 
-        let desc = MTLRenderPipelineDescriptor()
-        desc.vertexFunction   = vfn
-        desc.fragmentFunction = ffn
-        desc.vertexDescriptor = vd
-        desc.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
-        desc.depthAttachmentPixelFormat      = mtkView.depthStencilPixelFormat
+        let d = MTLRenderPipelineDescriptor()
+        d.vertexFunction = vfn
+        d.fragmentFunction = ffn
+        d.vertexDescriptor = vd
+        d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+        d.depthAttachmentPixelFormat      = mtkView.depthStencilPixelFormat
+
+        do { bspPipeline = try device.makeRenderPipelineState(descriptor: d) }
+        catch { print("[MetalRenderer] BSP pipeline error: \(error)") }
+    }
+
+    // MARK: - MDL pipeline
+    private func buildMdlPipeline(mtkView: MTKView) {
+        guard let lib = device.makeDefaultLibrary(),
+              let vfn = lib.makeFunction(name: "aether_model_vertex"),
+              let ffn = lib.makeFunction(name: "aether_model_fragment") else {
+            print("[MetalRenderer] MDL shader funcs missing"); return
+        }
+
+        let vd = MTLVertexDescriptor()
+        vd.attributes[0].format = .float3
+        vd.attributes[0].offset = 0
+        vd.attributes[0].bufferIndex = 0
+        vd.attributes[1].format = .float3
+        vd.attributes[1].offset = 12
+        vd.attributes[1].bufferIndex = 0
+        vd.layouts[0].stride = 24
+        vd.layouts[0].stepFunction = .perVertex
+
+        let d = MTLRenderPipelineDescriptor()
+        d.vertexFunction = vfn
+        d.fragmentFunction = ffn
+        d.vertexDescriptor = vd
+        d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+        d.depthAttachmentPixelFormat      = mtkView.depthStencilPixelFormat
 
         do {
-            pipelineState = try device.makeRenderPipelineState(descriptor: desc)
-            print("[MetalRenderer] Pipeline built OK")
+            mdlPipeline = try device.makeRenderPipelineState(descriptor: d)
+            print("[MetalRenderer] MDL pipeline built OK")
         } catch {
-            print("[MetalRenderer] pipeline error: \(error)")
+            print("[MetalRenderer] MDL pipeline error: \(error)")
         }
     }
 
@@ -104,24 +144,27 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
     private func buildSampler() {
         let s = MTLSamplerDescriptor()
-        s.minFilter    = .linear
-        s.magFilter    = .linear
-        s.mipFilter    = .notMipmapped
+        s.minFilter = .linear
+        s.magFilter = .linear
         s.sAddressMode = .clampToEdge
         s.tAddressMode = .clampToEdge
         samplerState = device.makeSamplerState(descriptor: s)
     }
 
-    // MARK: - Mesh + texture upload
+    // MARK: - Uploads
     func uploadMeshFromEngine() {
+        uploadBspMesh()
+        uploadAtlas()
+        uploadMdlMesh()
+        engine_player_spawn_at_mesh_center()
+        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0), MDL=\(hasMdl))")
+    }
+
+    private func uploadBspMesh() {
         let vCount = Int(engine_bsp_mesh_vertex_count())
         let iCount = Int(engine_bsp_mesh_index_count())
-        guard vCount > 0, iCount > 0 else {
-            print("[MetalRenderer] No mesh to upload")
-            return
-        }
+        guard vCount > 0, iCount > 0 else { return }
 
-        // ---- Vertex buffer ----
         var vData = [Float](repeating: 0, count: vCount * 8)
         _ = vData.withUnsafeMutableBufferPointer { buf -> Int32 in
             Int32(engine_bsp_mesh_copy_vertices(buf.baseAddress, Int32(vCount)))
@@ -130,7 +173,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                                           length: vCount * 32,
                                           options: .storageModeShared)
 
-        // ---- Index buffer ----
         var iData = [UInt32](repeating: 0, count: iCount)
         _ = iData.withUnsafeMutableBufferPointer { buf -> Int32 in
             Int32(engine_bsp_mesh_copy_indices(buf.baseAddress, Int32(iCount)))
@@ -139,57 +181,75 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                                          length: iCount * 4,
                                          options: .storageModeShared)
         indexCount = iCount
-
-        // ---- Texture atlas ----
-        uploadAtlas()
-
-        // ---- Spawn player ----
-        engine_player_spawn_at_mesh_center()
-
-        print("[MetalRenderer] Uploaded: \(vCount) verts, \(iCount) indices, atlas=\(hasTexture)")
     }
 
     private func uploadAtlas() {
         let w = Int(engine_texture_atlas_width())
         let h = Int(engine_texture_atlas_height())
-        guard w > 0, h > 0 else {
-            print("[MetalRenderer] No atlas available")
-            hasTexture = false
-            return
-        }
+        guard w > 0, h > 0 else { hasTexture = false; return }
         let byteCount = w * h * 4
         var rgba = [UInt8](repeating: 0, count: byteCount)
         let copied = rgba.withUnsafeMutableBufferPointer { buf -> Int32 in
             Int32(engine_texture_atlas_copy_rgba(buf.baseAddress, Int32(byteCount)))
         }
-        guard copied == byteCount else {
-            print("[MetalRenderer] atlas copy failed: \(copied)/\(byteCount)")
-            hasTexture = false
-            return
-        }
+        guard copied == byteCount else { hasTexture = false; return }
 
-        let td = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: .rgba8Unorm,
-            width: w, height: h, mipmapped: false)
+        let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm,
+                                                          width: w, height: h, mipmapped: false)
         td.usage = .shaderRead
         td.storageMode = .shared
-
-        guard let tex = device.makeTexture(descriptor: td) else {
-            print("[MetalRenderer] makeTexture failed")
-            hasTexture = false
-            return
-        }
-
+        guard let tex = device.makeTexture(descriptor: td) else { hasTexture = false; return }
         tex.replace(region: MTLRegionMake2D(0, 0, w, h),
                     mipmapLevel: 0,
                     withBytes: rgba,
                     bytesPerRow: w * 4)
-
         atlasTexture = tex
-        atlasWidth   = w
-        atlasHeight  = h
-        hasTexture   = true
-        print("[MetalRenderer] Atlas uploaded: \(w)x\(h) (\(byteCount) bytes)")
+        hasTexture = true
+        print("[MetalRenderer] Atlas \(w)x\(h) uploaded")
+    }
+
+    private func uploadMdlMesh() {
+        let vCount = Int(engine_mdl_mesh_vertex_count())
+        let tCount = Int(engine_mdl_mesh_triangle_count())
+        guard vCount > 0, tCount > 0 else {
+            hasMdl = false
+            print("[MetalRenderer] No MDL mesh to upload")
+            return
+        }
+
+        var pData = [Float](repeating: 0, count: vCount * 3)
+        _ = pData.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_mdl_mesh_copy_positions(buf.baseAddress, Int32(vCount * 3)))
+        }
+        var nData = [Float](repeating: 0, count: vCount * 3)
+        _ = nData.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_mdl_mesh_copy_normals(buf.baseAddress, Int32(vCount * 3)))
+        }
+
+        var interleaved = [Float](repeating: 0, count: vCount * 6)
+        for i in 0..<vCount {
+            interleaved[i*6 + 0] = pData[i*3 + 0]
+            interleaved[i*6 + 1] = pData[i*3 + 1]
+            interleaved[i*6 + 2] = pData[i*3 + 2]
+            interleaved[i*6 + 3] = nData[i*3 + 0]
+            interleaved[i*6 + 4] = nData[i*3 + 1]
+            interleaved[i*6 + 5] = nData[i*3 + 2]
+        }
+        mdlVertexBuf = device.makeBuffer(bytes: interleaved,
+                                          length: vCount * 24,
+                                          options: .storageModeShared)
+
+        var iData = [UInt32](repeating: 0, count: tCount * 3)
+        _ = iData.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_mdl_mesh_copy_indices(buf.baseAddress, Int32(tCount * 3)))
+        }
+        mdlIndexBuf = device.makeBuffer(bytes: iData,
+                                         length: tCount * 3 * 4,
+                                         options: .storageModeShared)
+        mdlIndexCount  = tCount * 3
+        mdlVertexCount = vCount
+        hasMdl = true
+        print("[MetalRenderer] MDL mesh uploaded: \(vCount) verts, \(tCount) tris")
     }
 
     // MARK: - MTKViewDelegate
@@ -198,13 +258,11 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
-        // --- Timing ---
         let now = CACurrentMediaTime()
         var dt = Float(now - lastTime)
         lastTime = now
         if dt < 0.0 || dt > 0.25 { dt = 1.0/60.0 }
 
-        // --- Player simulation ---
         engine_player_tick(dt)
 
         guard let drawable = view.currentDrawable,
@@ -216,30 +274,27 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
         engine_renderer_begin_frame()
 
-        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else {
-            cmd.commit()
-            return
-        }
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { cmd.commit(); return }
+        if let ds = depthState { enc.setDepthStencilState(ds) }
 
-        if let ps = pipelineState { enc.setRenderPipelineState(ps) }
-        if let ds = depthState    { enc.setDepthStencilState(ds) }
-        if let ss = samplerState  { enc.setFragmentSamplerState(ss, index: 0) }
+        // Camera
+        var eye = [Float](repeating: 0, count: 3)
+        var fwd = [Float](repeating: 0, count: 3)
+        engine_player_get_eye(&eye)
+        engine_player_get_forward(&fwd)
 
-        if let vb = vertexBuffer, let ib = indexBuffer, indexCount > 0 {
-            // --- Camera ---
-            var eye = [Float](repeating: 0, count: 3)
-            var fwd = [Float](repeating: 0, count: 3)
-            engine_player_get_eye(&eye)
-            engine_player_get_forward(&fwd)
+        let eyeV  = simd_float3(eye[0], eye[1], eye[2])
+        let fwdV  = simd_normalize(simd_float3(fwd[0], fwd[1], fwd[2]))
+        let target = eyeV + fwdV
 
-            let eyeV = simd_float3(eye[0], eye[1], eye[2])
-            let fwdV = simd_normalize(simd_float3(fwd[0], fwd[1], fwd[2]))
-            let target = eyeV + fwdV
+        let viewMat = lookAtZUp(eye: eyeV, center: target, up: simd_float3(0, 0, 1))
+        let projMat = perspective(fovY: 75 * .pi / 180,
+                                   aspect: Float(view.drawableSize.width / view.drawableSize.height),
+                                   near: 1.0, far: 50000.0)
 
-            let viewMat = lookAtZUp(eye: eyeV, center: target, up: simd_float3(0, 0, 1))
-            let projMat = perspective(fovY: 75 * .pi / 180,
-                                       aspect: Float(view.drawableSize.width / view.drawableSize.height),
-                                       near: 1.0, far: 50000.0)
+        // ---- BSP ----
+        if let pipeline = bspPipeline, let vb = vertexBuffer, let ib = indexBuffer, indexCount > 0 {
+            enc.setRenderPipelineState(pipeline)
 
             var U = Uniforms(model: matrix_identity_float4x4,
                              view: viewMat,
@@ -253,13 +308,40 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             enc.setVertexBuffer(vb, offset: 0, index: 0)
             enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
             enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
-
-            if let tex = atlasTexture {
+            if let tex = atlasTexture, let ss = samplerState {
                 enc.setFragmentTexture(tex, index: 0)
+                enc.setFragmentSamplerState(ss, index: 0)
             }
-
             enc.drawIndexedPrimitives(type: .triangle,
                                       indexCount: indexCount,
+                                      indexType: .uint32,
+                                      indexBuffer: ib,
+                                      indexBufferOffset: 0)
+        }
+
+        // ---- MDL ----
+        if let pipeline = mdlPipeline, let vb = mdlVertexBuf, let ib = mdlIndexBuf, mdlIndexCount > 0 {
+            enc.setRenderPipelineState(pipeline)
+
+            var pos = [Float](repeating: 0, count: 3)
+            engine_mdl_mesh_get_render_pos(&pos)
+            var model = matrix_identity_float4x4
+            model.columns.3 = simd_float4(pos[0], pos[1], pos[2], 1.0)
+
+            var U = Uniforms(model: model,
+                             view: viewMat,
+                             proj: projMat,
+                             lightDir: simd_normalize(simd_float3(0.3, 0.8, 0.5)),
+                             pad0: 0,
+                             baseColor: simd_float4(0.85, 0.75, 0.55, 1.0),
+                             useTexture: 0.0,
+                             pad1: 0, pad2: 0, pad3: 0)
+
+            enc.setVertexBuffer(vb, offset: 0, index: 0)
+            enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+            enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+            enc.drawIndexedPrimitives(type: .triangle,
+                                      indexCount: mdlIndexCount,
                                       indexType: .uint32,
                                       indexBuffer: ib,
                                       indexBufferOffset: 0)
@@ -319,10 +401,6 @@ struct MetalView: UIViewRepresentable {
         }
         return v
     }
-
     func updateUIView(_ uiView: MTKView, context: Context) {}
-
-    final class Coordinator {
-        var renderer: MetalRenderer?
-    }
+    final class Coordinator { var renderer: MetalRenderer? }
 }
