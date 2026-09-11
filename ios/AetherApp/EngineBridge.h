@@ -94,6 +94,10 @@ void engine_mdl_mesh_release(void);
 void engine_mdl_mesh_get_render_pos(float out_xyz[3]);
 void engine_mdl_mesh_set_render_pos(float x, float y, float z);
 
+/* ---------- Entity diagnostics (STEP 17A) ---------- */
+int  engine_entity_dump_current_map(void);
+int  engine_entity_summary_text(char *out_buf, int out_cap);
+
 /* ---------- Utility ---------- */
 const char *engine_base_path(void);
 const char *engine_version(void);
