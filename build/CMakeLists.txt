@@ -36,6 +36,7 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSP.c
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPGeometry.c
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayer.c
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherCollision.c
 )
 
 set(AETHER_ENGINE_HEADERS
@@ -56,6 +57,7 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSP.h
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPGeometry.h
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayer.h
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherCollision.h
 )
 
 add_library(aether_engine STATIC
