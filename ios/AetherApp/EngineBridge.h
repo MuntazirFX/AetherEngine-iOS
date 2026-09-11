@@ -22,7 +22,7 @@ void engine_input_set_move(float x, float y);
 void engine_input_add_look(float dx, float dy);
 void engine_input_set_action(const char *action_name, bool pressed);
 
-/* ---------- Player / gameplay (STEP 13) ---------- */
+/* ---------- Player / gameplay (STEP 13/14) ---------- */
 void  engine_player_spawn_at_mesh_center(void);
 void  engine_player_tick(float dt);
 void  engine_player_get_eye(float out_xyz[3]);
@@ -64,6 +64,17 @@ int  engine_bsp_mesh_copy_vertices(float *out, int max_vertices);
 int  engine_bsp_mesh_copy_indices(uint32_t *out, int max_indices);
 void engine_bsp_mesh_release(void);
 
+/* ---------- Texture / WAD diagnostics (STEP 15A) ---------- */
+/* Load halflife.wad from VFS, dump lump summary. Returns 1 on success. */
+int  engine_texture_dump_wad(const char *wad_vpath);
+
+/* Load c0a0.bsp, dump embedded miptex info. Returns 1 on success. */
+int  engine_texture_dump_bsp_miptex(void);
+
+/* Text summary of WAD + BSP miptex. Fills out_buf (NUL-terminated).
+ * Returns 1 on success, 0 or -1 on failure. */
+int  engine_texture_summary_text(char *out_buf, int out_cap);
+
 /* ---------- Utility ---------- */
 const char *engine_base_path(void);
 const char *engine_version(void);
@@ -71,4 +82,4 @@ const char *engine_version(void);
 #ifdef __cplusplus
 }
 #endif
-#endif
+#endif /* ENGINE_BRIDGE_H */
