@@ -1,5 +1,5 @@
 // DashboardView.swift
-// STEP 12 — iOS 14 compatible. No iOS 15+ APIs.
+// STEP 12 — iOS 14 compatible. Correct dir_name passing.
 // AetherEngine-iOS · Clean-room.
 
 import SwiftUI
@@ -123,7 +123,6 @@ struct DashboardView: View {
             }
             .background(Color.black.edgesIgnoringSafeArea(.all))
             .navigationBarHidden(true)
-            // iOS 14 compatible alert API
             .alert(isPresented: $showAlert) {
                 Alert(title:    Text(alertTitle),
                       message:  Text(alertMessage),
@@ -144,22 +143,22 @@ struct DashboardView: View {
     }
 
     // MARK: - Actions
+
     private func launchGame() {
-        let docs = FileManager.default.urls(for: .documentDirectory,
-                                              in: .userDomainMask)[0].path
-        "\(docs)/valve".withCString { engine_launch_game($0) }
+        // FIX: pass dir_name ("valve"), NOT the full path
+        "valve".withCString { engine_launch_game($0) }
         alertTitle = "Game Launched"
-        alertMessage = "VFS mounted: valve"
+        alertMessage = "VFS mounted: valve\nBase: \(basePath())"
         showAlert = true
     }
 
     private func renderMap() {
         isLoadingMap = true
 
-        let docs = FileManager.default.urls(for: .documentDirectory,
-                                              in: .userDomainMask)[0].path
-        "\(docs)/valve".withCString { engine_launch_game($0) }
+        // 1. Mount valve (dir_name only!)
+        "valve".withCString { engine_launch_game($0) }
 
+        // 2. Build the mesh from VFS
         let vpath = "maps/c0a0.bsp"
         let ok: Int32 = vpath.withCString { engine_bsp_mesh_build($0) }
 
@@ -175,10 +174,24 @@ struct DashboardView: View {
             }
         } else {
             isLoadingMap = false
+            let base = basePath()
             alertTitle = "❌ Mesh Build Failed"
-            alertMessage = "Could not load c0a0.bsp.\n\nExpected at:\n\(docs)/valve/maps/c0a0.bsp"
+            alertMessage = """
+            Could not load c0a0.bsp.
+
+            Base: \(base)
+
+            Expected file:
+            \(base)/valve/maps/c0a0.bsp
+            """
             showAlert = true
         }
+    }
+
+    // Helper — returns the engine's Documents base path
+    private func basePath() -> String {
+        guard let cstr = engine_base_path() else { return "?" }
+        return String(cString: cstr)
     }
 }
 
