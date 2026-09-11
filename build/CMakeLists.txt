@@ -41,6 +41,7 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/texture/AetherTexture.c
     ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDL.c
     ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDLGeometry.c
+    ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntity.c
 )
 
 set(AETHER_ENGINE_HEADERS
@@ -65,6 +66,7 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/texture/AetherTexture.h
     ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDL.h
     ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDLGeometry.h
+    ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntity.h
 )
 
 add_library(aether_engine STATIC
@@ -84,6 +86,7 @@ target_include_directories(aether_engine PUBLIC
     ${CMAKE_SOURCE_DIR}/../engine/player
     ${CMAKE_SOURCE_DIR}/../engine/texture
     ${CMAKE_SOURCE_DIR}/../engine/model
+    ${CMAKE_SOURCE_DIR}/../engine/entity
 )
 
 if(MSVC)
