@@ -22,7 +22,7 @@ void engine_input_set_move(float x, float y);
 void engine_input_add_look(float dx, float dy);
 void engine_input_set_action(const char *action_name, bool pressed);
 
-/* ---------- Player / gameplay (STEP 13/14) ---------- */
+/* ---------- Player (STEP 13/14) ---------- */
 void  engine_player_spawn_at_mesh_center(void);
 void  engine_player_tick(float dt);
 void  engine_player_get_eye(float out_xyz[3]);
@@ -75,6 +75,13 @@ int  engine_texture_atlas_width(void);
 int  engine_texture_atlas_height(void);
 int  engine_texture_atlas_slot_count(void);
 int  engine_texture_atlas_copy_rgba(unsigned char *out, int max_bytes);
+
+/* ---------- MDL model diagnostics (STEP 16A) ---------- */
+/* Load an MDL from VFS, dump header + bones + textures summary. */
+int  engine_mdl_dump_vfs(const char *mdl_vpath);
+
+/* Text summary of an MDL (for Swift alert). */
+int  engine_mdl_summary_text(const char *mdl_vpath, char *out_buf, int out_cap);
 
 /* ---------- Utility ---------- */
 const char *engine_base_path(void);
