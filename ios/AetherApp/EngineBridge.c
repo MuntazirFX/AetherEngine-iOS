@@ -1,7 +1,7 @@
 // EngineBridge.c — AetherEngine-iOS · Clean-room.
-// STEP 14: collision + gravity + player physics.
-// STEP 15A: WAD + BSP miptex diagnostics.
-// STEP 15B: Palette + texture atlas.
+// STEP 14: collision + player physics.
+// STEP 15A/15B: WAD, palette, atlas.
+// STEP 16A: MDL diagnostics.
 
 #include "EngineBridge.h"
 
@@ -17,6 +17,7 @@
 #include "../../engine/player/AetherPlayer.h"
 #include "../../engine/player/AetherCollision.h"
 #include "../../engine/texture/AetherTexture.h"
+#include "../../engine/model/AetherMDL.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -67,7 +68,6 @@ static aether_input_action_t map_action_name(const char *n) {
 void engine_init(const char *base_path, const char *asset_path) {
     if (g_engine) return;
     if (!base_path || !asset_path) return;
-
     aether_str_copy(g_base_path, sizeof g_base_path, base_path);
     aether_log(AETHER_LOG_INFO, "bridge", "base_path = %s", g_base_path);
 
@@ -78,14 +78,12 @@ void engine_init(const char *base_path, const char *asset_path) {
     g_audio    = aether_audio_create();
     aether_audio_init(g_audio);
     g_renderer = aether_renderer_create(AETHER_RENDER_METAL, NULL);
-
     aether_player_init(&g_player);
 
     aether_engine_desc_t desc = { .base_path = base_path, .asset_path = asset_path, .flags = 0 };
     g_engine = aether_engine_create(&desc);
     if (!g_engine) return;
     if (aether_engine_start(g_engine) != AETHER_OK) return;
-
     g_game_manager = aether_game_manager_create(g_engine, base_path);
     aether_log(AETHER_LOG_INFO, "bridge", "engine fully initialized (%s)", AETHER_VERSION_STRING);
 }
@@ -139,7 +137,7 @@ void engine_input_set_action(const char *n, bool p) {
     if (a != AETHER_ACTION_NONE) aether_input_set_action(g_input, a, p);
 }
 
-/* ---------- Player (STEP 13/14) ---------- */
+/* ---------- Player ---------- */
 void engine_player_spawn_at_mesh_center(void) {
     if (!g_active_mesh) return;
     aether_vec3_t c = {
@@ -150,8 +148,7 @@ void engine_player_spawn_at_mesh_center(void) {
     aether_player_set_position(&g_player, c);
     g_player.yaw   = 0.0f;
     g_player.pitch = 0.0f;
-    aether_log(AETHER_LOG_INFO, "player",
-               "spawned at (%.1f, %.1f, %.1f)", c.x, c.y, c.z);
+    aether_log(AETHER_LOG_INFO, "player", "spawned at (%.1f, %.1f, %.1f)", c.x, c.y, c.z);
 }
 
 void engine_player_tick(float dt) {
@@ -171,9 +168,7 @@ void engine_player_get_forward(float out[3]) {
     out[0] = f.x; out[1] = f.y; out[2] = f.z;
 }
 void engine_player_get_position(float out[3]) {
-    out[0] = g_player.position.x;
-    out[1] = g_player.position.y;
-    out[2] = g_player.position.z;
+    out[0] = g_player.position.x; out[1] = g_player.position.y; out[2] = g_player.position.z;
 }
 void engine_player_set_position(float x, float y, float z) {
     aether_player_set_position(&g_player, (aether_vec3_t){x,y,z});
@@ -211,7 +206,6 @@ int engine_bsp_inspect(const char *p) {
     if (!b) return 0;
     aether_bsp_dump(b); aether_bsp_free(b); return 1;
 }
-
 int engine_bsp_inspect_vfs(const char *vp) {
     if (!g_fs || !vp) return 0;
     u32 sz = aether_fs_read_file(g_fs, vp, NULL, 0);
@@ -223,7 +217,6 @@ int engine_bsp_inspect_vfs(const char *vp) {
     free(buf); if (!b) return 0;
     aether_bsp_dump(b); aether_bsp_free(b); return 1;
 }
-
 int engine_bsp_inspect_vfs_text(const char *vp, char *ob, int cap) {
     if (!g_fs || !vp || !ob || cap <= 0) return -1;
     u32 sz = aether_fs_read_file(g_fs, vp, NULL, 0);
@@ -232,76 +225,54 @@ int engine_bsp_inspect_vfs_text(const char *vp, char *ob, int cap) {
     return 1;
 }
 
-/* ---------- BSP mesh + collision + atlas (STEP 12/14/15B) ---------- */
+/* ---------- BSP mesh + collision + atlas ---------- */
 int engine_bsp_mesh_build(const char *vp) {
     if (!g_fs || !vp) return 0;
-
-    /* Clean previous state */
     if (g_atlas)       { aether_texture_atlas_free(g_atlas); g_atlas = NULL; }
-    if (g_active_mesh) { aether_mesh_free(g_active_mesh);   g_active_mesh = NULL; }
+    if (g_active_mesh) { aether_mesh_free(g_active_mesh); g_active_mesh = NULL; }
     if (g_collision)   { aether_collision_free(g_collision); g_collision = NULL; }
 
-    /* Read BSP */
     u32 sz = aether_fs_read_file(g_fs, vp, NULL, 0);
-    if (sz == 0 || sz > 64u*1024u*1024u) {
-        aether_log(AETHER_LOG_ERROR, "bridge", "mesh: size %u invalid", sz);
-        return 0;
-    }
+    if (sz == 0 || sz > 64u*1024u*1024u) return 0;
     u8 *buf = (u8*)malloc(sz);
     if (!buf) return 0;
     u32 got = aether_fs_read_file(g_fs, vp, buf, sz);
     if (got != sz) { free(buf); return 0; }
-
     aether_bsp_t *b = aether_bsp_load_from_memory(buf, sz, vp);
     free(buf);
     if (!b) return 0;
 
-    /* ---- 1. Load palette (from halflife.wad, once) ---- */
+    /* Palette */
     if (!g_palette.loaded) {
         u32 wad_sz = aether_fs_read_file(g_fs, "halflife.wad", NULL, 0);
         if (wad_sz > 0 && wad_sz < 256u*1024u*1024u) {
             u8 *wbuf = (u8*)malloc(wad_sz);
             if (wbuf) {
-                u32 got_w = aether_fs_read_file(g_fs, "halflife.wad", wbuf, wad_sz);
-                if (got_w == wad_sz) {
+                u32 gw = aether_fs_read_file(g_fs, "halflife.wad", wbuf, wad_sz);
+                if (gw == wad_sz) {
                     aether_wad_t *w = aether_wad_load_from_memory(wbuf, wad_sz, "halflife.wad");
-                    if (w) {
-                        (void)aether_palette_from_wad(&g_palette, w);
-                        aether_wad_free(w);
-                    }
+                    if (w) { (void)aether_palette_from_wad(&g_palette, w); aether_wad_free(w); }
                 }
                 free(wbuf);
             }
         }
-        if (!g_palette.loaded) {
-            aether_palette_default(&g_palette);
-            aether_log(AETHER_LOG_WARN, "palette", "using default greyscale palette");
-        }
+        if (!g_palette.loaded) aether_palette_default(&g_palette);
     }
 
-    /* ---- 2. Build texture atlas from BSP-embedded miptex ---- */
+    /* Atlas */
     g_atlas = aether_texture_atlas_build(b, &g_palette);
-    if (g_atlas) {
-        aether_texture_atlas_dump(g_atlas);
-    } else {
-        aether_log(AETHER_LOG_WARN, "bridge", "no atlas (mesh will have no UVs)");
-    }
+    if (g_atlas) aether_texture_atlas_dump(g_atlas);
 
-    /* ---- 3. Build mesh (with atlas UVs if available) ---- */
+    /* Mesh */
     aether_mesh_t *m = NULL;
-    aether_result_t r = aether_mesh_from_bsp(b, g_atlas, &m);
-    if (r != AETHER_OK || !m) {
-        aether_bsp_free(b);
-        return 0;
+    if (aether_mesh_from_bsp(b, g_atlas, &m) != AETHER_OK || !m) {
+        aether_bsp_free(b); return 0;
     }
     g_active_mesh = m;
-    aether_log(AETHER_LOG_INFO, "bridge", "mesh OK: %u verts, %u tris",
-               m->vertex_count, m->index_count / 3);
 
-    /* ---- 4. Build collision ---- */
+    /* Collision */
     g_collision = aether_collision_build(b);
     if (g_collision) aether_collision_dump(g_collision);
-    else aether_log(AETHER_LOG_WARN, "bridge", "collision build failed (free-fly)");
 
     aether_bsp_free(b);
     return 1;
@@ -310,14 +281,12 @@ int engine_bsp_mesh_build(const char *vp) {
 int  engine_bsp_mesh_vertex_count(void)   { return g_active_mesh ? (int)g_active_mesh->vertex_count : 0; }
 int  engine_bsp_mesh_index_count(void)    { return g_active_mesh ? (int)g_active_mesh->index_count  : 0; }
 int  engine_bsp_mesh_triangle_count(void) { return g_active_mesh ? (int)(g_active_mesh->index_count / 3) : 0; }
-
 void engine_bsp_mesh_get_bounds(float *mn, float *mx, float *ctr) {
     if (!g_active_mesh) return;
     if (mn)  { mn[0]=g_active_mesh->bounds_min[0];    mn[1]=g_active_mesh->bounds_min[1];    mn[2]=g_active_mesh->bounds_min[2]; }
     if (mx)  { mx[0]=g_active_mesh->bounds_max[0];    mx[1]=g_active_mesh->bounds_max[1];    mx[2]=g_active_mesh->bounds_max[2]; }
     if (ctr) { ctr[0]=g_active_mesh->bounds_center[0];ctr[1]=g_active_mesh->bounds_center[1];ctr[2]=g_active_mesh->bounds_center[2]; }
 }
-
 int engine_bsp_mesh_copy_vertices(float *out, int maxv) {
     if (!g_active_mesh || !out || maxv <= 0) return 0;
     int n = (int)g_active_mesh->vertex_count; if (n > maxv) n = maxv;
@@ -330,54 +299,40 @@ int engine_bsp_mesh_copy_indices(uint32_t *out, int maxi) {
     memcpy(out, g_active_mesh->indices, (size_t)n * sizeof(u32));
     return n;
 }
-
 void engine_bsp_mesh_release(void) {
     if (g_atlas)       { aether_texture_atlas_free(g_atlas); g_atlas = NULL; }
     if (g_active_mesh) { aether_mesh_free(g_active_mesh); g_active_mesh = NULL; }
     if (g_collision)   { aether_collision_free(g_collision); g_collision = NULL; }
 }
 
-/* ---------- Texture / WAD diagnostics (STEP 15A) ---------- */
+/* ---------- Texture / WAD diagnostics ---------- */
 int engine_texture_dump_wad(const char *wad_vpath) {
     if (!g_fs || !wad_vpath) return 0;
     u32 sz = aether_fs_read_file(g_fs, wad_vpath, NULL, 0);
     if (sz == 0 || sz > 256u*1024u*1024u) return 0;
-    u8 *buf = (u8*)malloc(sz);
-    if (!buf) return 0;
+    u8 *buf = (u8*)malloc(sz); if (!buf) return 0;
     u32 got = aether_fs_read_file(g_fs, wad_vpath, buf, sz);
     if (got != sz) { free(buf); return 0; }
     aether_wad_t *w = aether_wad_load_from_memory(buf, sz, wad_vpath);
-    free(buf);
-    if (!w) return 0;
-    aether_wad_dump(w);
-    aether_wad_free(w);
-    return 1;
+    free(buf); if (!w) return 0;
+    aether_wad_dump(w); aether_wad_free(w); return 1;
 }
-
 int engine_texture_dump_bsp_miptex(void) {
     if (!g_fs) return 0;
     const char *vp = "maps/c0a0.bsp";
     u32 sz = aether_fs_read_file(g_fs, vp, NULL, 0);
     if (sz == 0) return 0;
-    u8 *buf = (u8*)malloc(sz);
-    if (!buf) return 0;
+    u8 *buf = (u8*)malloc(sz); if (!buf) return 0;
     u32 got = aether_fs_read_file(g_fs, vp, buf, sz);
     if (got != sz) { free(buf); return 0; }
     aether_bsp_t *b = aether_bsp_load_from_memory(buf, sz, vp);
-    free(buf);
-    if (!b) return 0;
-    aether_bsp_miptex_dump(b);
-    aether_bsp_free(b);
-    return 1;
+    free(buf); if (!b) return 0;
+    aether_bsp_miptex_dump(b); aether_bsp_free(b); return 1;
 }
-
 int engine_texture_summary_text(char *out_buf, int out_cap) {
     if (!g_fs || !out_buf || out_cap <= 0) return -1;
-
     int w = 0;
-    w += snprintf(out_buf + w, (size_t)(out_cap - w),
-                  "STEP 15A — Texture diagnostics\n\n");
-
+    w += snprintf(out_buf + w, (size_t)(out_cap - w), "STEP 15A — Texture diagnostics\n\n");
     const char *bsp_vp = "maps/c0a0.bsp";
     u32 bsp_sz = aether_fs_read_file(g_fs, bsp_vp, NULL, 0);
     if (bsp_sz > 0) {
@@ -395,13 +350,11 @@ int engine_texture_summary_text(char *out_buf, int out_cap) {
                         aether_miptex_info_t info;
                         if (aether_bsp_miptex_info(b, i, &info)) {
                             w += snprintf(out_buf + w, (size_t)(out_cap - w),
-                                          "  • %s  (%ux%u)\n",
-                                          info.name, info.width, info.height);
+                                          "  • %s  (%ux%u)\n", info.name, info.width, info.height);
                         }
                     }
                     if (count > shown)
-                        w += snprintf(out_buf + w, (size_t)(out_cap - w),
-                                      "  … +%u more\n", count - shown);
+                        w += snprintf(out_buf + w, (size_t)(out_cap - w), "  … +%u more\n", count - shown);
                     aether_bsp_free(b);
                 }
             }
@@ -410,7 +363,6 @@ int engine_texture_summary_text(char *out_buf, int out_cap) {
     } else {
         w += snprintf(out_buf + w, (size_t)(out_cap - w), "BSP: c0a0.bsp NOT FOUND\n");
     }
-
     w += snprintf(out_buf + w, (size_t)(out_cap - w), "\n");
     const char *wad_vp = "halflife.wad";
     u32 wad_sz = aether_fs_read_file(g_fs, wad_vp, NULL, 0);
@@ -418,14 +370,12 @@ int engine_texture_summary_text(char *out_buf, int out_cap) {
         w += snprintf(out_buf + w, (size_t)(out_cap - w), "WAD: halflife.wad NOT FOUND\n");
         return 1;
     }
-    u8 *wbuf = (u8*)malloc(wad_sz);
-    if (!wbuf) return 1;
+    u8 *wbuf = (u8*)malloc(wad_sz); if (!wbuf) return 1;
     u32 got = aether_fs_read_file(g_fs, wad_vp, wbuf, wad_sz);
     if (got != wad_sz) { free(wbuf); return 1; }
     aether_wad_t *wad = aether_wad_load_from_memory(wbuf, wad_sz, wad_vp);
     free(wbuf);
     if (!wad) { w += snprintf(out_buf + w, (size_t)(out_cap - w), "WAD: parse failed\n"); return 1; }
-
     u32 total = aether_wad_lump_count(wad);
     u32 miptex = 0, palette = 0, other = 0;
     for (u32 i = 0; i < total; ++i) {
@@ -436,28 +386,108 @@ int engine_texture_summary_text(char *out_buf, int out_cap) {
         else other++;
     }
     w += snprintf(out_buf + w, (size_t)(out_cap - w),
-                  "WAD: halflife.wad (%u bytes)\n"
-                  "  total lumps : %u\n  miptex      : %u\n  palette     : %u\n  other       : %u\n",
+                  "WAD: halflife.wad (%u bytes)\n  total lumps : %u\n  miptex      : %u\n  palette     : %u\n  other       : %u\n",
                   wad_sz, total, miptex, palette, other);
     aether_wad_free(wad);
     return 1;
 }
 
-/* ---------- Texture atlas (STEP 15B) ---------- */
-int engine_texture_build_atlas(void) {
-    return g_atlas ? 1 : 0;
-}
-
+/* ---------- Texture atlas ---------- */
+int engine_texture_build_atlas(void)      { return g_atlas ? 1 : 0; }
 int engine_texture_atlas_width(void)      { return g_atlas ? (int)g_atlas->width  : 0; }
 int engine_texture_atlas_height(void)     { return g_atlas ? (int)g_atlas->height : 0; }
 int engine_texture_atlas_slot_count(void) { return g_atlas ? (int)g_atlas->slot_count : 0; }
-
 int engine_texture_atlas_copy_rgba(unsigned char *out, int max_bytes) {
     if (!g_atlas || !g_atlas->rgba || !out || max_bytes <= 0) return 0;
     u32 needed = g_atlas->width * g_atlas->height * 4;
     if ((u32)max_bytes < needed) return 0;
     memcpy(out, g_atlas->rgba, needed);
     return (int)needed;
+}
+
+/* ---------- MDL diagnostics (STEP 16A) ---------- */
+int engine_mdl_dump_vfs(const char *mdl_vpath) {
+    if (!g_fs || !mdl_vpath) return 0;
+    u32 sz = aether_fs_read_file(g_fs, mdl_vpath, NULL, 0);
+    if (sz == 0 || sz > 64u*1024u*1024u) {
+        aether_log(AETHER_LOG_ERROR, "bridge", "MDL not found or too large: %s", mdl_vpath);
+        return 0;
+    }
+    u8 *buf = (u8*)malloc(sz);
+    if (!buf) return 0;
+    u32 got = aether_fs_read_file(g_fs, mdl_vpath, buf, sz);
+    if (got != sz) { free(buf); return 0; }
+    aether_mdl_t *m = aether_mdl_load_from_memory(buf, sz, mdl_vpath);
+    free(buf);
+    if (!m) return 0;
+    aether_mdl_dump(m);
+    aether_mdl_free(m);
+    return 1;
+}
+
+int engine_mdl_summary_text(const char *mdl_vpath, char *out_buf, int out_cap) {
+    if (!g_fs || !mdl_vpath || !out_buf || out_cap <= 0) return -1;
+    u32 sz = aether_fs_read_file(g_fs, mdl_vpath, NULL, 0);
+    if (sz == 0) {
+        snprintf(out_buf, (size_t)out_cap,
+                 "❌ MDL NOT FOUND\n\nPath: %s\n\nAapke `valve` folder mein\n`models/<name>.mdl` file\nmojood nahi hai.",
+                 mdl_vpath);
+        return 0;
+    }
+    if (sz > 64u*1024u*1024u) {
+        snprintf(out_buf, (size_t)out_cap, "MDL too large: %u bytes", sz);
+        return -1;
+    }
+
+    u8 *buf = (u8*)malloc(sz);
+    if (!buf) return -1;
+    u32 got = aether_fs_read_file(g_fs, mdl_vpath, buf, sz);
+    if (got != sz) { free(buf); return -1; }
+
+    aether_mdl_t *m = aether_mdl_load_from_memory(buf, sz, mdl_vpath);
+    free(buf);
+    if (!m) {
+        snprintf(out_buf, (size_t)out_cap, "❌ MDL PARSE FAILED: %s", mdl_vpath);
+        return -2;
+    }
+
+    const aether_mdl_info_t *info = aether_mdl_info(m);
+    int w = 0;
+    w += snprintf(out_buf + w, (size_t)(out_cap - w),
+                  "✅ MDL Parsed Successfully\n\n"
+                  "File: %s\n"
+                  "Size: %u bytes\n\n"
+                  "Name       : %s\n"
+                  "Bones      : %d\n"
+                  "Bodyparts  : %d\n"
+                  "Textures   : %d\n"
+                  "Sequences  : %d\n"
+                  "Hitboxes   : %d\n"
+                  "Attachments: %d\n\n",
+                  mdl_vpath, sz,
+                  info->name,
+                  info->bone_count,
+                  info->bodypart_count,
+                  info->texture_count,
+                  info->sequence_count,
+                  info->hitbox_count,
+                  info->attachment_count);
+
+    if (info->texture_count > 0) {
+        w += snprintf(out_buf + w, (size_t)(out_cap - w), "Textures:\n");
+        int shown = info->texture_count > 5 ? 5 : info->texture_count;
+        for (int i = 0; i < shown; ++i) {
+            const aether_mdl_skin_t *s = aether_mdl_skin_at(m, i);
+            if (s) w += snprintf(out_buf + w, (size_t)(out_cap - w),
+                                 "  • %s (%dx%d)\n", s->name, s->width, s->height);
+        }
+        if (info->texture_count > shown)
+            w += snprintf(out_buf + w, (size_t)(out_cap - w), "  … +%d more\n",
+                          info->texture_count - shown);
+    }
+
+    aether_mdl_free(m);
+    return 1;
 }
 
 /* ---------- Utility ---------- */
