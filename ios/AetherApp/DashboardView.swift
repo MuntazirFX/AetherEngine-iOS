@@ -92,7 +92,7 @@ struct DashboardView: View {
                             Spacer()
                             Image(systemName: "chevron.right")
                         }
-                        .padding().background(Color.teal.opacity(0.7))
+                        .padding().background(Color(red: 0.0, green: 0.5, blue: 0.5).opacity(0.7))
                         .foregroundColor(.white).cornerRadius(12)
                     }.padding(.horizontal)
 
