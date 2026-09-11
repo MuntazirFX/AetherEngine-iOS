@@ -1,5 +1,6 @@
 // EngineBridge.c — AetherEngine-iOS · Clean-room.
 // STEP 14: collision + gravity + player physics.
+// STEP 15A: WAD + BSP miptex diagnostics.
 
 #include "EngineBridge.h"
 
@@ -14,6 +15,7 @@
 #include "../../engine/bsp/AetherBSPGeometry.h"
 #include "../../engine/player/AetherPlayer.h"
 #include "../../engine/player/AetherCollision.h"
+#include "../../engine/texture/AetherTexture.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -136,7 +138,6 @@ void engine_input_set_action(const char *n, bool p) {
 /* ---------- Player (STEP 13/14) ---------- */
 void engine_player_spawn_at_mesh_center(void) {
     if (!g_active_mesh) return;
-    /* Spawn slightly above center so the player falls and lands on the floor. */
     aether_vec3_t c = {
         g_active_mesh->bounds_center[0],
         g_active_mesh->bounds_center[1],
@@ -231,11 +232,9 @@ int engine_bsp_inspect_vfs_text(const char *vp, char *ob, int cap) {
 int engine_bsp_mesh_build(const char *vp) {
     if (!g_fs || !vp) return 0;
 
-    /* Clean previous state */
     if (g_active_mesh) { aether_mesh_free(g_active_mesh);   g_active_mesh = NULL; }
     if (g_collision)   { aether_collision_free(g_collision); g_collision = NULL; }
 
-    /* Read BSP file from VFS */
     u32 sz = aether_fs_read_file(g_fs, vp, NULL, 0);
     if (sz == 0 || sz > 64u*1024u*1024u) {
         aether_log(AETHER_LOG_ERROR, "bridge", "mesh: size %u invalid", sz);
@@ -246,7 +245,6 @@ int engine_bsp_mesh_build(const char *vp) {
     u32 got = aether_fs_read_file(g_fs, vp, buf, sz);
     if (got != sz) { free(buf); return 0; }
 
-    /* ---- 1. Build render mesh ---- */
     aether_bsp_t *b = aether_bsp_load_from_memory(buf, sz, vp);
     if (!b) { free(buf); return 0; }
 
@@ -261,14 +259,9 @@ int engine_bsp_mesh_build(const char *vp) {
     aether_log(AETHER_LOG_INFO, "bridge", "mesh OK: %u verts, %u tris",
                m->vertex_count, m->index_count / 3);
 
-    /* ---- 2. Build collision hulls (re-use same bsp) ---- */
     g_collision = aether_collision_build(b);
-    if (g_collision) {
-        aether_collision_dump(g_collision);
-    } else {
-        aether_log(AETHER_LOG_WARN, "bridge",
-                   "collision build failed (player will free-fly)");
-    }
+    if (g_collision) aether_collision_dump(g_collision);
+    else aether_log(AETHER_LOG_WARN, "bridge", "collision build failed (free-fly)");
 
     aether_bsp_free(b);
     free(buf);
@@ -302,6 +295,147 @@ int engine_bsp_mesh_copy_indices(uint32_t *out, int maxi) {
 void engine_bsp_mesh_release(void) {
     if (g_active_mesh) { aether_mesh_free(g_active_mesh); g_active_mesh = NULL; }
     if (g_collision)   { aether_collision_free(g_collision); g_collision = NULL; }
+}
+
+/* ---------- Texture / WAD diagnostics (STEP 15A) ---------- */
+int engine_texture_dump_wad(const char *wad_vpath) {
+    if (!g_fs || !wad_vpath) return 0;
+
+    u32 sz = aether_fs_read_file(g_fs, wad_vpath, NULL, 0);
+    if (sz == 0) {
+        aether_log(AETHER_LOG_ERROR, "bridge", "WAD not found: %s", wad_vpath);
+        return 0;
+    }
+    if (sz > 256u*1024u*1024u) {
+        aether_log(AETHER_LOG_ERROR, "bridge", "WAD too large: %u bytes", sz);
+        return 0;
+    }
+
+    u8 *buf = (u8*)malloc(sz);
+    if (!buf) return 0;
+    u32 got = aether_fs_read_file(g_fs, wad_vpath, buf, sz);
+    if (got != sz) { free(buf); return 0; }
+
+    aether_wad_t *w = aether_wad_load_from_memory(buf, sz, wad_vpath);
+    free(buf);
+    if (!w) return 0;
+
+    aether_wad_dump(w);
+    aether_wad_free(w);
+    return 1;
+}
+
+int engine_texture_dump_bsp_miptex(void) {
+    if (!g_fs) return 0;
+    const char *vp = "maps/c0a0.bsp";
+
+    u32 sz = aether_fs_read_file(g_fs, vp, NULL, 0);
+    if (sz == 0) return 0;
+    u8 *buf = (u8*)malloc(sz);
+    if (!buf) return 0;
+    u32 got = aether_fs_read_file(g_fs, vp, buf, sz);
+    if (got != sz) { free(buf); return 0; }
+
+    aether_bsp_t *b = aether_bsp_load_from_memory(buf, sz, vp);
+    free(buf);
+    if (!b) return 0;
+
+    aether_bsp_miptex_dump(b);
+    aether_bsp_free(b);
+    return 1;
+}
+
+int engine_texture_summary_text(char *out_buf, int out_cap) {
+    if (!g_fs || !out_buf || out_cap <= 0) return -1;
+
+    int w = 0;
+    w += snprintf(out_buf + w, (size_t)(out_cap - w),
+                  "STEP 15A — Texture diagnostics\n\n");
+
+    /* --- 1. BSP embedded miptex --- */
+    const char *bsp_vp = "maps/c0a0.bsp";
+    u32 bsp_sz = aether_fs_read_file(g_fs, bsp_vp, NULL, 0);
+    if (bsp_sz > 0) {
+        u8 *bbuf = (u8*)malloc(bsp_sz);
+        if (bbuf) {
+            u32 got = aether_fs_read_file(g_fs, bsp_vp, bbuf, bsp_sz);
+            if (got == bsp_sz) {
+                aether_bsp_t *b = aether_bsp_load_from_memory(bbuf, bsp_sz, bsp_vp);
+                if (b) {
+                    u32 count = aether_bsp_miptex_count(b);
+                    w += snprintf(out_buf + w, (size_t)(out_cap - w),
+                                  "BSP: c0a0.bsp\n  embedded miptex: %u\n", count);
+
+                    u32 shown = count > 5 ? 5 : count;
+                    for (u32 i = 0; i < shown; ++i) {
+                        aether_miptex_info_t info;
+                        if (aether_bsp_miptex_info(b, i, &info)) {
+                            w += snprintf(out_buf + w, (size_t)(out_cap - w),
+                                          "  • %s  (%ux%u)\n",
+                                          info.name, info.width, info.height);
+                        }
+                    }
+                    if (count > shown)
+                        w += snprintf(out_buf + w, (size_t)(out_cap - w),
+                                      "  … +%u more\n", count - shown);
+                    aether_bsp_free(b);
+                }
+            }
+            free(bbuf);
+        }
+    } else {
+        w += snprintf(out_buf + w, (size_t)(out_cap - w),
+                      "BSP: c0a0.bsp NOT FOUND\n");
+    }
+
+    /* --- 2. halflife.wad --- */
+    w += snprintf(out_buf + w, (size_t)(out_cap - w), "\n");
+    const char *wad_vp = "halflife.wad";
+    u32 wad_sz = aether_fs_read_file(g_fs, wad_vp, NULL, 0);
+    if (wad_sz == 0) {
+        w += snprintf(out_buf + w, (size_t)(out_cap - w),
+                      "WAD: halflife.wad NOT FOUND\n");
+        return 1;
+    }
+    if (wad_sz > 256u*1024u*1024u) {
+        w += snprintf(out_buf + w, (size_t)(out_cap - w),
+                      "WAD: too large (%u bytes)\n", wad_sz);
+        return 1;
+    }
+
+    u8 *wbuf = (u8*)malloc(wad_sz);
+    if (!wbuf) return 1;
+    u32 got = aether_fs_read_file(g_fs, wad_vp, wbuf, wad_sz);
+    if (got != wad_sz) { free(wbuf); return 1; }
+
+    aether_wad_t *wad = aether_wad_load_from_memory(wbuf, wad_sz, wad_vp);
+    free(wbuf);
+    if (!wad) {
+        w += snprintf(out_buf + w, (size_t)(out_cap - w),
+                      "WAD: parse failed\n");
+        return 1;
+    }
+
+    u32 total = aether_wad_lump_count(wad);
+    u32 miptex = 0, palette = 0, other = 0;
+    for (u32 i = 0; i < total; ++i) {
+        const aether_wad_lump_t *L = aether_wad_lump_at(wad, i);
+        if (!L) continue;
+        if (L->type == AETHER_WAD_TYPE_MIPTEX) miptex++;
+        else if (L->type == AETHER_WAD_TYPE_PALETTE) palette++;
+        else other++;
+    }
+
+    w += snprintf(out_buf + w, (size_t)(out_cap - w),
+                  "WAD: halflife.wad (%u bytes)\n"
+                  "  total lumps : %u\n"
+                  "  miptex      : %u\n"
+                  "  palette     : %u\n"
+                  "  other       : %u\n",
+                  wad_sz, total, miptex, palette, other);
+
+    aether_wad_free(wad);
+    return 1;
 }
 
 /* ---------- Utility ---------- */
