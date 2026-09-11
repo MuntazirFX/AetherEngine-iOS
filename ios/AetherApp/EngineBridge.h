@@ -65,15 +65,16 @@ int  engine_bsp_mesh_copy_indices(uint32_t *out, int max_indices);
 void engine_bsp_mesh_release(void);
 
 /* ---------- Texture / WAD diagnostics (STEP 15A) ---------- */
-/* Load halflife.wad from VFS, dump lump summary. Returns 1 on success. */
 int  engine_texture_dump_wad(const char *wad_vpath);
-
-/* Load c0a0.bsp, dump embedded miptex info. Returns 1 on success. */
 int  engine_texture_dump_bsp_miptex(void);
-
-/* Text summary of WAD + BSP miptex. Fills out_buf (NUL-terminated).
- * Returns 1 on success, 0 or -1 on failure. */
 int  engine_texture_summary_text(char *out_buf, int out_cap);
+
+/* ---------- Texture atlas (STEP 15B) ---------- */
+int  engine_texture_build_atlas(void);
+int  engine_texture_atlas_width(void);
+int  engine_texture_atlas_height(void);
+int  engine_texture_atlas_slot_count(void);
+int  engine_texture_atlas_copy_rgba(unsigned char *out, int max_bytes);
 
 /* ---------- Utility ---------- */
 const char *engine_base_path(void);
