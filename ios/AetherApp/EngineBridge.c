@@ -1,7 +1,5 @@
 // EngineBridge.c — AetherEngine-iOS · Clean-room.
-// STEP 14: collision + player physics.
-// STEP 15A/15B: WAD, palette, atlas.
-// STEP 16A/16B: MDL diagnostics + mesh extraction.
+// STEP 16C: MDL model rendering.
 
 #include "EngineBridge.h"
 
@@ -39,6 +37,7 @@ static aether_model_mesh_t     *g_mdl_mesh     = NULL;
 static aether_palette_t         g_palette;
 static aether_player_t          g_player;
 static char                     g_base_path[512] = {0};
+static float                    g_mdl_render_pos[3] = { 0, 0, 0 };
 
 /* ---------- Metal hooks ---------- */
 extern int32_t aether_metal_init_swift    (void *user, uint32_t w, uint32_t h);
@@ -500,6 +499,18 @@ int engine_mdl_mesh_build(const char *mdl_vpath) {
 
     g_mdl_mesh = mesh;
     aether_mdl_geometry_dump(mesh);
+
+    /* STEP 16C: place model 200 units in front of player */
+    float fwd[3] = { 1.0f, 0.0f, 0.0f };
+    engine_player_get_forward(fwd);
+    float ply[3] = { 0, 0, 0 };
+    engine_player_get_position(ply);
+    g_mdl_render_pos[0] = ply[0] + fwd[0] * 200.0f;
+    g_mdl_render_pos[1] = ply[1] + fwd[1] * 200.0f;
+    g_mdl_render_pos[2] = ply[2] + fwd[2] * 200.0f;
+    aether_log(AETHER_LOG_INFO, "bridge",
+               "model render pos: (%.1f, %.1f, %.1f)",
+               g_mdl_render_pos[0], g_mdl_render_pos[1], g_mdl_render_pos[2]);
     return 1;
 }
 
@@ -537,6 +548,19 @@ int engine_mdl_mesh_copy_indices(uint32_t *out, int max_idx) {
 
 void engine_mdl_mesh_release(void) {
     if (g_mdl_mesh) { aether_mdl_geometry_free(g_mdl_mesh); g_mdl_mesh = NULL; }
+}
+
+/* ---------- MDL render placement (STEP 16C) ---------- */
+void engine_mdl_mesh_get_render_pos(float out[3]) {
+    out[0] = g_mdl_render_pos[0];
+    out[1] = g_mdl_render_pos[1];
+    out[2] = g_mdl_render_pos[2];
+}
+
+void engine_mdl_mesh_set_render_pos(float x, float y, float z) {
+    g_mdl_render_pos[0] = x;
+    g_mdl_render_pos[1] = y;
+    g_mdl_render_pos[2] = z;
 }
 
 /* ---------- Utility ---------- */
