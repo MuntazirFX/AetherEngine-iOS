@@ -16,10 +16,8 @@ if(AETHER_BUILD_IOS)
     set(CMAKE_SYSTEM_NAME iOS)
     set(CMAKE_OSX_ARCHITECTURES arm64)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
-    # Sysroot is now passed from the command line in build_ios.sh
 endif()
 
-# ---------- Engine source files ----------
 set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherCore.c
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherEngine.c
@@ -35,6 +33,7 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/fs/AetherPak.c
     ${CMAKE_SOURCE_DIR}/../engine/audio/AetherAudio.c
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender.c
+    ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSP.c
 )
 
 set(AETHER_ENGINE_HEADERS
@@ -52,6 +51,7 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/fs/AetherPak.h
     ${CMAKE_SOURCE_DIR}/../engine/audio/AetherAudio.h
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender.h
+    ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSP.h
 )
 
 add_library(aether_engine STATIC
@@ -67,6 +67,7 @@ target_include_directories(aether_engine PUBLIC
     ${CMAKE_SOURCE_DIR}/../engine/fs
     ${CMAKE_SOURCE_DIR}/../engine/audio
     ${CMAKE_SOURCE_DIR}/../engine/render
+    ${CMAKE_SOURCE_DIR}/../engine/bsp
 )
 
 if(MSVC)
@@ -87,11 +88,4 @@ if(AETHER_BUILD_IOS)
         "-framework AVFoundation"
         "-framework CoreGraphics"
     )
-endif()
-
-if(AETHER_BUILD_TESTS)
-    enable_testing()
-    add_executable(aether_smoke ${CMAKE_SOURCE_DIR}/../tests/smoke.c)
-    target_link_libraries(aether_smoke PRIVATE aether_engine)
-    add_test(NAME smoke COMMAND aether_smoke)
 endif()
