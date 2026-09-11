@@ -19,13 +19,9 @@ void engine_shutdown(void);
 void engine_launch_game(const char *game_dir);
 void engine_stop_game(void);
 
-/* ---------- Input: movement ---------- */
+/* ---------- Input ---------- */
 void engine_input_set_move(float x, float y);
-
-/* ---------- Input: look delta ---------- */
 void engine_input_add_look(float dx, float dy);
-
-/* ---------- Input: actions ---------- */
 void engine_input_set_action(const char *action_name, bool pressed);
 
 /* ---------- Settings ---------- */
@@ -45,6 +41,10 @@ void engine_renderer_attach_metal(void *mtkView);
 void engine_renderer_resize(unsigned int width, unsigned int height);
 void engine_renderer_begin_frame(void);
 void engine_renderer_end_frame(void);
+
+/* ---------- BSP (STEP 11) ---------- */
+int  engine_bsp_inspect(const char *bsp_path);
+int  engine_bsp_inspect_vfs(const char *vpath);
 
 /* ---------- Utility ---------- */
 const char *engine_version(void);
