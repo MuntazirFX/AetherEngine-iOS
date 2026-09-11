@@ -1,5 +1,5 @@
 // DashboardView.swift — AetherEngine-iOS · Clean-room.
-// STEP 16C: Render MDL model inside map.
+// STEP 17A: Entity diagnostics.
 
 import SwiftUI
 
@@ -23,7 +23,7 @@ struct DashboardView: View {
             ScrollView {
                 VStack(spacing: 20) {
 
-                    // Header
+                    // MARK: - Header
                     VStack(spacing: 5) {
                         Image(systemName: "cube.transparent")
                             .resizable().scaledToFit()
@@ -34,7 +34,7 @@ struct DashboardView: View {
                             .font(.subheadline).foregroundColor(.gray)
                     }.padding(.top, 20)
 
-                    // Launch Game
+                    // MARK: - Launch Game
                     Button(action: startGame) {
                         HStack {
                             Image(systemName: "play.fill")
@@ -48,7 +48,7 @@ struct DashboardView: View {
                         .foregroundColor(.white).cornerRadius(12)
                     }.padding(.horizontal).disabled(isLoadingMap)
 
-                    // Load map (debug)
+                    // MARK: - Load map (debug)
                     Button(action: loadMapOnly) {
                         HStack {
                             Image(systemName: "cube.fill")
@@ -60,7 +60,7 @@ struct DashboardView: View {
                         .foregroundColor(.white).cornerRadius(12)
                     }.padding(.horizontal)
 
-                    // Texture diagnostics
+                    // MARK: - Texture diagnostics
                     Button(action: inspectTextures) {
                         HStack {
                             Image(systemName: "photo.on.rectangle.angled")
@@ -72,7 +72,7 @@ struct DashboardView: View {
                         .foregroundColor(.white).cornerRadius(12)
                     }.padding(.horizontal)
 
-                    // MDL diagnostics
+                    // MARK: - MDL diagnostics
                     Button(action: inspectMDL) {
                         HStack {
                             Image(systemName: "person.crop.square.fill")
@@ -84,7 +84,7 @@ struct DashboardView: View {
                         .foregroundColor(.white).cornerRadius(12)
                     }.padding(.horizontal)
 
-                    // MDL Mesh extraction
+                    // MARK: - MDL Mesh extraction
                     Button(action: testMDLMesh) {
                         HStack {
                             Image(systemName: "cube.transparent.fill")
@@ -96,7 +96,7 @@ struct DashboardView: View {
                         .foregroundColor(.white).cornerRadius(12)
                     }.padding(.horizontal)
 
-                    // Render Model in Map (STEP 16C)
+                    // MARK: - Render Model in Map (STEP 16C)
                     Button(action: renderModel) {
                         HStack {
                             Image(systemName: "person.fill.viewfinder")
@@ -108,7 +108,19 @@ struct DashboardView: View {
                         .foregroundColor(.white).cornerRadius(12)
                     }.padding(.horizontal)
 
-                    // Games list
+                    // MARK: - Entity diagnostics (STEP 17A)
+                    Button(action: inspectEntities) {
+                        HStack {
+                            Image(systemName: "person.3.fill")
+                            Text("Inspect Map Entities").fontWeight(.semibold)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                        }
+                        .padding().background(Color.yellow.opacity(0.7))
+                        .foregroundColor(.black).cornerRadius(12)
+                    }.padding(.horizontal)
+
+                    // MARK: - Games list
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             Text("Installed Games").font(.headline).foregroundColor(.white)
@@ -131,7 +143,7 @@ struct DashboardView: View {
                         }
                     }
 
-                    // Engine status
+                    // MARK: - Engine status
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Engine Status").font(.headline).foregroundColor(.white)
                         HStack {
@@ -141,7 +153,7 @@ struct DashboardView: View {
                                 Text("Renderer: Metal (GPU)")
                                 Text("FPS Limit: 120 FPS")
                                 Text("Textures: Atlas 2048²")
-                                Text("MDL Models: Loaded")
+                                Text("Entities: Parsed")
                             }.font(.subheadline).foregroundColor(.gray)
                         }
                     }
@@ -294,6 +306,28 @@ struct DashboardView: View {
             alertMessage = "Could not extract any MDL mesh."
             showAlert = true
         }
+    }
+
+    // MARK: - STEP 17A
+    private func inspectEntities() {
+        // Load a map first (this triggers entity parsing)
+        "valve".withCString { engine_launch_game($0) }
+        let mapOk = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build($0) }
+
+        if mapOk != 1 {
+            alertTitle = "Map Load Failed"
+            alertMessage = "Could not load c0a0.bsp"
+            showAlert = true
+            return
+        }
+
+        var buffer = [CChar](repeating: 0, count: 8192)
+        let result: Int32 = engine_entity_summary_text(&buffer, Int32(buffer.count))
+        let output = String(cString: buffer)
+        alertTitle = result == 1 ? "Entity Diagnostics" : "No Entities"
+        alertMessage = output
+        showAlert = true
+        print("[Entities] \(output)")
     }
 }
 
