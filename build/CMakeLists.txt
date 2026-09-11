@@ -38,6 +38,7 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayer.c
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherCollision.c
     ${CMAKE_SOURCE_DIR}/../engine/texture/AetherTexture.c
+    ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDL.c
 )
 
 set(AETHER_ENGINE_HEADERS
@@ -60,6 +61,7 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayer.h
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherCollision.h
     ${CMAKE_SOURCE_DIR}/../engine/texture/AetherTexture.h
+    ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDL.h
 )
 
 add_library(aether_engine STATIC
@@ -78,6 +80,7 @@ target_include_directories(aether_engine PUBLIC
     ${CMAKE_SOURCE_DIR}/../engine/bsp
     ${CMAKE_SOURCE_DIR}/../engine/player
     ${CMAKE_SOURCE_DIR}/../engine/texture
+    ${CMAKE_SOURCE_DIR}/../engine/model
 )
 
 if(MSVC)
