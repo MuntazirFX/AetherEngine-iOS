@@ -1,4 +1,6 @@
 // EngineBridge.c — AetherEngine-iOS · Clean-room.
+// STEP 14: collision + gravity + player physics.
+
 #include "EngineBridge.h"
 
 #include "../../engine/core/AetherEngine.h"
@@ -11,6 +13,7 @@
 #include "../../engine/bsp/AetherBSP.h"
 #include "../../engine/bsp/AetherBSPGeometry.h"
 #include "../../engine/player/AetherPlayer.h"
+#include "../../engine/player/AetherCollision.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -25,9 +28,9 @@ static aether_fs_t           *g_fs           = NULL;
 static aether_audio_t        *g_audio        = NULL;
 static aether_renderer_t     *g_renderer     = NULL;
 static aether_mesh_t         *g_active_mesh  = NULL;
+static aether_collision_t    *g_collision    = NULL;
 static aether_player_t        g_player;
 static char                   g_base_path[512] = {0};
-static bool                   g_player_ready  = false;
 
 /* ---------- Metal hooks ---------- */
 extern int32_t aether_metal_init_swift    (void *user, uint32_t w, uint32_t h);
@@ -83,6 +86,7 @@ void engine_init(const char *base_path, const char *asset_path) {
 }
 
 void engine_shutdown(void) {
+    if (g_collision)    { aether_collision_free(g_collision); g_collision = NULL; }
     if (g_active_mesh)  { aether_mesh_free(g_active_mesh); g_active_mesh = NULL; }
     if (g_game_manager) { aether_game_manager_destroy(g_game_manager); g_game_manager = NULL; }
     if (g_engine)       { aether_engine_stop(g_engine); aether_engine_destroy(g_engine); g_engine = NULL; }
@@ -129,28 +133,27 @@ void engine_input_set_action(const char *n, bool p) {
     if (a != AETHER_ACTION_NONE) aether_input_set_action(g_input, a, p);
 }
 
-/* ---------- Player (STEP 13) ---------- */
+/* ---------- Player (STEP 13/14) ---------- */
 void engine_player_spawn_at_mesh_center(void) {
     if (!g_active_mesh) return;
+    /* Spawn slightly above center so the player falls and lands on the floor. */
     aether_vec3_t c = {
         g_active_mesh->bounds_center[0],
         g_active_mesh->bounds_center[1],
-        g_active_mesh->bounds_center[2]
+        g_active_mesh->bounds_center[2] + 50.0f
     };
     aether_player_set_position(&g_player, c);
     g_player.yaw   = 0.0f;
     g_player.pitch = 0.0f;
-    g_player_ready = true;
     aether_log(AETHER_LOG_INFO, "player",
                "spawned at (%.1f, %.1f, %.1f)", c.x, c.y, c.z);
 }
 
 void engine_player_tick(float dt) {
     if (!g_input) return;
-    /* Input → player */
     aether_input_begin_frame(g_input);
     const aether_input_state_t *st = aether_input_state(g_input);
-    aether_player_update(&g_player, st, dt);
+    aether_player_update(&g_player, st, g_collision, dt);
     aether_input_end_frame(g_input);
 }
 
@@ -169,7 +172,6 @@ void engine_player_get_position(float out[3]) {
 }
 void engine_player_set_position(float x, float y, float z) {
     aether_player_set_position(&g_player, (aether_vec3_t){x,y,z});
-    g_player_ready = true;
 }
 void  engine_player_set_angles(float y, float p) { g_player.yaw = y; g_player.pitch = p; }
 float engine_player_get_yaw(void)   { return g_player.yaw; }
@@ -197,7 +199,7 @@ void engine_renderer_resize(unsigned int w, unsigned int h) { if (g_renderer) (v
 void engine_renderer_begin_frame(void) { if (g_renderer) (void)aether_renderer_begin_frame(g_renderer, 0.05f, 0.05f, 0.08f, 1.0f); }
 void engine_renderer_end_frame(void)   { if (g_renderer) (void)aether_renderer_end_frame(g_renderer); }
 
-/* ---------- BSP ---------- */
+/* ---------- BSP inspect ---------- */
 int engine_bsp_inspect(const char *p) {
     if (!p) return 0;
     aether_bsp_t *b = aether_bsp_load(p);
@@ -225,23 +227,51 @@ int engine_bsp_inspect_vfs_text(const char *vp, char *ob, int cap) {
     return 1;
 }
 
+/* ---------- BSP mesh + collision (STEP 12 + 14) ---------- */
 int engine_bsp_mesh_build(const char *vp) {
     if (!g_fs || !vp) return 0;
-    if (g_active_mesh) { aether_mesh_free(g_active_mesh); g_active_mesh = NULL; }
 
+    /* Clean previous state */
+    if (g_active_mesh) { aether_mesh_free(g_active_mesh);   g_active_mesh = NULL; }
+    if (g_collision)   { aether_collision_free(g_collision); g_collision = NULL; }
+
+    /* Read BSP file from VFS */
     u32 sz = aether_fs_read_file(g_fs, vp, NULL, 0);
-    if (sz == 0 || sz > 64u*1024u*1024u) return 0;
-    u8 *buf = (u8*)malloc(sz); if (!buf) return 0;
+    if (sz == 0 || sz > 64u*1024u*1024u) {
+        aether_log(AETHER_LOG_ERROR, "bridge", "mesh: size %u invalid", sz);
+        return 0;
+    }
+    u8 *buf = (u8*)malloc(sz);
+    if (!buf) return 0;
     u32 got = aether_fs_read_file(g_fs, vp, buf, sz);
     if (got != sz) { free(buf); return 0; }
+
+    /* ---- 1. Build render mesh ---- */
     aether_bsp_t *b = aether_bsp_load_from_memory(buf, sz, vp);
-    free(buf); if (!b) return 0;
+    if (!b) { free(buf); return 0; }
 
     aether_mesh_t *m = NULL;
     aether_result_t r = aether_mesh_from_bsp(b, &m);
-    aether_bsp_free(b);
-    if (r != AETHER_OK || !m) return 0;
+    if (r != AETHER_OK || !m) {
+        aether_bsp_free(b);
+        free(buf);
+        return 0;
+    }
     g_active_mesh = m;
+    aether_log(AETHER_LOG_INFO, "bridge", "mesh OK: %u verts, %u tris",
+               m->vertex_count, m->index_count / 3);
+
+    /* ---- 2. Build collision hulls (re-use same bsp) ---- */
+    g_collision = aether_collision_build(b);
+    if (g_collision) {
+        aether_collision_dump(g_collision);
+    } else {
+        aether_log(AETHER_LOG_WARN, "bridge",
+                   "collision build failed (player will free-fly)");
+    }
+
+    aether_bsp_free(b);
+    free(buf);
     return 1;
 }
 
@@ -268,7 +298,11 @@ int engine_bsp_mesh_copy_indices(uint32_t *out, int maxi) {
     memcpy(out, g_active_mesh->indices, (size_t)n * sizeof(u32));
     return n;
 }
-void engine_bsp_mesh_release(void) { if (g_active_mesh) { aether_mesh_free(g_active_mesh); g_active_mesh = NULL; } }
+
+void engine_bsp_mesh_release(void) {
+    if (g_active_mesh) { aether_mesh_free(g_active_mesh); g_active_mesh = NULL; }
+    if (g_collision)   { aether_collision_free(g_collision); g_collision = NULL; }
+}
 
 /* ---------- Utility ---------- */
 const char *engine_base_path(void) { return g_base_path; }
