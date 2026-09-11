@@ -90,6 +90,10 @@ int  engine_mdl_mesh_copy_normals(float *out, int max_floats);
 int  engine_mdl_mesh_copy_indices(uint32_t *out, int max_indices);
 void engine_mdl_mesh_release(void);
 
+/* ---------- MDL render placement (STEP 16C) ---------- */
+void engine_mdl_mesh_get_render_pos(float out_xyz[3]);
+void engine_mdl_mesh_set_render_pos(float x, float y, float z);
+
 /* ---------- Utility ---------- */
 const char *engine_base_path(void);
 const char *engine_version(void);
