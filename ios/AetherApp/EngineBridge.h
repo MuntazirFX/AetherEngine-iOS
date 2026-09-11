@@ -22,7 +22,7 @@ void engine_input_set_move(float x, float y);
 void engine_input_add_look(float dx, float dy);
 void engine_input_set_action(const char *action_name, bool pressed);
 
-/* ---------- Player (STEP 13/14) ---------- */
+/* ---------- Player ---------- */
 void  engine_player_spawn_at_mesh_center(void);
 void  engine_player_tick(float dt);
 void  engine_player_get_eye(float out_xyz[3]);
@@ -64,24 +64,31 @@ int  engine_bsp_mesh_copy_vertices(float *out, int max_vertices);
 int  engine_bsp_mesh_copy_indices(uint32_t *out, int max_indices);
 void engine_bsp_mesh_release(void);
 
-/* ---------- Texture / WAD diagnostics (STEP 15A) ---------- */
+/* ---------- Texture / WAD diagnostics ---------- */
 int  engine_texture_dump_wad(const char *wad_vpath);
 int  engine_texture_dump_bsp_miptex(void);
 int  engine_texture_summary_text(char *out_buf, int out_cap);
 
-/* ---------- Texture atlas (STEP 15B) ---------- */
+/* ---------- Texture atlas ---------- */
 int  engine_texture_build_atlas(void);
 int  engine_texture_atlas_width(void);
 int  engine_texture_atlas_height(void);
 int  engine_texture_atlas_slot_count(void);
 int  engine_texture_atlas_copy_rgba(unsigned char *out, int max_bytes);
 
-/* ---------- MDL model diagnostics (STEP 16A) ---------- */
-/* Load an MDL from VFS, dump header + bones + textures summary. */
+/* ---------- MDL diagnostics ---------- */
 int  engine_mdl_dump_vfs(const char *mdl_vpath);
-
-/* Text summary of an MDL (for Swift alert). */
 int  engine_mdl_summary_text(const char *mdl_vpath, char *out_buf, int out_cap);
+
+/* ---------- MDL mesh extraction (STEP 16B) ---------- */
+int  engine_mdl_mesh_build(const char *mdl_vpath);
+int  engine_mdl_mesh_vertex_count(void);
+int  engine_mdl_mesh_triangle_count(void);
+void engine_mdl_mesh_get_bounds(float out_min[3], float out_max[3], float out_center[3]);
+int  engine_mdl_mesh_copy_positions(float *out, int max_floats);
+int  engine_mdl_mesh_copy_normals(float *out, int max_floats);
+int  engine_mdl_mesh_copy_indices(uint32_t *out, int max_indices);
+void engine_mdl_mesh_release(void);
 
 /* ---------- Utility ---------- */
 const char *engine_base_path(void);
