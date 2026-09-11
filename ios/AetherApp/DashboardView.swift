@@ -1,5 +1,6 @@
-// DashboardView.swift — STEP 13: Launch Game opens first-person 3D view.
-// AetherEngine-iOS · Clean-room.
+// DashboardView.swift — AetherEngine-iOS · Clean-room.
+// STEP 13/14: Launch Game → first-person view with collision.
+// STEP 15A: Texture diagnostics button.
 
 import SwiftUI
 
@@ -11,17 +12,19 @@ struct DashboardView: View {
     @State private var isLoadingMap: Bool   = false
 
     let games: [(name: String, dir: String, status: String)] = [
-        ("Half-Life", "valve", "Ready"),
-        ("Blue Shift", "bshift", "Ready"),
-        ("Opposing Force", "gearbox", "Ready"),
+        ("Half-Life",          "valve",   "Ready"),
+        ("Blue Shift",         "bshift",  "Ready"),
+        ("Opposing Force",     "gearbox", "Ready"),
         ("Counter-Strike 1.6", "cstrike", "Ready"),
-        ("Condition Zero", "czero", "Ready")
+        ("Condition Zero",     "czero",   "Ready")
     ]
 
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 20) {
+
+                    // MARK: - Header
                     VStack(spacing: 5) {
                         Image(systemName: "cube.transparent")
                             .resizable().scaledToFit()
@@ -33,7 +36,7 @@ struct DashboardView: View {
                     }
                     .padding(.top, 20)
 
-                    // Launch Game → 3D view
+                    // MARK: - Launch Game
                     Button(action: startGame) {
                         HStack {
                             Image(systemName: "play.fill")
@@ -49,7 +52,7 @@ struct DashboardView: View {
                     .padding(.horizontal)
                     .disabled(isLoadingMap)
 
-                    // Render only (debug)
+                    // MARK: - Load Only (debug)
                     Button(action: loadMapOnly) {
                         HStack {
                             Image(systemName: "cube.fill")
@@ -62,12 +65,28 @@ struct DashboardView: View {
                     }
                     .padding(.horizontal)
 
+                    // MARK: - Texture Diagnostics (STEP 15A)
+                    Button(action: inspectTextures) {
+                        HStack {
+                            Image(systemName: "photo.on.rectangle.angled")
+                            Text("Inspect Textures (WAD + BSP)")
+                                .fontWeight(.semibold)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                        }
+                        .padding().background(Color.orange.opacity(0.7))
+                        .foregroundColor(.white).cornerRadius(12)
+                    }
+                    .padding(.horizontal)
+
+                    // MARK: - Installed Games
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             Text("Installed Games").font(.headline).foregroundColor(.white)
                             Spacer()
                             Text("View All").font(.subheadline).foregroundColor(.blue)
                         }.padding(.horizontal)
+
                         ForEach(games, id: \.dir) { g in
                             HStack {
                                 Circle().fill(g.status == "Ready" ? Color.green : Color.red)
@@ -84,27 +103,31 @@ struct DashboardView: View {
                         }
                     }
 
+                    // MARK: - Engine Status
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Engine Status").font(.headline).foregroundColor(.white)
                         HStack {
-                            Image(systemName: "checkmark.circle.fill").foregroundColor(.blue).font(.largeTitle)
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.blue).font(.largeTitle)
                             VStack(alignment: .leading) {
                                 Text("Renderer: Metal (GPU)")
                                 Text("FPS Limit: 120 FPS")
                                 Text("First-Person Camera: Active")
-                                Text("Movement: WASD / Joystick")
+                                Text("Collision: Enabled")
                             }.font(.subheadline).foregroundColor(.gray)
                         }
                     }
                     .padding().background(Color(UIColor.secondarySystemBackground))
                     .cornerRadius(12).padding(.horizontal)
+
                     Spacer()
                 }
             }
             .background(Color.black.edgesIgnoringSafeArea(.all))
             .navigationBarHidden(true)
             .alert(isPresented: $showAlert) {
-                Alert(title: Text(alertTitle), message: Text(alertMessage),
+                Alert(title: Text(alertTitle),
+                      message: Text(alertMessage),
                       dismissButton: .default(Text("OK")))
             }
             .fullScreenCover(isPresented: $showRenderer) {
@@ -129,6 +152,7 @@ struct DashboardView: View {
     }
 
     // MARK: - Actions
+
     private func loadMapOnly() {
         isLoadingMap = true
         "valve".withCString { engine_launch_game($0) }
@@ -147,9 +171,7 @@ struct DashboardView: View {
 
     private func startGame() {
         isLoadingMap = true
-        // 1. Mount VFS
         "valve".withCString { engine_launch_game($0) }
-        // 2. Build mesh
         let ok = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build($0) }
         isLoadingMap = false
         if ok == 1 {
@@ -159,6 +181,26 @@ struct DashboardView: View {
             alertMessage = "c0a0.bsp could not be loaded."
             showAlert = true
         }
+    }
+
+    private func inspectTextures() {
+        // 1. Ensure VFS is mounted
+        "valve".withCString { engine_launch_game($0) }
+
+        // 2. Get text summary
+        var buffer = [CChar](repeating: 0, count: 8192)
+        let result: Int32 = engine_texture_summary_text(&buffer, Int32(buffer.count))
+        let output = String(cString: buffer)
+
+        if result == 1 {
+            alertTitle = "Texture Diagnostics"
+            alertMessage = output
+        } else {
+            alertTitle = "Diagnostic Failed"
+            alertMessage = "Could not run texture diagnostic.\n\n\(output)"
+        }
+        showAlert = true
+        print("[Textures] result: \(result)\n\(output)")
     }
 }
 
