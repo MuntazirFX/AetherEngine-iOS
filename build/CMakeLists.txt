@@ -18,6 +18,7 @@ if(AETHER_BUILD_IOS)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
 endif()
 
+# ---------- Engine sources ----------
 set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherCore.c
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherEngine.c
@@ -39,6 +40,7 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherCollision.c
     ${CMAKE_SOURCE_DIR}/../engine/texture/AetherTexture.c
     ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDL.c
+    ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDLGeometry.c
 )
 
 set(AETHER_ENGINE_HEADERS
@@ -62,6 +64,7 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherCollision.h
     ${CMAKE_SOURCE_DIR}/../engine/texture/AetherTexture.h
     ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDL.h
+    ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDLGeometry.h
 )
 
 add_library(aether_engine STATIC
