@@ -1,5 +1,5 @@
 // AetherApp.swift
-// Main entry point for the AetherEngine iOS application.
+// Main entry point. Uses NSHomeDirectory() for a clean Documents path.
 // AetherEngine-iOS · Clean-room.
 
 import SwiftUI
@@ -8,16 +8,23 @@ import SwiftUI
 struct AetherApp: App {
 
     init() {
-        // Only initialize the C engine here. Audio is deferred to onAppear
-        // so the app doesn't crash if the audio session isn't ready yet.
-        let documentsPath = FileManager.default.urls(
-            for: .documentDirectory, in: .userDomainMask
-        )[0].path
-        let bundlePath = Bundle.main.bundlePath
+        // NSHomeDirectory() always returns the app's container root.
+        // Concatenating "/Documents" gives us a clean, non-nested path.
+        let home          = NSHomeDirectory()
+        let documentsPath = "\(home)/Documents"
+        let bundlePath    = Bundle.main.bundlePath
 
+        print("[AetherApp] home = \(home)")
+        print("[AetherApp] documents = \(documentsPath)")
+        print("[AetherApp] bundle = \(bundlePath)")
+
+        // 1. Bring the C engine up
         engine_init(documentsPath, bundlePath)
 
-        // Apply saved settings to the C engine (values only, no playback).
+        // 2. Audio backend
+        AetherAudioiOS.shared.start()
+
+        // 3. Apply saved settings
         let vol = UserDefaults.standard.double(forKey: "s_master_volume")
         engine_audio_set_master_volume(Float(vol > 0 ? vol : 1.0))
 
@@ -30,10 +37,8 @@ struct AetherApp: App {
             DashboardView()
                 .preferredColorScheme(.dark)
                 .onAppear {
-                    // Deferred audio startup — runs once the UI is visible.
                     AetherAudioiOS.shared.start()
 
-                    // Re-apply volume now that audio is running.
                     let vol = UserDefaults.standard.double(forKey: "s_master_volume")
                     AetherAudioiOS.shared.setMasterVolume(Float(vol > 0 ? vol : 1.0))
                     let muted = UserDefaults.standard.bool(forKey: "s_mute")
