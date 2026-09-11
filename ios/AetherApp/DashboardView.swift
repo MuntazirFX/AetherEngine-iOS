@@ -1,5 +1,5 @@
 // DashboardView.swift — AetherEngine-iOS · Clean-room.
-// STEP 15A: texture diagnostics. STEP 16A: MDL diagnostics.
+// STEP 15A: texture diagnostics. STEP 16A/16B: MDL diagnostics + mesh extraction.
 
 import SwiftUI
 
@@ -81,6 +81,18 @@ struct DashboardView: View {
                             Image(systemName: "chevron.right")
                         }
                         .padding().background(Color.green.opacity(0.7))
+                        .foregroundColor(.white).cornerRadius(12)
+                    }.padding(.horizontal)
+
+                    // MDL Mesh extraction (STEP 16B)
+                    Button(action: testMDLMesh) {
+                        HStack {
+                            Image(systemName: "cube.transparent.fill")
+                            Text("Extract MDL Mesh").fontWeight(.semibold)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                        }
+                        .padding().background(Color.teal.opacity(0.7))
                         .foregroundColor(.white).cornerRadius(12)
                     }.padding(.horizontal)
 
@@ -190,10 +202,8 @@ struct DashboardView: View {
     }
 
     private func inspectMDL() {
-        // Ensure VFS is mounted
         "valve".withCString { engine_launch_game($0) }
 
-        // Try barney.mdl (scientist). Fall back to any known model.
         let candidates = [
             "models/barney.mdl",
             "models/scientist.mdl",
@@ -207,19 +217,55 @@ struct DashboardView: View {
         var chosen = ""
         for path in candidates {
             let r: Int32 = path.withCString { engine_mdl_summary_text($0, &buffer, Int32(buffer.count)) }
-            if r == 1 || r == -2 {  // found or parse error → stop
+            if r == 1 || r == -2 {
                 chosen = path
                 break
             }
         }
         let output = String(cString: buffer)
 
-        alertTitle = chosen.isEmpty
-            ? "❌ No MDL Found"
-            : "MDL: \(chosen)"
+        alertTitle = chosen.isEmpty ? "❌ No MDL Found" : "MDL: \(chosen)"
         alertMessage = output
         showAlert = true
         print("[MDL] \(output)")
+    }
+
+    private func testMDLMesh() {
+        "valve".withCString { engine_launch_game($0) }
+
+        let candidates = [
+            "models/barney.mdl",
+            "models/scientist.mdl",
+            "models/gman.mdl",
+            "models/hgrunt.mdl",
+            "models/zombie.mdl",
+            "models/player.mdl"
+        ]
+
+        var chosen = ""
+        var ok = Int32(0)
+        for path in candidates {
+            ok = path.withCString { engine_mdl_mesh_build($0) }
+            if ok == 1 { chosen = path; break }
+        }
+
+        if ok == 1 {
+            let v = engine_mdl_mesh_vertex_count()
+            let t = engine_mdl_mesh_triangle_count()
+            alertTitle = "✅ MDL Mesh Extracted"
+            alertMessage = """
+            File: \(chosen)
+
+            Vertices: \(v)
+            Triangles: \(t)
+
+            (Metal rendering in STEP 16C)
+            """
+        } else {
+            alertTitle = "❌ Extraction Failed"
+            alertMessage = "Could not extract mesh from any known model.\n\nTried: barney, scientist, gman, hgrunt, zombie, player"
+        }
+        showAlert = true
     }
 }
 
