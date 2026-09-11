@@ -1,5 +1,5 @@
 // MetalRenderer.swift
-// Renders the BSP mesh (STEP 12).
+// Renders the BSP mesh (STEP 12). iOS 14 compatible.
 // AetherEngine-iOS · Clean-room.
 
 import MetalKit
@@ -22,16 +22,14 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     var pipelineState: MTLRenderPipelineState?
     var depthState:    MTLDepthStencilState?
 
-    // Mesh buffers
     var vertexBuffer: MTLBuffer?
     var indexBuffer:  MTLBuffer?
     var indexCount:   Int = 0
     var vertexCount:  Int = 0
 
-    // Camera
-    var camPos   = simd_float3(0, 0, 500)
+    var camPos    = simd_float3(0, 0, 500)
     var camTarget = simd_float3(0, 0, 0)
-    var camUp    = simd_float3(0, 1, 0)
+    var camUp     = simd_float3(0, 1, 0)
 
     init?(mtkView: MTKView) {
         guard let dev = mtkView.device ?? MTLCreateSystemDefaultDevice(),
@@ -46,7 +44,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         buildPipeline(mtkView: mtkView)
         buildDepthState()
 
-        // Tell C engine we're ready
         let opaque = Unmanaged.passUnretained(mtkView).toOpaque()
         engine_renderer_attach_metal(opaque)
     }
@@ -88,7 +85,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         depthState = device.makeDepthStencilState(descriptor: d)
     }
 
-    /// Called from Swift to upload the current mesh from the C engine.
     func uploadMeshFromEngine() {
         let vCount = Int(engine_bsp_mesh_vertex_count())
         let iCount = Int(engine_bsp_mesh_index_count())
@@ -96,7 +92,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             print("[MetalRenderer] No mesh to upload"); return
         }
 
-        // Vertex buffer: 8 floats per vertex
         let vBytes = vCount * 8 * MemoryLayout<Float>.size
         var vData = [Float](repeating: 0, count: vCount * 8)
         let gotV = vData.withUnsafeMutableBufferPointer { buf -> Int32 in
@@ -105,7 +100,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         guard gotV > 0 else { print("[MetalRenderer] vertex copy failed"); return }
         vertexBuffer = device.makeBuffer(bytes: vData, length: vBytes, options: .storageModeShared)
 
-        // Index buffer
         let iBytes = iCount * MemoryLayout<UInt32>.size
         var iData = [UInt32](repeating: 0, count: iCount)
         let gotI = iData.withUnsafeMutableBufferPointer { buf -> Int32 in
@@ -117,7 +111,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         indexCount  = iCount
         vertexCount = vCount
 
-        // Position camera based on mesh bounds
         var mn = [Float](repeating: 0, count: 3)
         var mx = [Float](repeating: 0, count: 3)
         var ct = [Float](repeating: 0, count: 3)
@@ -137,7 +130,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         print("[MetalRenderer] Mesh uploaded: \(vCount) verts, \(iCount) indices")
     }
 
-    // MARK: - MTKViewDelegate
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         engine_renderer_resize(UInt32(size.width), UInt32(size.height))
     }
@@ -159,9 +151,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         if let ds = depthState    { enc.setDepthStencilState(ds) }
 
         if let vb = vertexBuffer, let ib = indexBuffer, indexCount > 0 {
-            // Camera matrices (Z-up world → Y-up view)
             let viewMat = lookAt(eye: camPos, center: camTarget, up: camUp)
-            var projMat = perspective(fovY: 60 * .pi / 180,
+            let projMat = perspective(fovY: 60 * .pi / 180,
                                        aspect: Float(view.drawableSize.width / view.drawableSize.height),
                                        near: 1.0, far: 20000.0)
 
@@ -229,7 +220,6 @@ struct MetalView: UIViewRepresentable {
         view.isPaused = false
         let r = MetalRenderer(mtkView: view)
         context.coordinator.renderer = r
-        // Defer upload until view is on screen
         DispatchQueue.main.async {
             r?.uploadMeshFromEngine()
         }
