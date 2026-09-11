@@ -35,6 +35,7 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender.c
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSP.c
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPGeometry.c
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayer.c
 )
 
 set(AETHER_ENGINE_HEADERS
@@ -54,6 +55,7 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender.h
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSP.h
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPGeometry.h
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayer.h
 )
 
 add_library(aether_engine STATIC
@@ -70,6 +72,7 @@ target_include_directories(aether_engine PUBLIC
     ${CMAKE_SOURCE_DIR}/../engine/audio
     ${CMAKE_SOURCE_DIR}/../engine/render
     ${CMAKE_SOURCE_DIR}/../engine/bsp
+    ${CMAKE_SOURCE_DIR}/../engine/player
 )
 
 if(MSVC)
