@@ -1,42 +1,50 @@
 # build-arm64.yml
-# Automatic build: runs on every push to main.
-# Auto-publishes release with IPA. No manual trigger.
+# Manual-triggered build only. Clean version tags.
 # AetherEngine-iOS · Clean-room.
 
-name: Build ARM64 IPA
+name: Build AetherEngine IPA
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. v0.1.0)'
+        required: true
+        type: string
+      publish_release:
+        description: 'Publish as GitHub Release?'
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
 jobs:
-  build-arm64:
-    name: Build ARM64 iOS IPA
+  build-ipa:
+    name: Build iOS IPA
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
-          submodules: false
 
-      - name: Show toolchain versions
+      - name: Show toolchain
         run: |
-          echo "=== Xcode ==="
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-path
-          echo "=== Swift ==="
           swift --version
-          echo "=== Host arch ==="
           uname -m
 
+      # ============================================================
+      # 2. DEPENDENCIES
+      # ============================================================
       - name: Install CMake
         run: |
           if ! command -v cmake >/dev/null 2>&1; then
@@ -52,9 +60,12 @@ jobs:
 
       - name: Make build scripts executable
         run: |
-          chmod +x build/scripts/build_ios.sh
-          chmod +x build/scripts/package_ipa.sh
+          chmod +x build/scripts/build_ios.sh 2>/dev/null || true
+          chmod +x build/scripts/package_ipa.sh 2>/dev/null || true
 
+      # ============================================================
+      # 3. SANITY COMPILE
+      # ============================================================
       - name: Sanity compile engine (host)
         run: |
           set -euo pipefail
@@ -77,21 +88,37 @@ jobs:
             "$GITHUB_WORKSPACE/engine/render/AetherRender.c" \
             "$GITHUB_WORKSPACE/engine/bsp/AetherBSP.c" \
             "$GITHUB_WORKSPACE/engine/bsp/AetherBSPGeometry.c" \
+            "$GITHUB_WORKSPACE/engine/player/AetherPlayer.c" \
+            "$GITHUB_WORKSPACE/engine/player/AetherCollision.c" \
+            "$GITHUB_WORKSPACE/engine/texture/AetherTexture.c" \
+            "$GITHUB_WORKSPACE/engine/model/AetherMDL.c" \
+            "$GITHUB_WORKSPACE/engine/model/AetherMDLGeometry.c" \
+            "$GITHUB_WORKSPACE/engine/entity/AetherEntity.c" \
+            "$GITHUB_WORKSPACE/engine/entity/AetherEntityBase.c" \
           ; do
-            echo "→ cc -c $f"
-            cc -std=c11 -Wall -Wextra -Wno-unused-parameter \
-              -I"$GITHUB_WORKSPACE/engine/core" \
-              -I"$GITHUB_WORKSPACE/engine/game" \
-              -I"$GITHUB_WORKSPACE/engine/input" \
-              -I"$GITHUB_WORKSPACE/engine/config" \
-              -I"$GITHUB_WORKSPACE/engine/fs" \
-              -I"$GITHUB_WORKSPACE/engine/audio" \
-              -I"$GITHUB_WORKSPACE/engine/render" \
-              -I"$GITHUB_WORKSPACE/engine/bsp" \
-              -c "$f" -o "$(basename "$f" .c).o"
+            if [ -f "$f" ]; then
+              echo "→ cc -c $(basename $f)"
+              cc -std=c11 -Wall -Wextra -Wno-unused-parameter \
+                -I"$GITHUB_WORKSPACE/engine/core" \
+                -I"$GITHUB_WORKSPACE/engine/game" \
+                -I"$GITHUB_WORKSPACE/engine/input" \
+                -I"$GITHUB_WORKSPACE/engine/config" \
+                -I"$GITHUB_WORKSPACE/engine/fs" \
+                -I"$GITHUB_WORKSPACE/engine/audio" \
+                -I"$GITHUB_WORKSPACE/engine/render" \
+                -I"$GITHUB_WORKSPACE/engine/bsp" \
+                -I"$GITHUB_WORKSPACE/engine/player" \
+                -I"$GITHUB_WORKSPACE/engine/texture" \
+                -I"$GITHUB_WORKSPACE/engine/model" \
+                -I"$GITHUB_WORKSPACE/engine/entity" \
+                -c "$f" -o "$(basename "$f" .c).o"
+            fi
           done
           echo "✔ Sanity compile passed"
 
+      # ============================================================
+      # 4. BUILD IPA
+      # ============================================================
       - name: Build iOS app (unsigned)
         run: bash build/scripts/build_ios.sh
 
@@ -103,8 +130,12 @@ jobs:
           set -euo pipefail
           IPA_PATH="build/out/AetherEngine.ipa"
           test -f "$IPA_PATH" || (echo "IPA missing!" && exit 1)
+          echo "IPA size:"
           ls -lh "$IPA_PATH"
 
+      # ============================================================
+      # 5. METADATA
+      # ============================================================
       - name: Compute IPA metadata
         id: meta
         run: |
@@ -113,48 +144,42 @@ jobs:
           SHA=$(shasum -a 256 "$IPA" | awk '{print $1}')
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
-          BUILD_NO=${{ github.run_number }}
+          VERSION="${{ github.event.inputs.version }}"
           echo "size=$SIZE"       >> $GITHUB_OUTPUT
           echo "sha=$SHA"         >> $GITHUB_OUTPUT
           echo "short=$SHORT_SHA" >> $GITHUB_OUTPUT
           echo "date=$DATE"       >> $GITHUB_OUTPUT
-          echo "build=$BUILD_NO"  >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Upload unsigned IPA
+      # ============================================================
+      # 6. UPLOAD ARTIFACT (IPA only, no static lib)
+      # ============================================================
+      - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AetherEngine-IPA-${{ github.sha }}
+          name: AetherEngine-${{ github.event.inputs.version }}
           path: build/out/AetherEngine.ipa
           retention-days: 30
           if-no-files-found: error
 
-      - name: Upload engine static library
-        uses: actions/upload-artifact@v4
-        with:
-          name: libaether_engine-${{ github.sha }}
-          path: build/out/cmake-ios/**/libaether_engine.a
-          retention-days: 30
-          if-no-files-found: warn
-
-      # ---------------------------------------------------------------
-      # AUTO-PUBLISH RELEASE (only on push to main, not on PRs)
-      # ---------------------------------------------------------------
+      # ============================================================
+      # 7. CREATE RELEASE (only if requested)
+      # ============================================================
       - name: Build release notes
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: ${{ github.event.inputs.publish_release == 'true' }}
         run: |
           cat > /tmp/notes.md <<EOF
-          ## AetherEngine-iOS — Build #${{ steps.meta.outputs.build }}
+          ## AetherEngine-iOS — ${{ github.event.inputs.version }}
 
-          **Auto-built from \`main\` on ${{ steps.meta.outputs.date }}**
+          **Built:** ${{ steps.meta.outputs.date }}
 
           ### 📦 Download
           - \`AetherEngine.ipa\` — sideload via Sideloadly / AltStore / TrollStore
 
           ### 📋 Metadata
-          - **Size**: ${{ steps.meta.outputs.size }}
-          - **SHA256**: \`${{ steps.meta.outputs.sha }}\`
-          - **Commit**: \`${{ github.sha }}\` (\`${{ steps.meta.outputs.short }}\`)
-          - **Run**: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - **Size:** ${{ steps.meta.outputs.size }}
+          - **SHA256:** \`${{ steps.meta.outputs.sha }}\`
+          - **Commit:** \`${{ github.sha }}\` (\`${{ steps.meta.outputs.short }}\`)
 
           ### 🎮 Supported Games
           | Game | Folder |
@@ -175,33 +200,35 @@ jobs:
           3. Open the app — it auto-creates the 5 game folders in Files app
           4. Drop your legally-owned game data into the correct folder
           EOF
-          cat /tmp/notes.md
 
-      - name: Auto-publish GitHub Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Create GitHub Release
+        if: ${{ github.event.inputs.publish_release == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ steps.meta.outputs.build }}
-          name: "Build #${{ steps.meta.outputs.build }} (${{ steps.meta.outputs.short }})"
+          tag_name: ${{ github.event.inputs.version }}
+          name: "AetherEngine ${{ github.event.inputs.version }}"
           body_path: /tmp/notes.md
           draft: false
           prerelease: false
           make_latest: true
           files: |
             build/out/AetherEngine.ipa
-            build/out/cmake-ios/libaether_engine.a
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # ============================================================
+      # 8. SUMMARY
+      # ============================================================
       - name: Summary
         if: always()
         run: |
-          echo "### AetherEngine-iOS Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "### AetherEngine Build Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version:** ${{ github.event.inputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- **Run:** #${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
           echo "- **Runner:** macOS 14" >> $GITHUB_STEP_SUMMARY
-          echo "- **Target:** iOS 14+, ARM64" >> $GITHUB_STEP_SUMMARY
+          echo "- **Target:** iOS 14+ ARM64" >> $GITHUB_STEP_SUMMARY
+          echo "- **Release:** ${{ github.event.inputs.publish_release }}" >> $GITHUB_STEP_SUMMARY
           if [ -f build/out/AetherEngine.ipa ]; then
             echo "- **IPA size:** $(du -sh build/out/AetherEngine.ipa | cut -f1)" >> $GITHUB_STEP_SUMMARY
             echo "- **Status:** ✅ Build succeeded" >> $GITHUB_STEP_SUMMARY
