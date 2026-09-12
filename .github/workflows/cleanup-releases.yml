@@ -1,0 +1,90 @@
+name: Cleanup All Releases and Tags
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DELETE to confirm'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    name: Delete All Releases + Tags
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "DELETE" ]; then
+            echo "❌ Confirmation failed. You must type DELETE to proceed."
+            exit 1
+          fi
+          echo "✅ Confirmation received. Proceeding..."
+
+      - name: Delete all releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Fetching all releases ==="
+          gh release list --repo ${{ github.repository }} --limit 500 --json tagName --jq '.[].tagName' > /tmp/releases.txt || true
+          
+          if [ ! -s /tmp/releases.txt ]; then
+            echo "No releases found."
+            exit 0
+          fi
+          
+          echo "Found $(wc -l < /tmp/releases.txt) releases:"
+          cat /tmp/releases.txt
+          echo ""
+          
+          while IFS= read -r tag; do
+            if [ -n "$tag" ]; then
+              echo "→ Deleting release: $tag"
+              gh release delete "$tag" --repo ${{ github.repository }} --yes --cleanup-tag || echo "  (skipped)"
+            fi
+          done < /tmp/releases.txt
+          
+          echo "✅ All releases deleted"
+
+      - name: Delete all tags (cleanup)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Fetching all tags ==="
+          git ls-remote --tags origin | awk '{print $2}' | sed 's|refs/tags/||' > /tmp/tags.txt || true
+          
+          if [ ! -s /tmp/tags.txt ]; then
+            echo "No tags found."
+            exit 0
+          fi
+          
+          echo "Found $(wc -l < /tmp/tags.txt) tags:"
+          cat /tmp/tags.txt
+          echo ""
+          
+          while IFS= read -r tag; do
+            if [ -n "$tag" ]; then
+              # Skip peeled tags (^{})
+              case "$tag" in
+                *"^{}"*) continue ;;
+              esac
+              echo "→ Deleting tag: $tag"
+              git push origin ":refs/tags/$tag" 2>/dev/null || echo "  (skipped)"
+            fi
+          done < /tmp/tags.txt
+          
+          echo "✅ All tags deleted"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Cleanup Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "All releases and tags have been deleted." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** This workflow can now be deleted." >> $GITHUB_STEP_SUMMARY
