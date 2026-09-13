@@ -38,19 +38,22 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPGeometry.c
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayer.c
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherCollision.c
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerHealth.c
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerDamage.c
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerInventory.c
     ${CMAKE_SOURCE_DIR}/../engine/texture/AetherTexture.c
     ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDL.c
     ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDLGeometry.c
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntity.c
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntityBase.c
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntitySpawn.c
-    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerHealth.c
-    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerDamage.c
-    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerInventory.c
     ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherHUD.c
     ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherHealth.c
     ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherAmmo.c
     ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherCrosshair.c
+    ${CMAKE_SOURCE_DIR}/../engine/client/menu/AetherMenu.c
+    ${CMAKE_SOURCE_DIR}/../engine/client/menu/AetherMainMenu.c
+    ${CMAKE_SOURCE_DIR}/../engine/client/menu/AetherOptions.c
 )
 
 set(AETHER_ENGINE_HEADERS
@@ -72,6 +75,9 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPGeometry.h
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayer.h
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherCollision.h
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerHealth.h
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerDamage.h
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerInventory.h
     ${CMAKE_SOURCE_DIR}/../engine/texture/AetherTexture.h
     ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDL.h
     ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDLGeometry.h
@@ -79,13 +85,13 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntityBase.h
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntitySpawn.h
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntityTypes.h
-    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerHealth.h
-    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerDamage.h
-    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerInventory.h
     ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherHUD.h
     ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherHealth.h
     ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherAmmo.h
     ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherCrosshair.h
+    ${CMAKE_SOURCE_DIR}/../engine/client/menu/AetherMenu.h
+    ${CMAKE_SOURCE_DIR}/../engine/client/menu/AetherMainMenu.h
+    ${CMAKE_SOURCE_DIR}/../engine/client/menu/AetherOptions.h
 )
 
 add_library(aether_engine STATIC
@@ -107,6 +113,7 @@ target_include_directories(aether_engine PUBLIC
     ${CMAKE_SOURCE_DIR}/../engine/model
     ${CMAKE_SOURCE_DIR}/../engine/entity
     ${CMAKE_SOURCE_DIR}/../engine/client/hud
+    ${CMAKE_SOURCE_DIR}/../engine/client/menu
 )
 
 if(MSVC)
