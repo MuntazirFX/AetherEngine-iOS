@@ -18,7 +18,6 @@ if(AETHER_BUILD_IOS)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
 endif()
 
-# ---------- Engine sources ----------
 set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherCore.c
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherEngine.c
@@ -33,6 +32,10 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponFiring.c
     ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponProjectile.c
     ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponView.c
+    ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterBase.c
+    ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterDefs.c
+    ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterRegistry.c
+    ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterAI.c
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherInput.c
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherTouch.c
     ${CMAKE_SOURCE_DIR}/../engine/config/AetherSettings.c
@@ -77,6 +80,12 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponProjectile.h
     ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponView.h
     ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeapons.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterTypes.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterBase.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterDefs.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterRegistry.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterAI.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonster.h
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherInput.h
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherTouch.h
     ${CMAKE_SOURCE_DIR}/../engine/config/AetherSettings.h
@@ -116,6 +125,7 @@ target_include_directories(aether_engine PUBLIC
     ${CMAKE_SOURCE_DIR}/../engine/core
     ${CMAKE_SOURCE_DIR}/../engine/game
     ${CMAKE_SOURCE_DIR}/../engine/game/weapons
+    ${CMAKE_SOURCE_DIR}/../engine/game/monsters
     ${CMAKE_SOURCE_DIR}/../engine/input
     ${CMAKE_SOURCE_DIR}/../engine/config
     ${CMAKE_SOURCE_DIR}/../engine/fs
