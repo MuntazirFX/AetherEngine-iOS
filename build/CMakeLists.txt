@@ -47,6 +47,10 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerHealth.c
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerDamage.c
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerInventory.c
+    ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherHUD.c
+    ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherHealth.c
+    ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherAmmo.c
+    ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherCrosshair.c
 )
 
 set(AETHER_ENGINE_HEADERS
@@ -78,6 +82,10 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerHealth.h
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerDamage.h
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerInventory.h
+    ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherHUD.h
+    ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherHealth.h
+    ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherAmmo.h
+    ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherCrosshair.h
 )
 
 add_library(aether_engine STATIC
@@ -98,6 +106,7 @@ target_include_directories(aether_engine PUBLIC
     ${CMAKE_SOURCE_DIR}/../engine/texture
     ${CMAKE_SOURCE_DIR}/../engine/model
     ${CMAKE_SOURCE_DIR}/../engine/entity
+    ${CMAKE_SOURCE_DIR}/../engine/client/hud
 )
 
 if(MSVC)
