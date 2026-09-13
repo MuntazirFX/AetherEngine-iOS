@@ -36,6 +36,12 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterDefs.c
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterRegistry.c
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterAI.c
+    ${CMAKE_SOURCE_DIR}/../engine/save/AetherSaveFormat.c
+    ${CMAKE_SOURCE_DIR}/../engine/save/AetherSave.c
+    ${CMAKE_SOURCE_DIR}/../engine/save/AetherSavePlayer.c
+    ${CMAKE_SOURCE_DIR}/../engine/save/AetherSaveEntity.c
+    ${CMAKE_SOURCE_DIR}/../engine/save/AetherSaveWorld.c
+    ${CMAKE_SOURCE_DIR}/../engine/save/AetherAutoSave.c
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherInput.c
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherTouch.c
     ${CMAKE_SOURCE_DIR}/../engine/config/AetherSettings.c
@@ -86,6 +92,13 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterRegistry.h
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterAI.h
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonster.h
+    ${CMAKE_SOURCE_DIR}/../engine/save/AetherSaveFormat.h
+    ${CMAKE_SOURCE_DIR}/../engine/save/AetherSave.h
+    ${CMAKE_SOURCE_DIR}/../engine/save/AetherSavePlayer.h
+    ${CMAKE_SOURCE_DIR}/../engine/save/AetherSaveEntity.h
+    ${CMAKE_SOURCE_DIR}/../engine/save/AetherSaveWorld.h
+    ${CMAKE_SOURCE_DIR}/../engine/save/AetherAutoSave.h
+    ${CMAKE_SOURCE_DIR}/../engine/save/AetherSaves.h
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherInput.h
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherTouch.h
     ${CMAKE_SOURCE_DIR}/../engine/config/AetherSettings.h
@@ -126,6 +139,7 @@ target_include_directories(aether_engine PUBLIC
     ${CMAKE_SOURCE_DIR}/../engine/game
     ${CMAKE_SOURCE_DIR}/../engine/game/weapons
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters
+    ${CMAKE_SOURCE_DIR}/../engine/save
     ${CMAKE_SOURCE_DIR}/../engine/input
     ${CMAKE_SOURCE_DIR}/../engine/config
     ${CMAKE_SOURCE_DIR}/../engine/fs
