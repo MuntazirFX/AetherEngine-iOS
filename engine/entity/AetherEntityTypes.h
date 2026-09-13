@@ -99,7 +99,6 @@
 #define AETHER_ENT_FUNC_TANKLASER          "func_tanklaser"
 #define AETHER_ENT_FUNC_TANKROCKET         "func_tankrocket"
 #define AETHER_ENT_FUNC_TRACKTRAIN         "func_tracktrain"
-#define AETHER_ENT_FUNC_BUTTON_TARGET      "func_button_target"
 #define AETHER_ENT_FUNC_ROTATING           "func_rotating"
 #define AETHER_ENT_FUNC_CONVEYOR           "func_conveyor"
 
@@ -117,8 +116,6 @@
 #define AETHER_ENT_ENV_FADE                "env_fade"
 #define AETHER_ENT_ENV_RENDER              "env_render"
 #define AETHER_ENT_ENV_BUBBLES             "env_bubbles"
-#define AETHER_ENT_ENV_RAIN                "env_rain"
-#define AETHER_ENT_ENV_SNOW                "env_snow"
 
 /* ---------- Ambient ---------- */
 #define AETHER_ENT_AMBIENT_GENERIC         "ambient_generic"
