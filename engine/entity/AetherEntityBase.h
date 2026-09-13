@@ -35,7 +35,6 @@ typedef enum aether_model_type {
 
 typedef struct aether_entity aether_entity_t;
 
-/* Callbacks */
 typedef void (*aether_spawn_fn)  (aether_entity_t *e);
 typedef void (*aether_think_fn)  (aether_entity_t *e);
 typedef void (*aether_use_fn)    (aether_entity_t *e, aether_entity_t *activator);
@@ -92,7 +91,6 @@ struct aether_entity {
     void *user_data;
 };
 
-/* Manager */
 typedef struct aether_entity_mgr aether_entity_mgr_t;
 
 aether_entity_mgr_t *aether_entity_mgr_create(void);
@@ -121,4 +119,4 @@ void aether_entity_mgr_dump(const aether_entity_mgr_t *mgr);
 #ifdef __cplusplus
 }
 #endif
-#endif
+#endif /* AETHER_ENTITY_BASE_H */
