@@ -44,6 +44,9 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntity.c
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntityBase.c
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntitySpawn.c
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerHealth.c
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerDamage.c
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerInventory.c
 )
 
 set(AETHER_ENGINE_HEADERS
@@ -72,6 +75,9 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntityBase.h
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntitySpawn.h
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntityTypes.h
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerHealth.h
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerDamage.h
+    ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayerInventory.h
 )
 
 add_library(aether_engine STATIC
