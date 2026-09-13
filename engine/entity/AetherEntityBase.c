@@ -19,7 +19,9 @@ aether_entity_mgr_t *aether_entity_mgr_create(void) {
     mgr->capacity = AETHER_ENTITY_MAX;
     mgr->entities = (aether_entity_t*)calloc(mgr->capacity, sizeof(aether_entity_t));
     if (!mgr->entities) { free(mgr); return NULL; }
-    mgr->count = 0; mgr->next_id = 1; mgr->time = 0.0f;
+    mgr->count = 0;
+    mgr->next_id = 1;
+    mgr->time = 0.0f;
     aether_log(AETHER_LOG_INFO, "entity", "manager created (cap=%u)", mgr->capacity);
     return mgr;
 }
@@ -119,7 +121,9 @@ void aether_entity_mgr_tick(aether_entity_mgr_t *mgr, f32 dt) {
     mgr->count = write;
 }
 
-u32 aether_entity_mgr_count(const aether_entity_mgr_t *mgr) { return mgr ? mgr->count : 0; }
+u32 aether_entity_mgr_count(const aether_entity_mgr_t *mgr) {
+    return mgr ? mgr->count : 0;
+}
 
 const aether_entity_t *aether_entity_mgr_at(const aether_entity_mgr_t *mgr, u32 idx) {
     if (!mgr || idx >= mgr->count) return NULL;
@@ -134,8 +138,13 @@ u32 aether_entity_mgr_active_count(const aether_entity_mgr_t *mgr) {
     return n;
 }
 
-void aether_entity_set_origin(aether_entity_t *e, aether_vec3_t origin) { if (e) e->origin = origin; }
-void aether_entity_set_angles(aether_entity_t *e, aether_vec3_t angles) { if (e) e->angles = angles; }
+void aether_entity_set_origin(aether_entity_t *e, aether_vec3_t origin) {
+    if (e) e->origin = origin;
+}
+
+void aether_entity_set_angles(aether_entity_t *e, aether_vec3_t angles) {
+    if (e) e->angles = angles;
+}
 
 void aether_entity_set_model(aether_entity_t *e, const char *model) {
     if (!e || !model) return;
@@ -157,7 +166,10 @@ void aether_entity_set_health(aether_entity_t *e, f32 hp) {
 
 void aether_entity_apply_damage(aether_entity_t *e, f32 dmg, aether_entity_t *attacker) {
     if (!e || dmg <= 0) return;
-    if (e->take_damage) { e->take_damage(e, attacker, dmg); return; }
+    if (e->take_damage) {
+        e->take_damage(e, attacker, dmg);
+        return;
+    }
 
     e->damage_taken += dmg;
     if (e->armor > 0.0f) {
