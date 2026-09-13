@@ -27,6 +27,12 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherEvent.c
     ${CMAKE_SOURCE_DIR}/../engine/game/AetherGameManager.c
     ${CMAKE_SOURCE_DIR}/../engine/game/AetherManifest.c
+    ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeapon.c
+    ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponDefs.c
+    ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponRegistry.c
+    ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponFiring.c
+    ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponProjectile.c
+    ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponView.c
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherInput.c
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherTouch.c
     ${CMAKE_SOURCE_DIR}/../engine/config/AetherSettings.c
@@ -64,6 +70,13 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherEvent.h
     ${CMAKE_SOURCE_DIR}/../engine/game/AetherGameManager.h
     ${CMAKE_SOURCE_DIR}/../engine/game/AetherManifest.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeapon.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponDefs.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponRegistry.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponFiring.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponProjectile.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeaponView.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/weapons/AetherWeapons.h
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherInput.h
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherTouch.h
     ${CMAKE_SOURCE_DIR}/../engine/config/AetherSettings.h
@@ -102,6 +115,7 @@ add_library(aether_engine STATIC
 target_include_directories(aether_engine PUBLIC
     ${CMAKE_SOURCE_DIR}/../engine/core
     ${CMAKE_SOURCE_DIR}/../engine/game
+    ${CMAKE_SOURCE_DIR}/../engine/game/weapons
     ${CMAKE_SOURCE_DIR}/../engine/input
     ${CMAKE_SOURCE_DIR}/../engine/config
     ${CMAKE_SOURCE_DIR}/../engine/fs
