@@ -59,5 +59,13 @@
     <true/>
     <key>UIApplicationSupportsIndirectInputEvents</key>
     <true/>
+
+    <!-- Multiplayer / Local Network (BATCH 8) -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>AetherEngine uses local network to discover and connect to multiplayer game servers.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_aetherengine._udp</string>
+    </array>
 </dict>
 </plist>
