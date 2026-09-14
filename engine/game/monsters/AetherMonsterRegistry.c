@@ -2,6 +2,7 @@
  * AetherEngine-iOS · Clean-room.
  */
 #include "AetherMonsterRegistry.h"
+#include <stdlib.h>
 #include <string.h>
 
 void aether_monster_registry_init(aether_monster_registry_t *reg, aether_entity_t *player) {
@@ -33,8 +34,6 @@ aether_monster_t *aether_monster_registry_spawn(aether_monster_registry_t *reg,
 
     /* Create a backing entity */
     if (m->def && m->def->classname) {
-        /* In real engine, this would go through entity spawn.
-         * For now, allocate a lightweight entity-like wrapper. */
         aether_entity_t *e = (aether_entity_t*)calloc(1, sizeof *e);
         if (!e) return NULL;
         e->id = reg->count + 1000;
@@ -65,8 +64,8 @@ void aether_monster_registry_tick(aether_monster_registry_t *reg, f32 dt) {
         if (m->state == AETHER_MST_DEAD) continue;
         aether_monster_tick(m, dt);
 
-        /* Simple enemy detection: if player in sight range, set as enemy */
-        if (reg->player && !m->enemy && m->def) {
+        /* Simple enemy detection */
+        if (reg->player && !m->enemy && m->def && m->entity) {
             f32 dist = aether_vec3_len(aether_vec3_sub(reg->player->origin, m->entity->origin));
             if (dist <= m->def->sight_range) {
                 aether_monster_set_enemy(m, reg->player);
@@ -79,8 +78,8 @@ void aether_monster_registry_tick(aether_monster_registry_t *reg, f32 dt) {
     for (u32 i = 0; i < reg->count; ++i) {
         if (reg->monsters[i].state == AETHER_MST_DEAD &&
             reg->monsters[i].state_time > 5.0f) {
-            /* Free entity */
             free(reg->monsters[i].entity);
+            reg->monsters[i].entity = NULL;
             continue;
         }
         if (write != i) reg->monsters[write] = reg->monsters[i];
