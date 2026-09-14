@@ -1,9 +1,20 @@
 /* AetherMonsterRegistry.c — Monster registry implementation.
  * AetherEngine-iOS · Clean-room.
+ *
+ * NOTE: All headers explicitly included for compile safety.
  */
 #include "AetherMonsterRegistry.h"
+#include "AetherMonsterBase.h"
+#include "AetherMonsterTypes.h"
+#include "AetherMonsterDefs.h"
+#include "../../entity/AetherEntityBase.h"
+#include "../../core/AetherCore.h"
+#include "../../core/AetherMath.h"
 #include <stdlib.h>
 #include <string.h>
+
+/* Forward decl (from AetherMonsterBase.c) */
+extern const aether_monster_def_t *aether_monster_defs_lookup(aether_monster_id_t id);
 
 void aether_monster_registry_init(aether_monster_registry_t *reg, aether_entity_t *player) {
     if (!reg) return;
@@ -32,9 +43,8 @@ aether_monster_t *aether_monster_registry_spawn(aether_monster_registry_t *reg,
     aether_monster_t *m = &reg->monsters[reg->count];
     aether_monster_init(m, id);
 
-    /* Create a backing entity */
     if (m->def && m->def->classname) {
-        aether_entity_t *e = (aether_entity_t*)calloc(1, sizeof *e);
+        aether_entity_t *e = (aether_entity_t*)calloc(1, sizeof(aether_entity_t));
         if (!e) return NULL;
         e->id = reg->count + 1000;
         aether_str_copy(e->classname, AETHER_ENTITY_CLASSNAME_MAX, m->def->classname);
@@ -64,7 +74,6 @@ void aether_monster_registry_tick(aether_monster_registry_t *reg, f32 dt) {
         if (m->state == AETHER_MST_DEAD) continue;
         aether_monster_tick(m, dt);
 
-        /* Simple enemy detection */
         if (reg->player && !m->enemy && m->def && m->entity) {
             f32 dist = aether_vec3_len(aether_vec3_sub(reg->player->origin, m->entity->origin));
             if (dist <= m->def->sight_range) {
