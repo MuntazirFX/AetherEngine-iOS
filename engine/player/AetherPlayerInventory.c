@@ -16,23 +16,6 @@ static const i32 k_default_max_ammo[AETHER_AMMO_TYPE_COUNT] = {
     10,    /* hand grenade */
 };
 
-/* Weapon → ammo type map */
-static aether_ammo_type_t weapon_ammo(aether_weapon_id_t w) {
-    switch (w) {
-        case AETHER_WPN_GLOCK:      return AETHER_AMMO_9MM;
-        case AETHER_WPN_PYTHON:     return AETHER_AMMO_357;
-        case AETHER_WPN_MP5:        return AETHER_AMMO_9MM;
-        case AETHER_WPN_SHOTGUN:    return AETHER_AMMO_BUCKSHOT;
-        case AETHER_WPN_CROSSBOW:   return AETHER_AMMO_BOLT;
-        case AETHER_WPN_RPG:        return AETHER_AMMO_RPG;
-        case AETHER_WPN_GAUSS:      return AETHER_AMMO_URANIUM;
-        case AETHER_WPN_EGON:       return AETHER_AMMO_URANIUM;
-        case AETHER_WPN_HIVEHAND:   return AETHER_AMMO_NONE;
-        case AETHER_WPN_GRENADE:    return AETHER_AMMO_GRENADE;
-        default:                    return AETHER_AMMO_NONE;
-    }
-}
-
 int aether_player_inv_weapon_slot(aether_weapon_id_t w) {
     switch (w) {
         case AETHER_WPN_CROWBAR:  return 0;
@@ -61,10 +44,7 @@ void aether_player_inv_init(aether_player_inventory_t *inv) {
         inv->max_ammo[i] = k_default_max_ammo[i];
     }
     inv->active = AETHER_WPN_NONE;
-
-    /* Player starts with crowbar (GoldSrc default) */
     aether_player_inv_give_weapon(inv, AETHER_WPN_CROWBAR);
-
     aether_log(AETHER_LOG_INFO, "inv", "inventory initialized");
 }
 
@@ -81,7 +61,6 @@ void aether_player_inv_give_weapon(aether_player_inventory_t *inv, aether_weapon
 
     inv->own_weapon[w] = true;
 
-    /* Assign to slot if empty */
     int slot = aether_player_inv_weapon_slot(w);
     if (slot >= 0 && slot < AETHER_WEAPON_SLOT_COUNT) {
         if (inv->slots[slot] == AETHER_WPN_NONE)
@@ -144,7 +123,6 @@ void aether_player_inv_dump(const aether_player_inventory_t *inv) {
     if (!inv) return;
     aether_log(AETHER_LOG_INFO, "inv", "===== INVENTORY =====");
     aether_log(AETHER_LOG_INFO, "inv", "  active weapon: %d", (int)inv->active);
-    aether_log(AETHER_LOG_INFO, "inv", "  ammo:");
     aether_log(AETHER_LOG_INFO, "inv", "    9mm     : %d", inv->ammo[AETHER_AMMO_9MM]);
     aether_log(AETHER_LOG_INFO, "inv", "    357     : %d", inv->ammo[AETHER_AMMO_357]);
     aether_log(AETHER_LOG_INFO, "inv", "    buckshot: %d", inv->ammo[AETHER_AMMO_BUCKSHOT]);
