@@ -26,6 +26,7 @@
 #include "../../engine/entity/AetherEntityBase.h"
 #include "../../engine/entity/AetherEntitySpawn.h"
 #include "../../engine/game/monsters/AetherMonster.h"
+#include "../../engine/vgui/AetherVGUIRuntime.h"
 
 /* ---------- Globals ---------- */
 static aether_engine_t         *g_engine       = NULL;
@@ -93,11 +94,13 @@ void engine_init(const char *base_path, const char *asset_path) {
     g_engine = aether_engine_create(&desc);
     if (!g_engine) return;
     if (aether_engine_start(g_engine) != AETHER_OK) return;
+    (void)aether_vgui_runtime_init();
     g_game_manager = aether_game_manager_create(g_engine, base_path);
     aether_log(AETHER_LOG_INFO, "bridge", "engine initialized (%s)", AETHER_VERSION_STRING);
 }
 
 void engine_shutdown(void) {
+    aether_vgui_runtime_shutdown();
     if (g_entity_mgr)   { aether_entity_mgr_destroy(g_entity_mgr); g_entity_mgr = NULL; }
     if (g_mdl_mesh)     { aether_mdl_geometry_free(g_mdl_mesh); g_mdl_mesh = NULL; }
     if (g_atlas)        { aether_texture_atlas_free(g_atlas); g_atlas = NULL; }
@@ -746,6 +749,36 @@ int engine_monster_healths_copy(int *out_health, int max_monsters) {
         n++;
     }
     return n;
+}
+
+/* ---------- VGUI / classic menu ---------- */
+int engine_vgui_init(void) { return (int)aether_vgui_runtime_init(); }
+void engine_vgui_shutdown(void) { aether_vgui_runtime_shutdown(); }
+void engine_vgui_show_main(void) { aether_vgui_runtime_show_main(); }
+void engine_vgui_show_options(void) { aether_vgui_runtime_show_options(); }
+void engine_vgui_show_load_game(void) { aether_vgui_runtime_show_load_game(); }
+void engine_vgui_show_multiplayer(void) { aether_vgui_runtime_show_multiplayer(); }
+void engine_vgui_toggle_console(void) { aether_vgui_runtime_toggle_console(); }
+bool engine_vgui_is_visible(void) { aether_vgui_t *v=aether_vgui_runtime_ui(); return v ? true : false; }
+int engine_vgui_current_panel_text(char *out_buf, int out_cap) {
+    if (!out_buf || out_cap <= 0) return 0;
+    aether_vgui_t *v=aether_vgui_runtime_ui();
+    if (!v) { out_buf[0]=0; return 0; }
+    u32 active=aether_vgui_runtime_active_panel();
+    aether_vgui_panel_t *panel=aether_vgui_panel(v,active);
+    if (!panel) { out_buf[0]=0; return 0; }
+    int written=snprintf(out_buf,(size_t)out_cap,"%s\n",panel->text);
+    if (written<0) { out_buf[0]=0; return 0; }
+    if (written>=out_cap) { out_buf[out_cap-1]=0; return out_cap-1; }
+    for (u32 i=0; i<panel->child_count; ++i) {
+        const aether_vgui_panel_t *p=aether_vgui_child_at(v,active,i);
+        if (!p || !p->visible) continue;
+        int n=snprintf(out_buf+written,(size_t)(out_cap-written),"%s\n",p->text);
+        if(n<0) break;
+        written += n;
+        if(written>=out_cap){out_buf[out_cap-1]=0;return out_cap-1;}
+    }
+    return written;
 }
 
 /* ---------- Utility ---------- */

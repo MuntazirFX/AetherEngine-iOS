@@ -140,6 +140,16 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherAmmo.c
     ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherCrosshair.c
 
+    # -------- VGUI / UI compatibility layer --------
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUI.c
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIResource.c
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIScheme.c
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIFont.c
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUILocalization.c
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIServerBrowser.c
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIConsole.c
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIRuntime.c
+
     # -------- client/menu --------
     ${CMAKE_SOURCE_DIR}/../engine/client/menu/AetherMenu.c
     ${CMAKE_SOURCE_DIR}/../engine/client/menu/AetherMainMenu.c
@@ -274,6 +284,15 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherHealth.h
     ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherAmmo.h
     ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherCrosshair.h
+
+    # -------- VGUI / UI compatibility layer --------
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUI.c
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIResource.c
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIScheme.c
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIFont.c
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUILocalization.c
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIServerBrowser.c
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIConsole.c
 
     # -------- client/menu --------
     ${CMAKE_SOURCE_DIR}/../engine/client/menu/AetherMenu.h

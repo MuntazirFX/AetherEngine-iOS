@@ -69,3 +69,19 @@ AetherEngine includes clean-room game-runtime equivalents for the game-logic are
 - `engine/save/` — save/load and autosave formats
 
 These are AetherEngine implementations, not copies of Xash3D source. The feature names indicate the target capability; they do not claim byte-for-byte or 100% gameplay compatibility with every Xash3D/GoldSrc behavior.
+
+## Xash3D-class UI / VGUI coverage
+
+The project now includes a clean-room VGUI compatibility layer under `engine/vgui/`. It provides:
+
+- VGUI2-style retained-mode panel/control API
+- VGUI1 compatibility aliases
+- `GameMenu.res`-style key/value resource parsing primitives
+- scheme/color/font registration primitives
+- localization token tables
+- server-browser data model and ping sorting
+- console overlay line buffer
+- classic main/options/load-game/multiplayer panel runtime
+- iOS bridge entry points in `EngineBridge.h`
+
+This is an AetherEngine implementation, not a copy of Valve/Xash3D source. Full visual/pixel parity and complete network discovery still require further integration with the Metal renderer and game networking.

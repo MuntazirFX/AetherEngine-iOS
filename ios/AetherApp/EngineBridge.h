@@ -100,6 +100,17 @@ int  engine_entity_alive_monster_count(void);          /* NEW */
 int  engine_monster_positions_copy(float *out_xyz_flat, int max_monsters);  /* NEW */
 int  engine_monster_healths_copy(int *out_health, int max_monsters);        /* NEW */
 
+/* ---------- VGUI / classic menu ---------- */
+int  engine_vgui_init(void);
+void engine_vgui_shutdown(void);
+void engine_vgui_show_main(void);
+void engine_vgui_show_options(void);
+void engine_vgui_show_load_game(void);
+void engine_vgui_show_multiplayer(void);
+void engine_vgui_toggle_console(void);
+bool engine_vgui_is_visible(void);
+int  engine_vgui_current_panel_text(char *out_buf, int out_cap);
+
 /* ---------- Utility ---------- */
 const char *engine_base_path(void);
 const char *engine_version(void);
