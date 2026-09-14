@@ -34,6 +34,7 @@ settings:
       - "$(SRCROOT)/../engine/fs"
       - "$(SRCROOT)/../engine/audio"
       - "$(SRCROOT)/../engine/render"
+      - "$(SRCROOT)/../engine/bsp"
     SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/../ios/AetherApp/Bridging-Header.h"
     CODE_SIGNING_ALLOWED: NO
     CODE_SIGN_IDENTITY: ""

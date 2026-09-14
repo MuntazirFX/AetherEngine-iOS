@@ -13,6 +13,9 @@ extern "C" {
 
 typedef enum aether_render_backend {
     AETHER_RENDER_METAL = 0,
+    AETHER_RENDER_OPENGL,
+    AETHER_RENDER_GLES3,
+    AETHER_RENDER_SOFTWARE,
     AETHER_RENDER_NULL,
     AETHER_RENDER_COUNT
 } aether_render_backend_t;
@@ -23,6 +26,16 @@ typedef enum aether_render_cmd_type {
     AETHER_CMD_CLEAR,
     AETHER_CMD_SET_VIEWPORT,
     AETHER_CMD_DRAW_WORLD,
+    AETHER_CMD_DRAW_LIGHTMAPS,
+    AETHER_CMD_DRAW_WATER,
+    AETHER_CMD_DRAW_SKY,
+    AETHER_CMD_DRAW_FOG,
+    AETHER_CMD_DRAW_DECALS,
+    AETHER_CMD_DRAW_PARTICLES,
+    AETHER_CMD_DRAW_SPRITES,
+    AETHER_CMD_DRAW_MODELS,
+    AETHER_CMD_DRAW_SHADOWS,
+    AETHER_CMD_POSTFX,
     AETHER_CMD_DRAW_HUD,
     AETHER_CMD_END_FRAME,
 } aether_render_cmd_type_t;
@@ -70,6 +83,11 @@ aether_result_t aether_renderer_set_camera(aether_renderer_t *r,
                                            aether_mat4_t proj);
 aether_result_t aether_renderer_draw_world(aether_renderer_t *r);
 aether_result_t aether_renderer_draw_hud  (aether_renderer_t *r);
+aether_result_t aether_renderer_draw_feature(aether_renderer_t *r, aether_render_cmd_type_t feature);
+
+/* Xash3D-class feature state exposed through the Aether renderer. */
+typedef struct aether_render_features aether_render_features_t;
+aether_render_features_t *aether_renderer_features(aether_renderer_t *r);
 aether_result_t aether_renderer_end_frame (aether_renderer_t *r);
 
 u32 aether_renderer_width (const aether_renderer_t *r);

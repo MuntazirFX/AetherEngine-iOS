@@ -32,3 +32,25 @@ A brand-new, clean-room iOS game engine and application built from scratch.
 - iOS (iPhone / iPad)
 - ARM64
 - Unsigned IPA build supported
+
+## Renderer module set
+
+AetherEngine now exposes an Xash3D-class renderer feature layer with clean-room Aether modules:
+
+- `AetherRender_GL` — OpenGL backend interface
+- `AetherRender_GLES3` — GLES3 backend interface
+- `AetherRender_Soft` — software/reference backend interface
+- `AetherRenderFeatures` — feature lifecycle/update coordinator
+- `AetherWorld` — world-surface render state
+- `AetherLightmap` — lightmap/style state
+- `AetherWater` — animated water state
+- `AetherSky` — six-face sky state
+- `AetherFog` — fog parameters
+- `AetherDecal` — decal pool (blood/bullet-style decals)
+- `AetherParticle` — particle pool/update
+- `AetherSprite` — sprite state/UVs
+- `AetherMDLAnimation` — sequence/bone animation timing state
+- `AetherShadow` — shadow configuration
+- `AetherPostFX` — bloom/exposure/post-processing configuration
+
+Metal remains the primary iOS backend. The OpenGL/GLES3/software entries are compatibility/reference backend interfaces; they are not a claim that iOS ships an active OpenGL implementation in this project. The feature layer is intentionally independent of any third-party engine source.

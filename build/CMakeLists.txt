@@ -83,8 +83,23 @@ set(AETHER_ENGINE_SOURCES
     # -------- audio --------
     ${CMAKE_SOURCE_DIR}/../engine/audio/AetherAudio.c
 
-    # -------- render --------
+    # -------- render / Xash3D-class backends + features --------
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender_GL.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender_GLES3.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender_Soft.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherRenderFeatures.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherLightmap.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherWorld.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherWater.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherSky.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherFog.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherDecal.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherParticle.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherSprite.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherMDLAnimation.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherShadow.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherPostFX.c
 
     # -------- bsp --------
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSP.c
@@ -192,8 +207,23 @@ set(AETHER_ENGINE_HEADERS
     # -------- audio --------
     ${CMAKE_SOURCE_DIR}/../engine/audio/AetherAudio.h
 
-    # -------- render --------
+    # -------- render / Xash3D-class backends + features --------
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender_GL.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender_GLES3.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender_Soft.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherRenderFeatures.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherLightmap.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherWorld.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherWater.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherSky.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherFog.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherDecal.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherParticle.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherSprite.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherMDLAnimation.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherShadow.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherPostFX.h
 
     # -------- bsp --------
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSP.h
