@@ -1,3 +1,6 @@
+#if !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200112L
+#endif
 /* AetherNet.c — Socket abstraction implementation.
  * AetherEngine-iOS · Clean-room.
  */
@@ -5,7 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <time.h>
+#include <sys/time.h>
 #include <netdb.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -167,11 +170,8 @@ bool aether_net_resolve(const char *hostname, u16 port, aether_net_addr_t *out) 
 }
 
 f64 aether_net_time(void) {
-    struct timespec ts;
-#if defined(CLOCK_MONOTONIC)
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0)
-        return (f64)ts.tv_sec + (f64)ts.tv_nsec / 1e9;
-#endif
-    timespec_get(&ts, TIME_UTC);
-    return (f64)ts.tv_sec + (f64)ts.tv_nsec / 1e9;
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL) == 0)
+        return (f64)tv.tv_sec + (f64)tv.tv_usec / 1000000.0;
+    return 0.0;
 }

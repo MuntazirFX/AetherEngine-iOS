@@ -29,6 +29,12 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherArray.c
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherEvent.c
 
+    # -------- console / command / threading --------
+    ${CMAKE_SOURCE_DIR}/../engine/console/AetherCVar.c
+    ${CMAKE_SOURCE_DIR}/../engine/console/AetherConsole.c
+    ${CMAKE_SOURCE_DIR}/../engine/command/AetherCmd.c
+    ${CMAKE_SOURCE_DIR}/../engine/thread/AetherThread.c
+
     # -------- game --------
     ${CMAKE_SOURCE_DIR}/../engine/game/AetherGameManager.c
     ${CMAKE_SOURCE_DIR}/../engine/game/AetherManifest.c
@@ -125,6 +131,12 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherMath.h
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherArray.h
     ${CMAKE_SOURCE_DIR}/../engine/core/AetherEvent.h
+
+    # -------- console / command / threading --------
+    ${CMAKE_SOURCE_DIR}/../engine/console/AetherCVar.h
+    ${CMAKE_SOURCE_DIR}/../engine/console/AetherConsole.h
+    ${CMAKE_SOURCE_DIR}/../engine/command/AetherCmd.h
+    ${CMAKE_SOURCE_DIR}/../engine/thread/AetherThread.h
 
     # -------- game --------
     ${CMAKE_SOURCE_DIR}/../engine/game/AetherGameManager.h
@@ -229,6 +241,9 @@ add_library(aether_engine STATIC
 
 target_include_directories(aether_engine PUBLIC
     ${CMAKE_SOURCE_DIR}/../engine/core
+    ${CMAKE_SOURCE_DIR}/../engine/console
+    ${CMAKE_SOURCE_DIR}/../engine/command
+    ${CMAKE_SOURCE_DIR}/../engine/thread
     ${CMAKE_SOURCE_DIR}/../engine/game
     ${CMAKE_SOURCE_DIR}/../engine/game/weapons
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters

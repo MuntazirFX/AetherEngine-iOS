@@ -1,7 +1,8 @@
 #include "AetherEngine.h"
+#include "../thread/AetherThread.h"
 #include <stdlib.h>
+#include <sys/time.h>
 #include <string.h>
-#include <time.h>
 
 #define AETHER_PATH_MAX 512
 
@@ -19,14 +20,11 @@ struct aether_engine {
 };
 
 static f64 now_seconds(void) {
-    struct timespec ts;
-#if defined(CLOCK_MONOTONIC)
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) {
-        return (f64)ts.tv_sec + (f64)ts.tv_nsec / 1e9;
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL) == 0) {
+        return (f64)tv.tv_sec + (f64)tv.tv_usec / 1000000.0;
     }
-#endif
-    timespec_get(&ts, TIME_UTC);
-    return (f64)ts.tv_sec + (f64)ts.tv_nsec / 1e9;
+    return 0.0;
 }
 
 aether_engine_t *aether_engine_create(const aether_engine_desc_t *desc) {
@@ -135,8 +133,7 @@ aether_result_t aether_engine_run(aether_engine_t *e) {
         e->t_last = t_now;
         if (dt > 0.25f) dt = 0.25f;
         (void)aether_engine_step(e, dt);
-        struct timespec ts = { 0, 1000000 };
-        nanosleep(&ts, NULL);
+        aether_thread_sleep_ms(1);
     }
     aether_log(AETHER_LOG_INFO, "engine", "exit requested; leaving main loop");
     return AETHER_OK;
