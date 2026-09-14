@@ -1,0 +1,74 @@
+name: Cleanup Workflow Runs
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DELETE to confirm'
+        required: true
+        type: string
+      keep_latest:
+        description: 'Keep latest N runs?'
+        required: true
+        default: '0'
+        type: string
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    name: Delete Old Workflow Runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Confirm
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "DELETE" ]; then
+            echo "Confirmation failed. Type DELETE to proceed."
+            exit 1
+          fi
+          echo "Confirmed. Starting cleanup..."
+
+      - name: Get all run IDs
+        id: runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          KEEP=${{ github.event.inputs.keep_latest }}
+          echo "Keeping latest $KEEP runs"
+          gh run list \
+            --repo ${{ github.repository }} \
+            --limit 500 \
+            --json databaseId,createdAt \
+            --jq "sort_by(.createdAt) | reverse | .[$KEEP:] | .[].databaseId" \
+            > /tmp/run_ids.txt
+          echo "Total runs to delete: $(wc -l < /tmp/run_ids.txt)"
+          head -5 /tmp/run_ids.txt
+
+      - name: Delete runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          COUNT=0
+          FAIL=0
+          while IFS= read -r run_id; do
+            [ -z "$run_id" ] && continue
+            if gh run delete "$run_id" --repo ${{ github.repository }} 2>/dev/null; then
+              COUNT=$((COUNT+1))
+            else
+              FAIL=$((FAIL+1))
+            fi
+          done < /tmp/run_ids.txt
+          echo "Deleted: $COUNT runs"
+          echo "Failed: $FAIL runs"
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Cleanup Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deleted runs:** check logs above" >> $GITHUB_STEP_SUMMARY
+          echo "- **Kept latest:** ${{ github.event.inputs.keep_latest }}" >> $GITHUB_STEP_SUMMARY
