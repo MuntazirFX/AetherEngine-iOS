@@ -1,43 +1,60 @@
-/* AetherMonsterRegistry.h — Per-level monster manager.
+/* AetherSaveFormat.h — Save file format constants + header struct.
  * AetherEngine-iOS · Clean-room.
  */
-#ifndef AETHER_MONSTER_REGISTRY_H
-#define AETHER_MONSTER_REGISTRY_H
+#ifndef AETHER_SAVE_FORMAT_H
+#define AETHER_SAVE_FORMAT_H
 
-#include "AetherMonsterBase.h"
+#include "../core/AetherCore.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define AETHER_MONSTER_MAX  128
+/* Magic: "AESV" (Aether Engine SaVe) */
+#define AETHER_SAVE_MAGIC        0x56534541u  /* "AESV" little-endian */
+#define AETHER_SAVE_VERSION      1
+#define AETHER_SAVE_HEADER_SIZE  256
+#define AETHER_SAVE_MAP_NAME_MAX 64
+#define AETHER_SAVE_GAME_NAME_MAX 32
+#define AETHER_SAVE_SLOT_NAME_MAX 64
+#define AETHER_SAVE_MAX_SLOTS    16
+#define AETHER_SAVE_RESERVED_SIZE 128
 
-typedef struct aether_monster_registry {
-    aether_monster_t     monsters[AETHER_MONSTER_MAX];
-    u32                  count;
-    aether_entity_t     *player;    /* borrowed */
-    f32                  time;
-} aether_monster_registry_t;
+/* Save file header (written at the start of every save) */
+typedef struct aether_save_header {
+    u32   magic;                            /* AETHER_SAVE_MAGIC */
+    u32   version;                          /* AETHER_SAVE_VERSION */
+    u32   game_id;                          /* aether_game_id_t */
+    char  map_name[AETHER_SAVE_MAP_NAME_MAX];
+    char  game_name[AETHER_SAVE_GAME_NAME_MAX];
+    u32   timestamp;
+    u32   play_time_seconds;
+    u32   flags;
+    u32   entity_count;
+    u32   checksum;
+    u8    reserved[AETHER_SAVE_RESERVED_SIZE];
+} aether_save_header_t;
 
-void aether_monster_registry_init(aether_monster_registry_t *reg, aether_entity_t *player);
-void aether_monster_registry_reset(aether_monster_registry_t *reg);
+/* Sections inside the file */
+typedef enum aether_save_section {
+    AETHER_SAVE_SEC_PLAYER  = 0x01,
+    AETHER_SAVE_SEC_ENTITIES = 0x02,
+    AETHER_SAVE_SEC_WEAPONS = 0x03,
+    AETHER_SAVE_SEC_WORLD   = 0x04,
+    AETHER_SAVE_SEC_END     = 0xFF,
+} aether_save_section_t;
 
-/* Spawn a monster at position. Returns pointer or NULL. */
-aether_monster_t *aether_monster_registry_spawn(aether_monster_registry_t *reg,
-                                                  aether_monster_id_t id,
-                                                  aether_vec3_t pos);
+/* Section header (before each section's data) */
+typedef struct aether_save_sec_header {
+    u8    id;
+    u8    pad[3];
+    u32   size;
+} aether_save_sec_header_t;
 
-/* Tick all monsters */
-void aether_monster_registry_tick(aether_monster_registry_t *reg, f32 dt);
-
-/* Counts */
-u32  aether_monster_registry_count   (const aether_monster_registry_t *reg);
-u32  aether_monster_registry_alive   (const aether_monster_registry_t *reg);
-
-/* Diagnostics */
-void aether_monster_registry_dump(const aether_monster_registry_t *reg);
+/* Simple checksum */
+u32 aether_save_checksum(const u8 *data, u32 size);
 
 #ifdef __cplusplus
 }
 #endif
-#endif /* AETHER_MONSTER_REGISTRY_H */
+#endif /* AETHER_SAVE_FORMAT_H */
