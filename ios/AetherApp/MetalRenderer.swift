@@ -1,5 +1,5 @@
 // MetalRenderer.swift
-// Renders BSP mesh + MDL model. STEP 16C.
+// Renders BSP mesh + MDL model + entities. STEP 18B.
 // AetherEngine-iOS · Clean-room.
 
 import MetalKit
@@ -23,27 +23,28 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     let device: MTLDevice
     let queue:  MTLCommandQueue
 
-    // BSP pipeline
     var bspPipeline:  MTLRenderPipelineState?
+    var mdlPipeline:  MTLRenderPipelineState?
     var depthState:   MTLDepthStencilState?
     var samplerState: MTLSamplerState?
 
-    // BSP buffers
     var vertexBuffer: MTLBuffer?
     var indexBuffer:  MTLBuffer?
     var indexCount:   Int = 0
 
-    // Texture atlas
     var atlasTexture: MTLTexture?
     var hasTexture:   Bool = false
 
-    // MDL pipeline + buffers
-    var mdlPipeline:   MTLRenderPipelineState?
     var mdlVertexBuf:  MTLBuffer?
     var mdlIndexBuf:   MTLBuffer?
     var mdlIndexCount: Int = 0
-    var mdlVertexCount: Int = 0
     var hasMdl:        Bool = false
+
+    // Monster billboards
+    var monsterVertexBuf: MTLBuffer?
+    var monsterIndexBuf:  MTLBuffer?
+    var monsterIndexCount: Int = 0
+    var monsterPositions: [simd_float3] = []
 
     private var lastTime: CFTimeInterval = CACurrentMediaTime()
 
@@ -56,7 +57,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         mtkView.delegate = self
         mtkView.colorPixelFormat = .bgra8Unorm
         mtkView.depthStencilPixelFormat = .depth32Float
-        mtkView.clearColor = MTLClearColor(red: 0.05, green: 0.05, blue: 0.08, alpha: 1.0)
+        mtkView.clearColor = MTLClearColor(red: 0.25, green: 0.30, blue: 0.45, alpha: 1.0)
         mtkView.preferredFramesPerSecond = 60
         mtkView.isPaused = false
         mtkView.enableSetNeedsDisplay = false
@@ -70,116 +71,87 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         engine_renderer_attach_metal(opaque)
     }
 
-    // MARK: - BSP pipeline
     private func buildBspPipeline(mtkView: MTKView) {
         guard let lib = device.makeDefaultLibrary(),
               let vfn = lib.makeFunction(name: "aether_vertex_main"),
-              let ffn = lib.makeFunction(name: "aether_fragment_main") else {
-            print("[MetalRenderer] BSP shader funcs missing"); return
-        }
-
+              let ffn = lib.makeFunction(name: "aether_fragment_main") else { return }
         let vd = MTLVertexDescriptor()
-        vd.attributes[0].format = .float3
-        vd.attributes[0].offset = 0
-        vd.attributes[0].bufferIndex = 0
-        vd.attributes[1].format = .float3
-        vd.attributes[1].offset = 12
-        vd.attributes[1].bufferIndex = 0
-        vd.attributes[2].format = .float2
-        vd.attributes[2].offset = 24
-        vd.attributes[2].bufferIndex = 0
+        vd.attributes[0].format = .float3; vd.attributes[0].offset = 0;  vd.attributes[0].bufferIndex = 0
+        vd.attributes[1].format = .float3; vd.attributes[1].offset = 12; vd.attributes[1].bufferIndex = 0
+        vd.attributes[2].format = .float2; vd.attributes[2].offset = 24; vd.attributes[2].bufferIndex = 0
         vd.layouts[0].stride = 32
         vd.layouts[0].stepFunction = .perVertex
-
         let d = MTLRenderPipelineDescriptor()
-        d.vertexFunction = vfn
-        d.fragmentFunction = ffn
-        d.vertexDescriptor = vd
+        d.vertexFunction = vfn; d.fragmentFunction = ffn; d.vertexDescriptor = vd
         d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
         d.depthAttachmentPixelFormat      = mtkView.depthStencilPixelFormat
-
         do { bspPipeline = try device.makeRenderPipelineState(descriptor: d) }
         catch { print("[MetalRenderer] BSP pipeline error: \(error)") }
     }
 
-    // MARK: - MDL pipeline
     private func buildMdlPipeline(mtkView: MTKView) {
         guard let lib = device.makeDefaultLibrary(),
               let vfn = lib.makeFunction(name: "aether_model_vertex"),
-              let ffn = lib.makeFunction(name: "aether_model_fragment") else {
-            print("[MetalRenderer] MDL shader funcs missing"); return
-        }
-
+              let ffn = lib.makeFunction(name: "aether_model_fragment") else { return }
         let vd = MTLVertexDescriptor()
-        vd.attributes[0].format = .float3
-        vd.attributes[0].offset = 0
-        vd.attributes[0].bufferIndex = 0
-        vd.attributes[1].format = .float3
-        vd.attributes[1].offset = 12
-        vd.attributes[1].bufferIndex = 0
+        vd.attributes[0].format = .float3; vd.attributes[0].offset = 0;  vd.attributes[0].bufferIndex = 0
+        vd.attributes[1].format = .float3; vd.attributes[1].offset = 12; vd.attributes[1].bufferIndex = 0
         vd.layouts[0].stride = 24
         vd.layouts[0].stepFunction = .perVertex
-
         let d = MTLRenderPipelineDescriptor()
-        d.vertexFunction = vfn
-        d.fragmentFunction = ffn
-        d.vertexDescriptor = vd
+        d.vertexFunction = vfn; d.fragmentFunction = ffn; d.vertexDescriptor = vd
         d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
         d.depthAttachmentPixelFormat      = mtkView.depthStencilPixelFormat
-
-        do {
-            mdlPipeline = try device.makeRenderPipelineState(descriptor: d)
-            print("[MetalRenderer] MDL pipeline built OK")
-        } catch {
-            print("[MetalRenderer] MDL pipeline error: \(error)")
-        }
+        do { mdlPipeline = try device.makeRenderPipelineState(descriptor: d) }
+        catch { print("[MetalRenderer] MDL pipeline error: \(error)") }
     }
 
     private func buildDepthState() {
         let d = MTLDepthStencilDescriptor()
-        d.depthCompareFunction = .less
-        d.isDepthWriteEnabled  = true
+        d.depthCompareFunction = .less; d.isDepthWriteEnabled = true
         depthState = device.makeDepthStencilState(descriptor: d)
     }
 
     private func buildSampler() {
         let s = MTLSamplerDescriptor()
-        s.minFilter = .linear
-        s.magFilter = .linear
-        s.sAddressMode = .clampToEdge
-        s.tAddressMode = .clampToEdge
+        s.minFilter = .linear; s.magFilter = .linear
+        s.sAddressMode = .clampToEdge; s.tAddressMode = .clampToEdge
         samplerState = device.makeSamplerState(descriptor: s)
     }
 
-    // MARK: - Uploads
+    // MARK: - Upload
     func uploadMeshFromEngine() {
         uploadBspMesh()
         uploadAtlas()
         uploadMdlMesh()
-        engine_player_spawn_at_mesh_center()
-        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0), MDL=\(hasMdl))")
+        buildMonsterBoxes()
+
+        // Try spawning player at info_player_start; fallback to mesh center
+        if engine_player_has_start() {
+            engine_player_spawn_at_start()
+            print("[MetalRenderer] Player spawned at info_player_start")
+        } else {
+            engine_player_spawn_at_mesh_center()
+            print("[MetalRenderer] Player spawned at mesh center (no info_player_start)")
+        }
+
+        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0), MDL=\(hasMdl), Monsters=\(monsterPositions.count))")
     }
 
     private func uploadBspMesh() {
         let vCount = Int(engine_bsp_mesh_vertex_count())
         let iCount = Int(engine_bsp_mesh_index_count())
         guard vCount > 0, iCount > 0 else { return }
-
         var vData = [Float](repeating: 0, count: vCount * 8)
         _ = vData.withUnsafeMutableBufferPointer { buf -> Int32 in
             Int32(engine_bsp_mesh_copy_vertices(buf.baseAddress, Int32(vCount)))
         }
-        vertexBuffer = device.makeBuffer(bytes: vData,
-                                          length: vCount * 32,
-                                          options: .storageModeShared)
-
+        vertexBuffer = device.makeBuffer(bytes: vData, length: vCount * 32, options: .storageModeShared)
         var iData = [UInt32](repeating: 0, count: iCount)
         _ = iData.withUnsafeMutableBufferPointer { buf -> Int32 in
             Int32(engine_bsp_mesh_copy_indices(buf.baseAddress, Int32(iCount)))
         }
-        indexBuffer = device.makeBuffer(bytes: iData,
-                                         length: iCount * 4,
-                                         options: .storageModeShared)
+        indexBuffer = device.makeBuffer(bytes: iData, length: iCount * 4, options: .storageModeShared)
         indexCount = iCount
     }
 
@@ -193,29 +165,21 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             Int32(engine_texture_atlas_copy_rgba(buf.baseAddress, Int32(byteCount)))
         }
         guard copied == byteCount else { hasTexture = false; return }
-
         let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm,
                                                           width: w, height: h, mipmapped: false)
         td.usage = .shaderRead
         td.storageMode = .shared
         guard let tex = device.makeTexture(descriptor: td) else { hasTexture = false; return }
-        tex.replace(region: MTLRegionMake2D(0, 0, w, h),
-                    mipmapLevel: 0,
-                    withBytes: rgba,
-                    bytesPerRow: w * 4)
+        tex.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0,
+                    withBytes: rgba, bytesPerRow: w * 4)
         atlasTexture = tex
         hasTexture = true
-        print("[MetalRenderer] Atlas \(w)x\(h) uploaded")
     }
 
     private func uploadMdlMesh() {
         let vCount = Int(engine_mdl_mesh_vertex_count())
         let tCount = Int(engine_mdl_mesh_triangle_count())
-        guard vCount > 0, tCount > 0 else {
-            hasMdl = false
-            print("[MetalRenderer] No MDL mesh to upload")
-            return
-        }
+        guard vCount > 0, tCount > 0 else { hasMdl = false; return }
 
         var pData = [Float](repeating: 0, count: vCount * 3)
         _ = pData.withUnsafeMutableBufferPointer { buf -> Int32 in
@@ -225,7 +189,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         _ = nData.withUnsafeMutableBufferPointer { buf -> Int32 in
             Int32(engine_mdl_mesh_copy_normals(buf.baseAddress, Int32(vCount * 3)))
         }
-
         var interleaved = [Float](repeating: 0, count: vCount * 6)
         for i in 0..<vCount {
             interleaved[i*6 + 0] = pData[i*3 + 0]
@@ -235,21 +198,56 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             interleaved[i*6 + 4] = nData[i*3 + 1]
             interleaved[i*6 + 5] = nData[i*3 + 2]
         }
-        mdlVertexBuf = device.makeBuffer(bytes: interleaved,
-                                          length: vCount * 24,
-                                          options: .storageModeShared)
-
+        mdlVertexBuf = device.makeBuffer(bytes: interleaved, length: vCount * 24, options: .storageModeShared)
         var iData = [UInt32](repeating: 0, count: tCount * 3)
         _ = iData.withUnsafeMutableBufferPointer { buf -> Int32 in
             Int32(engine_mdl_mesh_copy_indices(buf.baseAddress, Int32(tCount * 3)))
         }
-        mdlIndexBuf = device.makeBuffer(bytes: iData,
-                                         length: tCount * 3 * 4,
-                                         options: .storageModeShared)
-        mdlIndexCount  = tCount * 3
-        mdlVertexCount = vCount
+        mdlIndexBuf = device.makeBuffer(bytes: iData, length: tCount * 3 * 4, options: .storageModeShared)
+        mdlIndexCount = tCount * 3
         hasMdl = true
-        print("[MetalRenderer] MDL mesh uploaded: \(vCount) verts, \(tCount) tris")
+    }
+
+    // Build a 1x1x1 box for each monster at its position
+    private func buildMonsterBoxes() {
+        let maxMonsters = 128
+        var positions = [Float](repeating: 0, count: maxMonsters * 3)
+        let count = positions.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_monster_positions_copy(buf.baseAddress, Int32(maxMonsters)))
+        }
+        guard count > 0 else {
+            monsterIndexCount = 0
+            return
+        }
+
+        monsterPositions.removeAll()
+        for i in 0..<Int(count) {
+            monsterPositions.append(simd_float3(positions[i*3+0], positions[i*3+1], positions[i*3+2]))
+        }
+
+        // Build a unit cube centered at origin
+        let s: Float = 16.0   // half-size (so 32 units total)
+        let verts: [Float] = [
+            // 8 corners × (pos.xyz, normal.xyz)
+            -s,-s,-s, 0,0,-1,   s,-s,-s, 0,0,-1,   s, s,-s, 0,0,-1,  -s, s,-s, 0,0,-1,
+            -s,-s, s, 0,0, 1,   s,-s, s, 0,0, 1,   s, s, s, 0,0, 1,  -s, s, s, 0,0, 1,
+            -s,-s,-s, -1,0,0,  -s,-s, s, -1,0,0,  -s, s, s, -1,0,0,  -s, s,-s, -1,0,0,
+             s,-s,-s,  1,0,0,   s,-s, s,  1,0,0,   s, s, s,  1,0,0,   s, s,-s,  1,0,0,
+            -s,-s,-s, 0,-1,0,   s,-s,-s, 0,-1,0,   s,-s, s, 0,-1,0,  -s,-s, s, 0,-1,0,
+            -s, s,-s, 0, 1,0,   s, s,-s, 0, 1,0,   s, s, s, 0, 1,0,  -s, s, s, 0, 1,0,
+        ]
+        let idx: [UInt32] = [
+            0,1,2, 0,2,3,       // back
+            4,6,5, 4,7,6,       // front
+            8,9,10, 8,10,11,    // left
+            12,14,13, 12,15,14, // right
+            16,17,18, 16,18,19, // bottom
+            20,22,21, 20,23,22, // top
+        ]
+
+        monsterVertexBuf = device.makeBuffer(bytes: verts, length: verts.count * 4, options: .storageModeShared)
+        monsterIndexBuf  = device.makeBuffer(bytes: idx, length: idx.count * 4, options: .storageModeShared)
+        monsterIndexCount = idx.count
     }
 
     // MARK: - MTKViewDelegate
@@ -269,7 +267,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
               let rpd      = view.currentRenderPassDescriptor,
               let cmd      = queue.makeCommandBuffer() else { return }
 
-        rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.05, green: 0.05, blue: 0.08, alpha: 1.0)
+        rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.25, green: 0.30, blue: 0.45, alpha: 1.0)
         rpd.colorAttachments[0].loadAction = .clear
 
         engine_renderer_begin_frame()
@@ -277,7 +275,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { cmd.commit(); return }
         if let ds = depthState { enc.setDepthStencilState(ds) }
 
-        // Camera
         var eye = [Float](repeating: 0, count: 3)
         var fwd = [Float](repeating: 0, count: 3)
         engine_player_get_eye(&eye)
@@ -295,16 +292,13 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         // ---- BSP ----
         if let pipeline = bspPipeline, let vb = vertexBuffer, let ib = indexBuffer, indexCount > 0 {
             enc.setRenderPipelineState(pipeline)
-
             var U = Uniforms(model: matrix_identity_float4x4,
-                             view: viewMat,
-                             proj: projMat,
+                             view: viewMat, proj: projMat,
                              lightDir: simd_normalize(simd_float3(0.3, 0.8, 0.5)),
                              pad0: 0,
                              baseColor: simd_float4(0.85, 0.9, 1.0, 1.0),
                              useTexture: hasTexture ? 1.0 : 0.0,
                              pad1: 0, pad2: 0, pad3: 0)
-
             enc.setVertexBuffer(vb, offset: 0, index: 0)
             enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
             enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
@@ -312,39 +306,46 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 enc.setFragmentTexture(tex, index: 0)
                 enc.setFragmentSamplerState(ss, index: 0)
             }
-            enc.drawIndexedPrimitives(type: .triangle,
-                                      indexCount: indexCount,
-                                      indexType: .uint32,
-                                      indexBuffer: ib,
-                                      indexBufferOffset: 0)
+            enc.drawIndexedPrimitives(type: .triangle, indexCount: indexCount,
+                                      indexType: .uint32, indexBuffer: ib, indexBufferOffset: 0)
         }
 
-        // ---- MDL ----
+        // ---- MDL (test model) ----
         if let pipeline = mdlPipeline, let vb = mdlVertexBuf, let ib = mdlIndexBuf, mdlIndexCount > 0 {
             enc.setRenderPipelineState(pipeline)
-
             var pos = [Float](repeating: 0, count: 3)
             engine_mdl_mesh_get_render_pos(&pos)
             var model = matrix_identity_float4x4
             model.columns.3 = simd_float4(pos[0], pos[1], pos[2], 1.0)
-
-            var U = Uniforms(model: model,
-                             view: viewMat,
-                             proj: projMat,
+            var U = Uniforms(model: model, view: viewMat, proj: projMat,
                              lightDir: simd_normalize(simd_float3(0.3, 0.8, 0.5)),
                              pad0: 0,
                              baseColor: simd_float4(0.85, 0.75, 0.55, 1.0),
-                             useTexture: 0.0,
-                             pad1: 0, pad2: 0, pad3: 0)
-
+                             useTexture: 0.0, pad1: 0, pad2: 0, pad3: 0)
             enc.setVertexBuffer(vb, offset: 0, index: 0)
             enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
             enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
-            enc.drawIndexedPrimitives(type: .triangle,
-                                      indexCount: mdlIndexCount,
-                                      indexType: .uint32,
-                                      indexBuffer: ib,
-                                      indexBufferOffset: 0)
+            enc.drawIndexedPrimitives(type: .triangle, indexCount: mdlIndexCount,
+                                      indexType: .uint32, indexBuffer: ib, indexBufferOffset: 0)
+        }
+
+        // ---- Monsters (as boxes) ----
+        if let pipeline = mdlPipeline, let vb = monsterVertexBuf, let ib = monsterIndexBuf, monsterIndexCount > 0 {
+            enc.setRenderPipelineState(pipeline)
+            for mpos in monsterPositions {
+                var model = matrix_identity_float4x4
+                model.columns.3 = simd_float4(mpos.x, mpos.y, mpos.z, 1.0)
+                var U = Uniforms(model: model, view: viewMat, proj: projMat,
+                                 lightDir: simd_normalize(simd_float3(0.3, 0.8, 0.5)),
+                                 pad0: 0,
+                                 baseColor: simd_float4(0.9, 0.3, 0.3, 1.0),   // red = monster
+                                 useTexture: 0.0, pad1: 0, pad2: 0, pad3: 0)
+                enc.setVertexBuffer(vb, offset: 0, index: 0)
+                enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+                enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+                enc.drawIndexedPrimitives(type: .triangle, indexCount: monsterIndexCount,
+                                          indexType: .uint32, indexBuffer: ib, indexBufferOffset: 0)
+            }
         }
 
         enc.endEncoding()
@@ -353,7 +354,6 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         cmd.commit()
     }
 
-    // MARK: - Matrix helpers
     private func lookAtZUp(eye: simd_float3, center: simd_float3, up: simd_float3) -> simd_float4x4 {
         let f = simd_normalize(center - eye)
         let s = simd_normalize(simd_cross(f, up))
@@ -362,9 +362,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         m.columns.0 = simd_float4( s.x,  u.x, -f.x, 0)
         m.columns.1 = simd_float4( s.y,  u.y, -f.y, 0)
         m.columns.2 = simd_float4( s.z,  u.z, -f.z, 0)
-        m.columns.3 = simd_float4(-simd_dot(s, eye),
-                                   -simd_dot(u, eye),
-                                    simd_dot(f, eye), 1)
+        m.columns.3 = simd_float4(-simd_dot(s, eye), -simd_dot(u, eye), simd_dot(f, eye), 1)
         return m
     }
 
@@ -381,24 +379,20 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     }
 }
 
-// MARK: - SwiftUI wrapper
 struct MetalView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
-
     func makeUIView(context: Context) -> MTKView {
         let v = MTKView()
         v.device = MTLCreateSystemDefaultDevice()
         v.colorPixelFormat = .bgra8Unorm
         v.depthStencilPixelFormat = .depth32Float
-        v.clearColor = MTLClearColor(red: 0.05, green: 0.05, blue: 0.08, alpha: 1.0)
+        v.clearColor = MTLClearColor(red: 0.25, green: 0.30, blue: 0.45, alpha: 1.0)
         v.preferredFramesPerSecond = 60
         v.enableSetNeedsDisplay = false
         v.isPaused = false
         let r = MetalRenderer(mtkView: v)
         context.coordinator.renderer = r
-        DispatchQueue.main.async {
-            r?.uploadMeshFromEngine()
-        }
+        DispatchQueue.main.async { r?.uploadMeshFromEngine() }
         return v
     }
     func updateUIView(_ uiView: MTKView, context: Context) {}
