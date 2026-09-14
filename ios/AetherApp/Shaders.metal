@@ -1,11 +1,22 @@
 // Shaders.metal
-// BSP geometry + MDL model rendering. STEP 16C.
+// BSP geometry + MDL model rendering. Brighter lighting for visibility.
 // AetherEngine-iOS · Clean-room.
 
 #include <metal_stdlib>
 using namespace metal;
 
-/* ============ Shared uniform struct ============ */
+struct BSPVertexIn {
+    float3 position [[attribute(0)]];
+    float3 normal   [[attribute(1)]];
+    float2 uv       [[attribute(2)]];
+};
+
+struct BSPVertexOut {
+    float4 position [[position]];
+    float3 normal;
+    float2 uv;
+};
+
 struct Uniforms {
     float4x4 model;
     float4x4 view;
@@ -17,22 +28,9 @@ struct Uniforms {
     float    pad1, pad2, pad3;
 };
 
-/* ============ BSP shaders ============ */
-struct BspVertexIn {
-    float3 position [[attribute(0)]];
-    float3 normal   [[attribute(1)]];
-    float2 uv       [[attribute(2)]];
-};
-
-struct BspVertexOut {
-    float4 position [[position]];
-    float3 normal;
-    float2 uv;
-};
-
-vertex BspVertexOut aether_vertex_main(BspVertexIn in [[stage_in]],
+vertex BSPVertexOut aether_vertex_main(BSPVertexIn in [[stage_in]],
                                         constant Uniforms &U [[buffer(1)]]) {
-    BspVertexOut out;
+    BSPVertexOut out;
     float4 world = U.model * float4(in.position, 1.0);
     out.position = U.proj * U.view * world;
     out.normal = normalize((U.model * float4(in.normal, 0.0)).xyz);
@@ -40,14 +38,19 @@ vertex BspVertexOut aether_vertex_main(BspVertexIn in [[stage_in]],
     return out;
 }
 
-fragment float4 aether_fragment_main(BspVertexOut in [[stage_in]],
+fragment float4 aether_fragment_main(BSPVertexOut in [[stage_in]],
                                       constant Uniforms &U [[buffer(1)]],
                                       texture2d<float> atlas [[texture(0)]],
                                       sampler samp [[sampler(0)]]) {
+    // Brighter lighting — changed ambient 0.30 → 0.55, diffuse 0.70 → 0.60
     float3 N = normalize(in.normal);
     float  ndl = max(dot(N, normalize(U.light_dir)), 0.0);
-    float  ambient = 0.30;
-    float  diff = ambient + ndl * 0.70;
+    // Two-sided lighting: if back-facing, flip normal
+    float  ndl_abs = max(abs(dot(N, normalize(U.light_dir))), 0.0);
+    float  ambient = 0.55;
+    float  diff = ambient + ndl_abs * 0.60;
+    // Clamp to 1.0
+    if (diff > 1.0) diff = 1.0;
 
     float3 base_color;
     if (U.use_texture > 0.5) {
@@ -63,7 +66,7 @@ fragment float4 aether_fragment_main(BspVertexOut in [[stage_in]],
     return float4(color, 1.0);
 }
 
-/* ============ MDL model shaders (STEP 16C) ============ */
+/* ============ MDL model shaders ============ */
 struct MdlVertexIn {
     float3 position [[attribute(0)]];
     float3 normal   [[attribute(1)]];
@@ -91,14 +94,18 @@ fragment float4 aether_model_fragment(MdlVertexOut in [[stage_in]],
                                        constant Uniforms &U [[buffer(1)]]) {
     float3 N = normalize(in.normal);
     float3 L = normalize(U.light_dir);
-    float  ndl = max(dot(N, L), 0.0);
+    float  ndl_abs = max(abs(dot(N, L)), 0.0);
 
+    // Brighter: 0.60 ambient + 0.50 diffuse
     float3 base = U.base_color.rgb;
-    float3 color = base * (0.40 + 0.60 * ndl);
+    float3 color = base * (0.60 + 0.50 * ndl_abs);
+    if (color.r > 1.0) color.r = 1.0;
+    if (color.g > 1.0) color.g = 1.0;
+    if (color.b > 1.0) color.b = 1.0;
 
-    /* Simple rim light for silhouette highlight */
-    float rim = 1.0 - max(dot(N, float3(0, 0, 1)), 0.0);
-    color += float3(0.15, 0.20, 0.30) * rim * 0.5;
+    // Rim light
+    float rim = 1.0 - abs(dot(N, float3(0,0,1)));
+    color += float3(0.10, 0.15, 0.20) * rim * 0.5;
 
     return float4(color, 1.0);
 }
