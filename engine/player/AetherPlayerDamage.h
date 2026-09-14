@@ -5,6 +5,7 @@
 #define AETHER_PLAYER_DAMAGE_H
 
 #include "../core/AetherCore.h"
+#include "../core/AetherMath.h"
 #include "AetherPlayerHealth.h"
 
 #ifdef __cplusplus
@@ -33,17 +34,16 @@ typedef enum aether_damage_type {
 typedef struct aether_damage_event {
     f32                    amount;
     aether_damage_type_t   type;
-    aether_vec3_t          source;       /* where damage came from */
-    aether_vec3_t          direction;    /* which way */
-    void                  *attacker;     /* pointer to attacker (entity) */
+    aether_vec3_t          source;
+    aether_vec3_t          direction;
+    void                  *attacker;
 } aether_damage_event_t;
 
 /* Apply damage event to player health. */
 void aether_player_apply_damage(aether_player_health_t *h,
                                  const aether_damage_event_t *ev);
 
-/* Fall damage based on landing velocity (GoldSrc formula).
- * velocity_z: landing z velocity (negative). Safe if > -580. */
+/* Fall damage based on landing velocity (GoldSrc formula). */
 f32 aether_player_calc_fall_damage(f32 velocity_z);
 
 /* Per-frame hazard ticks */
