@@ -1,0 +1,95 @@
+# verify.yml
+# Automatic host-compile check on every push/PR. No manual trigger.
+# AetherEngine-iOS · Clean-room.
+
+name: Verify C Sources
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  compile-c-sources:
+    name: Compile all C sources (host)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify repo structure
+        run: |
+          for f in \
+            engine/core/AetherCore.c \
+            engine/core/AetherEngine.c \
+            engine/core/AetherMath.c \
+            engine/core/AetherArray.c \
+            engine/core/AetherEvent.c \
+            engine/game/AetherGameManager.c \
+            engine/game/AetherManifest.c \
+            engine/input/AetherInput.c \
+            engine/input/AetherTouch.c \
+            engine/config/AetherSettings.c \
+            engine/fs/AetherFS.c \
+            engine/fs/AetherPak.c \
+            engine/audio/AetherAudio.c \
+            engine/render/AetherRender.c \
+            engine/bsp/AetherBSP.c \
+            engine/bsp/AetherBSPGeometry.c \
+          ; do
+            [ -f "$f" ] || { echo "MISSING: $f"; exit 1; }
+            echo "OK: $f"
+          done
+
+      - name: Compile every C file (strict)
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/obj
+          FAIL=0
+          for f in \
+            engine/core/AetherCore.c \
+            engine/core/AetherEngine.c \
+            engine/core/AetherMath.c \
+            engine/core/AetherArray.c \
+            engine/core/AetherEvent.c \
+            engine/game/AetherGameManager.c \
+            engine/game/AetherManifest.c \
+            engine/input/AetherInput.c \
+            engine/input/AetherTouch.c \
+            engine/config/AetherSettings.c \
+            engine/fs/AetherFS.c \
+            engine/fs/AetherPak.c \
+            engine/audio/AetherAudio.c \
+            engine/render/AetherRender.c \
+            engine/bsp/AetherBSP.c \
+            engine/bsp/AetherBSPGeometry.c \
+          ; do
+            echo "→ cc -c $f"
+            cc -std=c11 -Wall -Wextra -Wno-unused-parameter \
+              -Iengine/core -Iengine/game -Iengine/input -Iengine/config \
+              -Iengine/fs -Iengine/audio -Iengine/render -Iengine/bsp \
+              -c "$f" -o "/tmp/obj/$(basename "$f" .c).o" || FAIL=1
+          done
+          [ "$FAIL" -ne 0 ] && { echo "❌ Compile errors"; exit 1; }
+          echo "✅ All C sources compile cleanly"
+
+      - name: Verify manifests present
+        run: |
+          for m in valve bshift gearbox cstrike czero; do
+            [ -f "engine/game/manifests/$m.json" ] || { echo "MISSING: $m.json"; exit 1; }
+            echo "OK: $m.json"
+          done
+
+      - name: Verify Swift sources present
+        run: |
+          for s in \
+            AetherApp.swift DashboardView.swift SettingsView.swift \
+            TouchControlsView.swift EngineBridge.c EngineBridge.h \
+            AetherAudioiOS.swift MetalRenderer.swift MetalCallbacks.swift \
+            Shaders.metal Bridging-Header.h \
+          ; do
+            [ -f "ios/AetherApp/$s" ] && echo "OK: $s" || echo "MISSING: $s"
+          done

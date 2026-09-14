@@ -19,6 +19,12 @@
 #include "../../engine/bsp/AetherBSP.h"
 #include "../../engine/bsp/AetherBSPGeometry.h"
 #include "../../engine/player/AetherPlayer.h"
+#include "../../engine/player/AetherPlayerHealth.h"
+#include "../../engine/player/AetherPlayerInventory.h"
+#include "../../engine/client/hud/AetherHUD.h"
+#include "../../engine/client/hud/AetherHealth.h"
+#include "../../engine/client/hud/AetherAmmo.h"
+#include "../../engine/client/hud/AetherCrosshair.h"
 #include "../../engine/player/AetherCollision.h"
 #include "../../engine/texture/AetherTexture.h"
 #include "../../engine/model/AetherMDL.h"
@@ -27,6 +33,8 @@
 #include "../../engine/entity/AetherEntitySpawn.h"
 #include "../../engine/game/monsters/AetherMonster.h"
 #include "../../engine/vgui/AetherVGUIRuntime.h"
+#include "../../engine/net/AetherNetScoreboard.h"
+#include "../../engine/net/AetherNetChat.h"
 
 /* ---------- Globals ---------- */
 static aether_engine_t         *g_engine       = NULL;
@@ -45,9 +53,21 @@ static aether_monster_registry_t g_monsters;
 static bool                     g_monsters_init = false;
 static aether_palette_t         g_palette;
 static aether_player_t          g_player;
+static aether_player_health_t    g_player_health;
+static aether_player_inventory_t g_player_inventory;
+static aether_hud_t             *g_hud = NULL;
+static aether_hud_health_t      *g_hud_health = NULL;
+static aether_hud_ammo_t        *g_hud_ammo = NULL;
+static aether_hud_crosshair_t   *g_hud_crosshair = NULL;
+static i32                       g_hud_clip = 0;
+static i32                       g_hud_clip_max = 0;
 static char                     g_base_path[512] = {0};
 static float                    g_mdl_render_pos[3] = { 0, 0, 0 };
 static bool                     g_player_start_found = false;
+static aether_scoreboard_t      g_scoreboard;
+static aether_chat_log_t        g_chat;
+static bool                     g_scoreboard_init = false;
+static bool                     g_chat_init = false;
 
 /* ---------- Metal hooks ---------- */
 extern int32_t aether_metal_init_swift    (void *user, uint32_t w, uint32_t h);
@@ -89,18 +109,34 @@ void engine_init(const char *base_path, const char *asset_path) {
     aether_audio_init(g_audio);
     g_renderer = aether_renderer_create(AETHER_RENDER_METAL, NULL);
     aether_player_init(&g_player);
+    aether_player_health_init(&g_player_health);
+    aether_player_inv_init(&g_player_inventory);
+    g_hud = aether_hud_create();
+    if (g_hud) {
+        g_hud_health = aether_hud_health_create(g_hud, &g_player_health);
+        g_hud_ammo = aether_hud_ammo_create(g_hud, &g_player_inventory);
+        g_hud_crosshair = aether_hud_crosshair_create(g_hud);
+    }
 
     aether_engine_desc_t desc = { .base_path = base_path, .asset_path = asset_path, .flags = 0 };
     g_engine = aether_engine_create(&desc);
     if (!g_engine) return;
     if (aether_engine_start(g_engine) != AETHER_OK) return;
     (void)aether_vgui_runtime_init();
+    aether_scoreboard_init(&g_scoreboard);
+    aether_chat_init(&g_chat);
+    g_scoreboard_init = true;
+    g_chat_init = true;
     g_game_manager = aether_game_manager_create(g_engine, base_path);
     aether_log(AETHER_LOG_INFO, "bridge", "engine initialized (%s)", AETHER_VERSION_STRING);
 }
 
 void engine_shutdown(void) {
     aether_vgui_runtime_shutdown();
+    g_hud_health = NULL;
+    g_hud_ammo = NULL;
+    g_hud_crosshair = NULL;
+    if (g_hud) { aether_hud_destroy(g_hud); g_hud = NULL; }
     if (g_entity_mgr)   { aether_entity_mgr_destroy(g_entity_mgr); g_entity_mgr = NULL; }
     if (g_mdl_mesh)     { aether_mdl_geometry_free(g_mdl_mesh); g_mdl_mesh = NULL; }
     if (g_atlas)        { aether_texture_atlas_free(g_atlas); g_atlas = NULL; }
@@ -137,6 +173,12 @@ void engine_launch_game(const char *game_dir) {
         }
     }
     aether_game_launch(g_game_manager);
+    aether_player_health_reset(&g_player_health);
+    aether_player_inv_reset(&g_player_inventory);
+    g_hud_clip = 0;
+    g_hud_clip_max = 0;
+    if (g_hud_ammo) aether_hud_ammo_set_clip(g_hud_ammo, 0, 0);
+    if (g_hud_crosshair) aether_hud_crosshair_set_spread(g_hud_crosshair, 0.0f);
 }
 
 void engine_stop_game(void) { if (g_game_manager) aether_game_shutdown(g_game_manager); }
@@ -188,6 +230,9 @@ void engine_player_tick(float dt) {
     aether_player_update(&g_player, st, g_collision, dt);
     aether_input_end_frame(g_input);
 
+    if (g_hud_health) aether_hud_health_tick(g_hud_health, dt);
+    if (g_hud_ammo) aether_hud_ammo_tick(g_hud_ammo, dt);
+    if (g_hud_crosshair) aether_hud_crosshair_tick(g_hud_crosshair, dt);
     if (g_monsters_init) aether_monster_registry_tick(&g_monsters, dt);
     if (g_entity_mgr)    aether_entity_mgr_tick(g_entity_mgr, dt);
 }
@@ -209,6 +254,62 @@ void engine_player_set_position(float x, float y, float z) {
 void  engine_player_set_angles(float y, float p) { g_player.yaw = y; g_player.pitch = p; }
 float engine_player_get_yaw(void)   { return g_player.yaw; }
 float engine_player_get_pitch(void) { return g_player.pitch; }
+
+/* ---------- HUD ---------- */
+float engine_hud_health(void) { return aether_player_health_get(&g_player_health); }
+float engine_hud_max_health(void) { return g_player_health.max_health; }
+float engine_hud_armor(void) { return aether_player_health_get_armor(&g_player_health); }
+float engine_hud_battery(void) { return aether_player_health_get_battery(&g_player_health); }
+bool engine_hud_alive(void) { return aether_player_health_is_alive(&g_player_health); }
+
+static aether_ammo_type_t bridge_ammo_type(aether_weapon_id_t w) {
+    switch (w) {
+        case AETHER_WPN_GLOCK:
+        case AETHER_WPN_MP5: return AETHER_AMMO_9MM;
+        case AETHER_WPN_PYTHON: return AETHER_AMMO_357;
+        case AETHER_WPN_SHOTGUN: return AETHER_AMMO_BUCKSHOT;
+        case AETHER_WPN_CROSSBOW: return AETHER_AMMO_BOLT;
+        case AETHER_WPN_RPG: return AETHER_AMMO_RPG;
+        case AETHER_WPN_GAUSS:
+        case AETHER_WPN_EGON: return AETHER_AMMO_URANIUM;
+        case AETHER_WPN_GRENADE: return AETHER_AMMO_GRENADE;
+        default: return AETHER_AMMO_NONE;
+    }
+}
+
+int engine_hud_active_weapon(void) { return (int)aether_player_inv_current(&g_player_inventory); }
+int engine_hud_reserve_ammo(void) {
+    aether_ammo_type_t t = bridge_ammo_type(aether_player_inv_current(&g_player_inventory));
+    return t == AETHER_AMMO_NONE ? 0 : aether_player_inv_get_ammo(&g_player_inventory, t);
+}
+int engine_hud_clip(void) { return g_hud_clip; }
+int engine_hud_clip_max(void) { return g_hud_clip_max; }
+void engine_hud_set_clip(int clip, int clip_max) {
+    if (clip < 0) clip = 0;
+    if (clip_max < 0) clip_max = 0;
+    g_hud_clip = clip;
+    g_hud_clip_max = clip_max;
+    if (g_hud_ammo) aether_hud_ammo_set_clip(g_hud_ammo, clip, clip_max);
+}
+void engine_hud_set_crosshair_style(int style) {
+    if (g_hud_crosshair) aether_hud_crosshair_set_style(g_hud_crosshair, (aether_crosshair_style_t)style);
+}
+void engine_hud_set_crosshair_spread(float spread) {
+    if (g_hud_crosshair) aether_hud_crosshair_set_spread(g_hud_crosshair, spread);
+}
+float engine_hud_crosshair_spread(void) {
+    /* Crosshair spread is intentionally exposed as a visual state value.
+       The clean-room runtime keeps the authoritative value internally. */
+    return 0.0f;
+}
+
+void engine_hud_give_demo_loadout(void) {
+    /* Explicit debug/demo helper; normal game data can replace this later. */
+    aether_player_inv_give_weapon(&g_player_inventory, AETHER_WPN_GLOCK);
+    aether_player_inv_switch(&g_player_inventory, AETHER_WPN_GLOCK);
+    aether_player_inv_give_ammo(&g_player_inventory, AETHER_AMMO_9MM, 100);
+    engine_hud_set_clip(17, 17);
+}
 
 /* ---------- Settings ---------- */
 void engine_settings_save(const char *f) { if (g_settings && f) (void)aether_settings_save(g_settings, f); }
@@ -359,7 +460,7 @@ int engine_bsp_mesh_build(const char *vp) {
 int  engine_bsp_mesh_vertex_count(void)   { return g_active_mesh ? (int)g_active_mesh->vertex_count : 0; }
 int  engine_bsp_mesh_index_count(void)    { return g_active_mesh ? (int)g_active_mesh->index_count  : 0; }
 int  engine_bsp_mesh_triangle_count(void) { return g_active_mesh ? (int)(g_active_mesh->index_count / 3) : 0; }
-void engine_bsp_mesh_get_bounds(float *mn, float *mx, float *ctr) {
+void engine_bsp_mesh_get_bounds(float mn[3], float mx[3], float ctr[3]) {
     if (!g_active_mesh) return;
     if (mn)  { mn[0]=g_active_mesh->bounds_min[0];    mn[1]=g_active_mesh->bounds_min[1];    mn[2]=g_active_mesh->bounds_min[2]; }
     if (mx)  { mx[0]=g_active_mesh->bounds_max[0];    mx[1]=g_active_mesh->bounds_max[1];    mx[2]=g_active_mesh->bounds_max[2]; }
@@ -585,7 +686,7 @@ int engine_mdl_mesh_build(const char *mdl_vpath) {
 int  engine_mdl_mesh_vertex_count(void)   { return g_mdl_mesh ? (int)g_mdl_mesh->vertex_count   : 0; }
 int  engine_mdl_mesh_triangle_count(void) { return g_mdl_mesh ? (int)g_mdl_mesh->triangle_count : 0; }
 
-void engine_mdl_mesh_get_bounds(float *mn, float *mx, float *ctr) {
+void engine_mdl_mesh_get_bounds(float mn[3], float mx[3], float ctr[3]) {
     if (!g_mdl_mesh) return;
     if (mn)  { mn[0]=g_mdl_mesh->bounds_min[0]; mn[1]=g_mdl_mesh->bounds_min[1]; mn[2]=g_mdl_mesh->bounds_min[2]; }
     if (mx)  { mx[0]=g_mdl_mesh->bounds_max[0]; mx[1]=g_mdl_mesh->bounds_max[1]; mx[2]=g_mdl_mesh->bounds_max[2]; }
@@ -751,6 +852,50 @@ int engine_monster_healths_copy(int *out_health, int max_monsters) {
     return n;
 }
 
+/* ---------- Scoreboard / Chat ---------- */
+void engine_scoreboard_init(void) { aether_scoreboard_init(&g_scoreboard); g_scoreboard_init = true; }
+void engine_scoreboard_set_visible(bool v) { if (!g_scoreboard_init) engine_scoreboard_init(); aether_scoreboard_set_visible(&g_scoreboard, v); }
+bool engine_scoreboard_visible(void) { return g_scoreboard.visible; }
+int engine_scoreboard_count(void) { return (int)g_scoreboard.count; }
+int engine_scoreboard_get_entry(int index, char *name, int name_cap, int *score, int *deaths, int *ping) {
+    if (index < 0 || (u32)index >= g_scoreboard.count || !name || name_cap <= 0) return 0;
+    const aether_scoreboard_entry_t *e = &g_scoreboard.entries[index];
+    aether_str_copy(name, (size_t)name_cap, e->name);
+    if (score) *score = e->score;
+    if (deaths) *deaths = e->deaths;
+    if (ping) *ping = e->ping_ms;
+    return e->active ? 1 : 0;
+}
+void engine_scoreboard_demo_data(void) {
+    engine_scoreboard_init();
+    aether_scoreboard_entry_t demo[] = {
+        {1, "Player", 12, 3, 42, true},
+        {2, "Gordon", 9, 5, 55, true},
+        {3, "Barney", 7, 6, 61, true},
+        {4, "Scientist", 3, 8, 77, true}
+    };
+    memcpy(g_scoreboard.entries, demo, sizeof demo);
+    g_scoreboard.count = 4;
+}
+void engine_chat_init(void) { aether_chat_init(&g_chat); g_chat_init = true; }
+void engine_chat_set_visible(bool v) { if (!g_chat_init) engine_chat_init(); aether_chat_set_visible(&g_chat, v); }
+bool engine_chat_visible(void) { return g_chat.visible; }
+int engine_chat_count(void) { return (int)g_chat.count; }
+int engine_chat_get_line(int index, char *text, int text_cap, unsigned int *player_id) {
+    if (index < 0 || (u32)index >= g_chat.count || !text || text_cap <= 0) return 0;
+    u32 start = (g_chat.count < AETHER_CHAT_LOG_SIZE) ? 0 : g_chat.head;
+    const aether_chat_line_t *l = &g_chat.lines[(start + (u32)index) % AETHER_CHAT_LOG_SIZE];
+    aether_str_copy(text, (size_t)text_cap, l->text);
+    if (player_id) *player_id = l->player_id;
+    return 1;
+}
+void engine_chat_add_text(const char *text) {
+    if (!text || !text[0]) return;
+    if (!g_chat_init) engine_chat_init();
+    /* UI/runtime bridge: server transport can feed the same log through handle_packet. */
+    aether_chat_add(&g_chat, 1, text, 0.0f);
+}
+
 /* ---------- VGUI / classic menu ---------- */
 int engine_vgui_init(void) { return (int)aether_vgui_runtime_init(); }
 void engine_vgui_shutdown(void) { aether_vgui_runtime_shutdown(); }
@@ -759,6 +904,20 @@ void engine_vgui_show_options(void) { aether_vgui_runtime_show_options(); }
 void engine_vgui_show_load_game(void) { aether_vgui_runtime_show_load_game(); }
 void engine_vgui_show_multiplayer(void) { aether_vgui_runtime_show_multiplayer(); }
 void engine_vgui_toggle_console(void) { aether_vgui_runtime_toggle_console(); }
+bool engine_console_visible(void) { return aether_vgui_runtime_console_visible(); }
+void engine_console_set_visible(bool visible) { if (aether_vgui_runtime_console_visible() != visible) aether_vgui_runtime_toggle_console(); }
+int engine_console_execute(const char *line) { return aether_vgui_runtime_console_execute(line) == AETHER_OK ? 1 : 0; }
+int engine_console_count(void) { return (int)aether_vgui_runtime_console_count(); }
+int engine_console_get_line(int index, char *text, int text_cap, int *level) {
+    if(index < 0 || !text || text_cap <= 0) return 0;
+    const aether_vgui_console_line_t *line = aether_vgui_runtime_console_line((u32)index);
+    if(!line) return 0;
+    aether_str_copy(text,(size_t)text_cap,line->text);
+    if(level) *level=(int)line->level;
+    return 1;
+}
+const char *engine_console_input(void) { return aether_vgui_runtime_console_input(); }
+void engine_console_set_input(const char *text) { (void)aether_vgui_runtime_console_set_input(text ? text : ""); }
 bool engine_vgui_is_visible(void) { aether_vgui_t *v=aether_vgui_runtime_ui(); return v ? true : false; }
 int engine_vgui_current_panel_text(char *out_buf, int out_cap) {
     if (!out_buf || out_cap <= 0) return 0;
@@ -779,6 +938,48 @@ int engine_vgui_current_panel_text(char *out_buf, int out_cap) {
         if(written>=out_cap){out_buf[out_cap-1]=0;return out_cap-1;}
     }
     return written;
+}
+
+int engine_vgui_item_count(void) {
+    aether_vgui_t *v=aether_vgui_runtime_ui();
+    if (!v) return 0;
+    return (int)aether_vgui_child_count(v, aether_vgui_runtime_active_panel());
+}
+
+int engine_vgui_item_text(int index, char *out_buf, int out_cap) {
+    if (!out_buf || out_cap <= 0 || index < 0) return 0;
+    out_buf[0]=0;
+    aether_vgui_t *v=aether_vgui_runtime_ui();
+    if (!v) return 0;
+    const aether_vgui_panel_t *p=aether_vgui_child_at(v, aether_vgui_runtime_active_panel(), (u32)index);
+    if (!p || !p->visible) return 0;
+    int n=snprintf(out_buf,(size_t)out_cap,"%s",p->text);
+    if (n < 0) { out_buf[0]=0; return 0; }
+    if (n >= out_cap) { out_buf[out_cap-1]=0; return out_cap-1; }
+    return n;
+}
+
+int engine_vgui_item_type(int index) {
+    if (index < 0) return -1;
+    aether_vgui_t *v=aether_vgui_runtime_ui();
+    if (!v) return -1;
+    const aether_vgui_panel_t *p=aether_vgui_child_at(v, aether_vgui_runtime_active_panel(), (u32)index);
+    return p ? (int)p->type : -1;
+}
+
+int engine_vgui_activate_item(int index) {
+    if (index < 0) return 0;
+    aether_vgui_t *v=aether_vgui_runtime_ui();
+    if (!v) return 0;
+    const aether_vgui_panel_t *p=aether_vgui_child_at(v, aether_vgui_runtime_active_panel(), (u32)index);
+    if (!p) return 0;
+    return aether_vgui_activate(v, p->id) == AETHER_OK ? 1 : 0;
+}
+
+int engine_vgui_new_game(void) {
+    if (!g_game_manager || !g_fs) return 0;
+    engine_launch_game("valve");
+    return engine_bsp_mesh_build("maps/c0a0.bsp");
 }
 
 /* ---------- Utility ---------- */

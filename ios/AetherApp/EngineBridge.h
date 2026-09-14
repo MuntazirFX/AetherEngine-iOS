@@ -35,6 +35,22 @@ void  engine_player_set_angles(float yaw, float pitch);
 float engine_player_get_yaw(void);
 float engine_player_get_pitch(void);
 
+/* ---------- HUD ---------- */
+float engine_hud_health(void);
+float engine_hud_max_health(void);
+float engine_hud_armor(void);
+float engine_hud_battery(void);
+bool  engine_hud_alive(void);
+int   engine_hud_active_weapon(void);
+int   engine_hud_reserve_ammo(void);
+int   engine_hud_clip(void);
+int   engine_hud_clip_max(void);
+void  engine_hud_set_clip(int clip, int clip_max);
+void  engine_hud_set_crosshair_style(int style);
+void  engine_hud_set_crosshair_spread(float spread);
+float engine_hud_crosshair_spread(void);
+void  engine_hud_give_demo_loadout(void);
+
 /* ---------- Settings / Audio / Renderer ---------- */
 void engine_settings_save(const char *filepath);
 void engine_settings_load(const char *filepath);
@@ -100,6 +116,20 @@ int  engine_entity_alive_monster_count(void);          /* NEW */
 int  engine_monster_positions_copy(float *out_xyz_flat, int max_monsters);  /* NEW */
 int  engine_monster_healths_copy(int *out_health, int max_monsters);        /* NEW */
 
+/* ---------- Scoreboard / Chat ---------- */
+void engine_scoreboard_init(void);
+void engine_scoreboard_set_visible(bool visible);
+bool engine_scoreboard_visible(void);
+int engine_scoreboard_count(void);
+int engine_scoreboard_get_entry(int index, char *name, int name_cap, int *score, int *deaths, int *ping);
+void engine_scoreboard_demo_data(void);
+void engine_chat_init(void);
+void engine_chat_set_visible(bool visible);
+bool engine_chat_visible(void);
+int engine_chat_count(void);
+int engine_chat_get_line(int index, char *text, int text_cap, unsigned int *player_id);
+void engine_chat_add_text(const char *text);
+
 /* ---------- VGUI / classic menu ---------- */
 int  engine_vgui_init(void);
 void engine_vgui_shutdown(void);
@@ -108,8 +138,20 @@ void engine_vgui_show_options(void);
 void engine_vgui_show_load_game(void);
 void engine_vgui_show_multiplayer(void);
 void engine_vgui_toggle_console(void);
+bool engine_console_visible(void);
+void engine_console_set_visible(bool visible);
+int engine_console_execute(const char *line);
+int engine_console_count(void);
+int engine_console_get_line(int index, char *text, int text_cap, int *level);
+const char *engine_console_input(void);
+void engine_console_set_input(const char *text);
 bool engine_vgui_is_visible(void);
 int  engine_vgui_current_panel_text(char *out_buf, int out_cap);
+int  engine_vgui_item_count(void);
+int  engine_vgui_item_text(int index, char *out_buf, int out_cap);
+int  engine_vgui_item_type(int index);
+int  engine_vgui_activate_item(int index);
+int  engine_vgui_new_game(void);
 
 /* ---------- Utility ---------- */
 const char *engine_base_path(void);

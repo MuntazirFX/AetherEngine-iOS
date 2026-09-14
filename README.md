@@ -85,3 +85,11 @@ The project now includes a clean-room VGUI compatibility layer under `engine/vgu
 - iOS bridge entry points in `EngineBridge.h`
 
 This is an AetherEngine implementation, not a copy of Valve/Xash3D source. Full visual/pixel parity and complete network discovery still require further integration with the Metal renderer and game networking.
+
+
+## Classic GoldSrc HUD bridge
+The iOS game view now presents a clean-room GoldSrc-style HUD overlay backed by the C HUD/player state: health, armor, HEV battery, weapon/ammo state, death state, and classic crosshair presentation. The HUD is a presentation bridge; gameplay state remains in the engine.
+
+
+## Scoreboard + Chat UI
+The iOS game screen now exposes the clean-room C scoreboard/chat runtime through a classic overlay. Scoreboard state is read from the C networking layer; chat uses the same log buffer and is ready for server packet integration.

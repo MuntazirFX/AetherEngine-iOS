@@ -9,6 +9,10 @@ struct DashboardView: View {
     @State private var showAlert:    Bool   = false
     @State private var showRenderer: Bool   = false
     @State private var isLoadingMap: Bool   = false
+    @State private var showClassicMenu: Bool = false
+    @State private var showScoreboard: Bool = false
+    @State private var showChat: Bool = false
+    @State private var showConsole: Bool = false
 
     let games: [(name: String, dir: String, status: String)] = [
         ("Half-Life", "valve", "Ready"),
@@ -173,18 +177,32 @@ struct DashboardView: View {
                 ZStack {
                     MetalView().ignoresSafeArea()
                     TouchControlsView().ignoresSafeArea()
-                    VStack {
-                        HStack {
-                            Button(action: { showRenderer = false }) {
-                                Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 34))
-                                    .foregroundColor(.white)
-                                    .padding(20)
+                    ClassicHUDOverlay().ignoresSafeArea()
+
+                    // Native iOS entry point into the engine's C VGUI runtime.
+                    if !showClassicMenu {
+                        VStack {
+                            HStack(spacing: 8) {
+                                Button(action: {
+                                    engine_vgui_show_main()
+                                    showClassicMenu = true
+                                }) { Text("MENU").font(.system(size: 14, weight: .bold, design: .serif)).foregroundColor(.white).padding(.horizontal, 14).padding(.vertical, 9).background(Color.black.opacity(0.50)).overlay(Rectangle().stroke(Color.white.opacity(0.25), lineWidth: 1)) }
+                                Button(action: {
+                                    engine_scoreboard_demo_data()
+                                    showScoreboard.toggle()
+                                    engine_scoreboard_set_visible(showScoreboard)
+                                }) { Text("SCORE").font(.system(size: 12, weight: .bold, design: .serif)).foregroundColor(.white).padding(.horizontal, 10).padding(.vertical, 9).background(Color.black.opacity(0.50)).overlay(Rectangle().stroke(Color.white.opacity(0.25), lineWidth: 1)) }
+                                Button(action: { showChat.toggle(); engine_chat_set_visible(showChat) }) { Text("CHAT").font(.system(size: 12, weight: .bold, design: .serif)).foregroundColor(.white).padding(.horizontal, 10).padding(.vertical, 9).background(Color.black.opacity(0.50)).overlay(Rectangle().stroke(Color.white.opacity(0.25), lineWidth: 1)) }
+                                Button(action: { showConsole = true; engine_console_set_visible(true) }) { Text("CONSOLE").font(.system(size: 11, weight: .bold, design: .monospaced)).foregroundColor(.white).padding(.horizontal, 10).padding(.vertical, 9).background(Color.black.opacity(0.50)).overlay(Rectangle().stroke(Color.white.opacity(0.25), lineWidth: 1)) }
+                                Spacer()
                             }
                             Spacer()
                         }
-                        Spacer()
                     }
+
+                    ClassicVGUIOverlay(isPresented: $showClassicMenu)
+                    ClassicScoreboardChatOverlay(scoreboardShown: $showScoreboard, chatShown: $showChat)
+                    ClassicConsoleOverlay(isPresented: $showConsole)
                 }
             }
         }
@@ -211,7 +229,11 @@ struct DashboardView: View {
         "valve".withCString { engine_launch_game($0) }
         let ok = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build($0) }
         isLoadingMap = false
-        if ok == 1 { showRenderer = true }
+        if ok == 1 {
+            engine_vgui_show_main()
+            showClassicMenu = true
+            showRenderer = true
+        }
         else { alertTitle = "Load Failed"; alertMessage = "c0a0.bsp could not be loaded"; showAlert = true }
     }
 
