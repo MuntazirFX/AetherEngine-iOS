@@ -1,0 +1,5 @@
+#include "AetherPhysics.h"
+#include <string.h>
+void aether_physics_body_init(aether_physics_body_t*b,aether_vec3_t mins,aether_vec3_t maxs){if(!b)return;memset(b,0,sizeof*b);b->mins=mins;b->maxs=maxs;b->gravity=800.0f;b->friction=6.0f;b->mass=1.0f;}
+void aether_physics_apply_impulse(aether_physics_body_t*b,aether_vec3_t i){if(!b)return;f32 m=b->mass>0?b->mass:1;b->velocity.x+=i.x/m;b->velocity.y+=i.y/m;b->velocity.z+=i.z/m;b->on_ground=false;}
+void aether_physics_step(aether_physics_body_t*b,aether_vec3_t*p,f32 dt,aether_physics_sweep_fn sweep,void*u){if(!b||!p||dt<=0)return;if(!b->on_ground)b->velocity.z-=b->gravity*dt;else{f32 k=1.0f-b->friction*dt;if(k<0)k=0;b->velocity.x*=k;b->velocity.y*=k;}aether_vec3_t to=*p;to.x+=b->velocity.x*dt;to.y+=b->velocity.y*dt;to.z+=b->velocity.z*dt;aether_vec3_t hp,n={0,0,0};if(sweep&&sweep(u,*p,to,b->mins,b->maxs,&hp,&n)){*p=hp;f32 vn=b->velocity.x*n.x+b->velocity.y*n.y+b->velocity.z*n.z;if(vn<0){b->velocity.x-=vn*n.x;b->velocity.y-=vn*n.y;b->velocity.z-=vn*n.z;}b->on_ground=n.z>0.7f;}else{*p=to;b->on_ground=false;}}

@@ -36,6 +36,7 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/thread/AetherThread.c
 
     # -------- game --------
+    ${CMAKE_SOURCE_DIR}/../engine/game/AetherGameLogic.c
     ${CMAKE_SOURCE_DIR}/../engine/game/AetherGameManager.c
     ${CMAKE_SOURCE_DIR}/../engine/game/AetherManifest.c
 
@@ -52,6 +53,14 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterDefs.c
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterRegistry.c
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterAI.c
+
+    # -------- game runtime / DLL-style modules --------
+    ${CMAKE_SOURCE_DIR}/../engine/game/dll/AetherGameDLL.c
+    ${CMAKE_SOURCE_DIR}/../engine/game/ai/AetherPathfinding.c
+    ${CMAKE_SOURCE_DIR}/../engine/game/ai/AetherBot.c
+
+    # -------- physics --------
+    ${CMAKE_SOURCE_DIR}/../engine/physics/AetherPhysics.c
 
     # -------- save --------
     ${CMAKE_SOURCE_DIR}/../engine/save/AetherSaveFormat.c
@@ -120,6 +129,7 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDLGeometry.c
 
     # -------- entity --------
+    ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntityClassRegistry.c
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntity.c
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntityBase.c
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntitySpawn.c
@@ -154,6 +164,7 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/thread/AetherThread.h
 
     # -------- game --------
+    ${CMAKE_SOURCE_DIR}/../engine/game/AetherGameLogic.h
     ${CMAKE_SOURCE_DIR}/../engine/game/AetherGameManager.h
     ${CMAKE_SOURCE_DIR}/../engine/game/AetherManifest.h
 
@@ -173,6 +184,14 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterRegistry.h
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonsterAI.h
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters/AetherMonster.h
+
+    # -------- game runtime / DLL-style modules --------
+    ${CMAKE_SOURCE_DIR}/../engine/game/dll/AetherGameDLL.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/ai/AetherPathfinding.h
+    ${CMAKE_SOURCE_DIR}/../engine/game/ai/AetherBot.h
+
+    # -------- physics --------
+    ${CMAKE_SOURCE_DIR}/../engine/physics/AetherPhysics.h
 
     # -------- save --------
     ${CMAKE_SOURCE_DIR}/../engine/save/AetherSaveFormat.h
@@ -244,6 +263,7 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/model/AetherMDLGeometry.h
 
     # -------- entity --------
+    ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntityClassRegistry.h
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntity.h
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntityBase.h
     ${CMAKE_SOURCE_DIR}/../engine/entity/AetherEntitySpawn.h

@@ -54,3 +54,18 @@ AetherEngine now exposes an Xash3D-class renderer feature layer with clean-room 
 - `AetherPostFX` — bloom/exposure/post-processing configuration
 
 Metal remains the primary iOS backend. The OpenGL/GLES3/software entries are compatibility/reference backend interfaces; they are not a claim that iOS ships an active OpenGL implementation in this project. The feature layer is intentionally independent of any third-party engine source.
+
+## Xash3D-class game logic coverage
+
+AetherEngine includes clean-room game-runtime equivalents for the game-logic areas used by the iOS target:
+
+- `engine/game/dll/` — static server/client module registry (iOS-safe replacement for dynamic DLL loading)
+- `engine/game/ai/` — A* navigation graph and bot runtime
+- `engine/physics/` — generic rigid-body movement/slide/ground response with a collision callback
+- `engine/entity/AetherEntityClassRegistry.*` — built-in entity classname registry (113 GoldSrc-style classnames currently enumerated in this repo)
+- `engine/game/weapons/` — weapon definitions, firing/recoil, projectiles, viewmodel animation
+- `engine/game/monsters/` — monster definitions, runtime state machine and perception
+- `engine/net/` — UDP client/server, snapshots, chat and scoreboard
+- `engine/save/` — save/load and autosave formats
+
+These are AetherEngine implementations, not copies of Xash3D source. The feature names indicate the target capability; they do not claim byte-for-byte or 100% gameplay compatibility with every Xash3D/GoldSrc behavior.

@@ -103,3 +103,17 @@ void aether_projectile_mgr_dump(const aether_projectile_mgr_t *m) {
                    p->velocity.x, p->velocity.y, p->velocity.z);
     }
 }
+
+i32 aether_projectile_spawn_for_weapon(aether_projectile_mgr_t *m,const aether_weapon_def_t *def,aether_vec3_t origin,aether_vec3_t direction,aether_entity_t *owner){
+    if(!m||!def)return -1;
+    direction=aether_vec3_normalize(direction);
+    aether_projectile_kind_t kind=AETHER_PROJ_BOLT;
+    if(def->flags&AETHER_WFLAG_EXPLOSIVE){
+        if(def->id==AETHER_WPN_RPG) kind=AETHER_PROJ_ROCKET;
+        else kind=AETHER_PROJ_GRENADE;
+    } else if(def->id==AETHER_WPN_CROSSBOW) kind=AETHER_PROJ_BOLT;
+    else if(def->id==AETHER_WPN_SNARK) kind=AETHER_PROJ_SNARK;
+    else return -1;
+    f32 speed=def->bullet_speed>0.0f?def->bullet_speed:1000.0f;
+    return aether_projectile_spawn(m,kind,origin,aether_vec3_scale(direction,speed),owner);
+}
