@@ -1,5 +1,5 @@
 // EngineBridge.c — AetherEngine-iOS · Clean-room.
-// STEP 17A: Entity diagnostics.
+// STEP 18B: Player spawn + entity spawning + monster tracking.
 
 #include "EngineBridge.h"
 
@@ -18,6 +18,9 @@
 #include "../../engine/model/AetherMDL.h"
 #include "../../engine/model/AetherMDLGeometry.h"
 #include "../../engine/entity/AetherEntity.h"
+#include "../../engine/entity/AetherEntityBase.h"
+#include "../../engine/entity/AetherEntitySpawn.h"
+#include "../../engine/game/monsters/AetherMonster.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -35,11 +38,17 @@ static aether_mesh_t           *g_active_mesh  = NULL;
 static aether_collision_t      *g_collision    = NULL;
 static aether_texture_atlas_t  *g_atlas        = NULL;
 static aether_model_mesh_t     *g_mdl_mesh     = NULL;
-static aether_entity_list_t    *g_entities     = NULL;
+static aether_entity_list_t    *g_entities     = NULL;   /* parsed BSP entities */
+static aether_entity_mgr_t     *g_entity_mgr   = NULL;   /* runtime entities */
+static aether_monster_registry_t g_monsters;
+static bool                     g_monsters_init = false;
 static aether_palette_t         g_palette;
 static aether_player_t          g_player;
 static char                     g_base_path[512] = {0};
 static float                    g_mdl_render_pos[3] = { 0, 0, 0 };
+static bool                     g_player_start_found = false;
+static aether_vec3_t            g_player_start_pos = {0,0,0};
+static aether_vec3_t            g_player_start_ang = {0,0,0};
 
 /* ---------- Metal hooks ---------- */
 extern int32_t aether_metal_init_swift    (void *user, uint32_t w, uint32_t h);
@@ -67,12 +76,11 @@ static aether_input_action_t map_action_name(const char *n) {
     return AETHER_ACTION_NONE;
 }
 
-/* ---------- Engine lifecycle ---------- */
+/* ---------- Lifecycle ---------- */
 void engine_init(const char *base_path, const char *asset_path) {
     if (g_engine) return;
     if (!base_path || !asset_path) return;
     aether_str_copy(g_base_path, sizeof g_base_path, base_path);
-    aether_log(AETHER_LOG_INFO, "bridge", "base_path = %s", g_base_path);
 
     g_settings = aether_settings_create();
     aether_settings_register_engine_defaults(g_settings);
@@ -88,10 +96,11 @@ void engine_init(const char *base_path, const char *asset_path) {
     if (!g_engine) return;
     if (aether_engine_start(g_engine) != AETHER_OK) return;
     g_game_manager = aether_game_manager_create(g_engine, base_path);
-    aether_log(AETHER_LOG_INFO, "bridge", "engine fully initialized (%s)", AETHER_VERSION_STRING);
+    aether_log(AETHER_LOG_INFO, "bridge", "engine initialized (%s)", AETHER_VERSION_STRING);
 }
 
 void engine_shutdown(void) {
+    if (g_entity_mgr)   { aether_entity_mgr_destroy(g_entity_mgr); g_entity_mgr = NULL; }
     if (g_entities)     { aether_entity_list_free(g_entities); g_entities = NULL; }
     if (g_mdl_mesh)     { aether_mdl_geometry_free(g_mdl_mesh); g_mdl_mesh = NULL; }
     if (g_atlas)        { aether_texture_atlas_free(g_atlas); g_atlas = NULL; }
@@ -104,7 +113,6 @@ void engine_shutdown(void) {
     if (g_settings)     { aether_settings_destroy(g_settings); g_settings = NULL; }
     if (g_audio)        { aether_audio_shutdown(g_audio); aether_audio_destroy(g_audio); g_audio = NULL; }
     if (g_renderer)     { aether_renderer_shutdown(g_renderer); aether_renderer_destroy(g_renderer); g_renderer = NULL; }
-    aether_log(AETHER_LOG_INFO, "bridge", "engine shutdown complete");
 }
 
 /* ---------- Game lifecycle ---------- */
@@ -153,7 +161,40 @@ void engine_player_spawn_at_mesh_center(void) {
     aether_player_set_position(&g_player, c);
     g_player.yaw = 0.0f;
     g_player.pitch = 0.0f;
-    aether_log(AETHER_LOG_INFO, "player", "spawned at (%.1f, %.1f, %.1f)", c.x, c.y, c.z);
+    aether_log(AETHER_LOG_INFO, "player", "spawned at mesh center (%.1f,%.1f,%.1f)",
+               c.x, c.y, c.z);
+}
+
+bool engine_player_has_start(void) {
+    return g_player_start_found;
+}
+
+void engine_player_spawn_at_start(void) {
+    if (!g_entity_mgr) {
+        aether_log(AETHER_LOG_WARN, "player", "no entity manager — using mesh center");
+        engine_player_spawn_at_mesh_center();
+        return;
+    }
+
+    aether_vec3_t pos, ang;
+    if (aether_entity_get_player_start(g_entity_mgr, &pos, &ang) == AETHER_OK) {
+        g_player_start_found = true;
+        g_player_start_pos = pos;
+        g_player_start_ang = ang;
+
+        /* Spawn 30 units above floor so player drops onto it */
+        aether_vec3_t spawn_pos = { pos.x, pos.y, pos.z + 30.0f };
+        aether_player_set_position(&g_player, spawn_pos);
+        g_player.yaw   = ang.y;   /* HL: yaw is angle[1] */
+        g_player.pitch = 0.0f;
+
+        aether_log(AETHER_LOG_INFO, "player",
+                   "spawned at info_player_start (%.1f,%.1f,%.1f) yaw=%.1f",
+                   pos.x, pos.y, pos.z, ang.y);
+    } else {
+        aether_log(AETHER_LOG_WARN, "player", "info_player_start not found — using mesh center");
+        engine_player_spawn_at_mesh_center();
+    }
 }
 
 void engine_player_tick(float dt) {
@@ -162,6 +203,14 @@ void engine_player_tick(float dt) {
     const aether_input_state_t *st = aether_input_state(g_input);
     aether_player_update(&g_player, st, g_collision, dt);
     aether_input_end_frame(g_input);
+
+    /* Tick monsters too */
+    if (g_monsters_init) {
+        aether_monster_registry_tick(&g_monsters, dt);
+    }
+    if (g_entity_mgr) {
+        aether_entity_mgr_tick(g_entity_mgr, dt);
+    }
 }
 
 void engine_player_get_eye(float out[3]) {
@@ -182,11 +231,10 @@ void  engine_player_set_angles(float y, float p) { g_player.yaw = y; g_player.pi
 float engine_player_get_yaw(void)   { return g_player.yaw; }
 float engine_player_get_pitch(void) { return g_player.pitch; }
 
-/* ---------- Settings ---------- */
+/* ---------- Settings / Audio / Renderer ---------- */
 void engine_settings_save(const char *f) { if (g_settings && f) (void)aether_settings_save(g_settings, f); }
 void engine_settings_load(const char *f) { if (g_settings && f) (void)aether_settings_load(g_settings, f); }
 
-/* ---------- Audio ---------- */
 void engine_audio_init(void)                 { if (!g_audio) g_audio = aether_audio_create(); aether_audio_init(g_audio); }
 void engine_audio_shutdown(void)             { if (g_audio) aether_audio_shutdown(g_audio); }
 void engine_audio_set_master_volume(float v) { if (g_audio) aether_audio_set_master_volume(g_audio, v); }
@@ -194,7 +242,6 @@ void engine_audio_set_mute(bool m)           { if (g_audio) aether_audio_set_mut
 void engine_audio_play(const char *p, float v, bool l) { if (g_audio && p) (void)aether_audio_play_effect(g_audio, p, v, l); }
 void engine_audio_stop_all(void)             { if (g_audio) aether_audio_stop_all(g_audio); }
 
-/* ---------- Renderer ---------- */
 void engine_renderer_attach_metal(void *v) {
     if (!g_renderer) return;
     (void)aether_renderer_install_metal(g_renderer, v);
@@ -230,14 +277,20 @@ int engine_bsp_inspect_vfs_text(const char *vp, char *ob, int cap) {
     return 1;
 }
 
-/* ---------- BSP mesh + collision + atlas ---------- */
+/* ---------- BSP mesh + collision + atlas + entities + monsters ---------- */
 int engine_bsp_mesh_build(const char *vp) {
     if (!g_fs || !vp) return 0;
-    if (g_entities)    { aether_entity_list_free(g_entities); g_entities = NULL; }
-    if (g_atlas)       { aether_texture_atlas_free(g_atlas); g_atlas = NULL; }
-    if (g_active_mesh) { aether_mesh_free(g_active_mesh); g_active_mesh = NULL; }
-    if (g_collision)   { aether_collision_free(g_collision); g_collision = NULL; }
 
+    /* Clean previous state */
+    if (g_monsters_init) { aether_monster_registry_reset(&g_monsters); g_monsters_init = false; }
+    if (g_entity_mgr) { aether_entity_mgr_destroy(g_entity_mgr); g_entity_mgr = NULL; }
+    if (g_entities)   { aether_entity_list_free(g_entities);   g_entities = NULL; }
+    if (g_atlas)      { aether_texture_atlas_free(g_atlas);    g_atlas = NULL; }
+    if (g_active_mesh){ aether_mesh_free(g_active_mesh);       g_active_mesh = NULL; }
+    if (g_collision)  { aether_collision_free(g_collision);    g_collision = NULL; }
+    g_player_start_found = false;
+
+    /* Read BSP */
     u32 sz = aether_fs_read_file(g_fs, vp, NULL, 0);
     if (sz == 0 || sz > 64u*1024u*1024u) return 0;
     u8 *buf = (u8*)malloc(sz);
@@ -248,6 +301,7 @@ int engine_bsp_mesh_build(const char *vp) {
     free(buf);
     if (!b) return 0;
 
+    /* --- Palette (from halflife.wad) --- */
     if (!g_palette.loaded) {
         u32 wad_sz = aether_fs_read_file(g_fs, "halflife.wad", NULL, 0);
         if (wad_sz > 0 && wad_sz < 256u*1024u*1024u) {
@@ -264,22 +318,77 @@ int engine_bsp_mesh_build(const char *vp) {
         if (!g_palette.loaded) aether_palette_default(&g_palette);
     }
 
+    /* --- Texture atlas --- */
     g_atlas = aether_texture_atlas_build(b, &g_palette);
     if (g_atlas) aether_texture_atlas_dump(g_atlas);
 
+    /* --- Mesh --- */
     aether_mesh_t *m = NULL;
     if (aether_mesh_from_bsp(b, g_atlas, &m) != AETHER_OK || !m) {
         aether_bsp_free(b); return 0;
     }
     g_active_mesh = m;
 
+    /* --- Collision --- */
     g_collision = aether_collision_build(b);
     if (g_collision) aether_collision_dump(g_collision);
 
-    /* Parse entities (STEP 17A) */
+    /* --- Parse BSP entities (text → structured list) --- */
     g_entities = aether_entity_list_from_bsp(b);
-    if (g_entities) {
-        aether_entity_list_dump(g_entities);
+    if (g_entities) aether_entity_list_dump(g_entities);
+
+    /* --- Spawn runtime entities from BSP entities --- */
+    g_entity_mgr = aether_entity_mgr_create();
+    if (g_entity_mgr && g_entities) {
+        u32 spawned = aether_entity_spawn_from_bsp(g_entity_mgr, b);
+        aether_entity_spawn_dump(g_entity_mgr);
+        aether_log(AETHER_LOG_INFO, "bridge", "spawned %u runtime entities", spawned);
+    }
+
+    /* --- Initialize monster registry and spawn monsters --- */
+    if (g_entity_mgr) {
+        aether_monster_registry_init(&g_monsters, NULL);
+        g_monsters_init = true;
+
+        /* Spawn monsters from entity manager (scan for monster_*) */
+        u32 monster_count = 0;
+        u32 total = aether_entity_mgr_count(g_entity_mgr);
+        for (u32 i = 0; i < total; ++i) {
+            const aether_entity_t *e = aether_entity_mgr_at(g_entity_mgr, i);
+            if (!e) continue;
+            if (strncmp(e->classname, "monster_", 8) != 0) continue;
+
+            /* Map classname to monster ID (simple heuristic) */
+            aether_monster_id_t id = AETHER_MON_NONE;
+            if (strstr(e->classname, "headcrab"))       id = AETHER_MON_HEADCRAB;
+            else if (strstr(e->classname, "zombie_soldier")) id = AETHER_MON_ZOMBIE_SOLDIER;
+            else if (strstr(e->classname, "zombie_gonome"))  id = AETHER_MON_ZOMBIE_GONOME;
+            else if (strstr(e->classname, "zombie"))         id = AETHER_MON_ZOMBIE;
+            else if (strstr(e->classname, "barnacle"))       id = AETHER_MON_BARNACLE;
+            else if (strstr(e->classname, "houndeye"))       id = AETHER_MON_HOUNDEYE;
+            else if (strstr(e->classname, "bullsquid"))      id = AETHER_MON_BULLSQUID;
+            else if (strstr(e->classname, "alien_grunt"))    id = AETHER_MON_ALIEN_GRUNT;
+            else if (strstr(e->classname, "alien_slave"))    id = AETHER_MON_ALIEN_SLAVE;
+            else if (strstr(e->classname, "alien_controller")) id = AETHER_MON_ALIEN_CONTROLLER;
+            else if (strstr(e->classname, "gargantua"))      id = AETHER_MON_GARGANTUA;
+            else if (strstr(e->classname, "human_grunt"))    id = AETHER_MON_HUMAN_GRUNT;
+            else if (strstr(e->classname, "human_sergeant")) id = AETHER_MON_HUMAN_SERGEANT;
+            else if (strstr(e->classname, "scientist"))      id = AETHER_MON_SCIENTIST;
+            else if (strstr(e->classname, "barney"))         id = AETHER_MON_BARNEY;
+            else if (strstr(e->classname, "gman"))           id = AETHER_MON_GMAN;
+            else if (strstr(e->classname, "apache"))         id = AETHER_MON_APACHE;
+            else if (strstr(e->classname, "osprey"))         id = AETHER_MON_OSPREY;
+            else if (strstr(e->classname, "ichthyosaur"))    id = AETHER_MON_ICHTHYOSAUR;
+            else if (strstr(e->classname, "leech"))          id = AETHER_MON_LEECH;
+            else if (strstr(e->classname, "turret"))         id = AETHER_MON_TURRET;
+
+            if (id != AETHER_MON_NONE) {
+                aether_monster_registry_spawn(&g_monsters, id, e->origin);
+                monster_count++;
+            }
+        }
+        aether_monster_registry_dump(&g_monsters);
+        aether_log(AETHER_LOG_INFO, "bridge", "spawned %u monsters", monster_count);
     }
 
     aether_bsp_free(b);
@@ -308,10 +417,12 @@ int engine_bsp_mesh_copy_indices(uint32_t *out, int maxi) {
     return n;
 }
 void engine_bsp_mesh_release(void) {
-    if (g_entities)    { aether_entity_list_free(g_entities); g_entities = NULL; }
-    if (g_atlas)       { aether_texture_atlas_free(g_atlas); g_atlas = NULL; }
-    if (g_active_mesh) { aether_mesh_free(g_active_mesh); g_active_mesh = NULL; }
-    if (g_collision)   { aether_collision_free(g_collision); g_collision = NULL; }
+    if (g_monsters_init) { aether_monster_registry_reset(&g_monsters); g_monsters_init = false; }
+    if (g_entity_mgr) { aether_entity_mgr_destroy(g_entity_mgr); g_entity_mgr = NULL; }
+    if (g_entities)   { aether_entity_list_free(g_entities); g_entities = NULL; }
+    if (g_atlas)      { aether_texture_atlas_free(g_atlas); g_atlas = NULL; }
+    if (g_active_mesh){ aether_mesh_free(g_active_mesh); g_active_mesh = NULL; }
+    if (g_collision)  { aether_collision_free(g_collision); g_collision = NULL; }
 }
 
 /* ---------- Texture / WAD diagnostics ---------- */
@@ -414,7 +525,7 @@ int engine_texture_atlas_copy_rgba(unsigned char *out, int max_bytes) {
     return (int)needed;
 }
 
-/* ---------- MDL diagnostics ---------- */
+/* ---------- MDL ---------- */
 int engine_mdl_dump_vfs(const char *mdl_vpath) {
     if (!g_fs || !mdl_vpath) return 0;
     u32 sz = aether_fs_read_file(g_fs, mdl_vpath, NULL, 0);
@@ -435,9 +546,7 @@ int engine_mdl_summary_text(const char *mdl_vpath, char *out_buf, int out_cap) {
     if (!g_fs || !mdl_vpath || !out_buf || out_cap <= 0) return -1;
     u32 sz = aether_fs_read_file(g_fs, mdl_vpath, NULL, 0);
     if (sz == 0) {
-        snprintf(out_buf, (size_t)out_cap,
-                 "❌ MDL NOT FOUND\n\nPath: %s\n\nAapke `valve` folder mein\n`models/<name>.mdl` file\nmojood nahi hai.",
-                 mdl_vpath);
+        snprintf(out_buf, (size_t)out_cap, "❌ MDL NOT FOUND\n\nPath: %s", mdl_vpath);
         return 0;
     }
     if (sz > 64u*1024u*1024u) {
@@ -481,7 +590,6 @@ int engine_mdl_summary_text(const char *mdl_vpath, char *out_buf, int out_cap) {
     return 1;
 }
 
-/* ---------- MDL mesh extraction ---------- */
 int engine_mdl_mesh_build(const char *mdl_vpath) {
     if (!g_fs || !mdl_vpath) return 0;
     if (g_mdl_mesh) { aether_mdl_geometry_free(g_mdl_mesh); g_mdl_mesh = NULL; }
@@ -505,6 +613,7 @@ int engine_mdl_mesh_build(const char *mdl_vpath) {
     g_mdl_mesh = mesh;
     aether_mdl_geometry_dump(mesh);
 
+    /* Place model 200 units in front of the player */
     float fwd[3] = { 1.0f, 0.0f, 0.0f };
     engine_player_get_forward(fwd);
     float ply[3] = { 0, 0, 0 };
@@ -551,7 +660,6 @@ void engine_mdl_mesh_release(void) {
     if (g_mdl_mesh) { aether_mdl_geometry_free(g_mdl_mesh); g_mdl_mesh = NULL; }
 }
 
-/* ---------- MDL render placement ---------- */
 void engine_mdl_mesh_get_render_pos(float out[3]) {
     out[0] = g_mdl_render_pos[0];
     out[1] = g_mdl_render_pos[1];
@@ -564,12 +672,9 @@ void engine_mdl_mesh_set_render_pos(float x, float y, float z) {
     g_mdl_render_pos[2] = z;
 }
 
-/* ---------- Entity diagnostics (STEP 17A) ---------- */
+/* ---------- Entity diagnostics ---------- */
 int engine_entity_dump_current_map(void) {
-    if (!g_entities) {
-        aether_log(AETHER_LOG_WARN, "bridge", "entity dump: no entities loaded");
-        return 0;
-    }
+    if (!g_entities) return 0;
     aether_entity_list_dump(g_entities);
     return 1;
 }
@@ -578,23 +683,16 @@ int engine_entity_summary_text(char *out_buf, int out_cap) {
     if (!out_buf || out_cap <= 0) return -1;
 
     int w = 0;
-    w += snprintf(out_buf + w, (size_t)(out_cap - w),
-                  "STEP 17A — Entity diagnostics\n\n");
+    w += snprintf(out_buf + w, (size_t)(out_cap - w), "STEP 17A — Entity diagnostics\n\n");
 
     if (!g_entities) {
         w += snprintf(out_buf + w, (size_t)(out_cap - w),
-                      "❌ No entities loaded.\n\n"
-                      "First load a map:\n"
-                      "Tap \"Launch Game\" or\n"
-                      "\"Load c0a0.bsp\".");
+                      "❌ No entities loaded.\n\nFirst load a map.");
         return 0;
     }
 
     u32 total = aether_entity_list_count(g_entities);
-    w += snprintf(out_buf + w, (size_t)(out_cap - w),
-                  "Total entities: %u\n\n", total);
-
-    /* Category summary */
+    w += snprintf(out_buf + w, (size_t)(out_cap - w), "Total entities: %u\n\n", total);
     w += snprintf(out_buf + w, (size_t)(out_cap - w), "Categories:\n");
     for (u32 c = 0; c < AETHER_ENTITY_CATEGORY_COUNT; ++c) {
         u32 n = aether_entity_category_count(g_entities, (aether_entity_category_t)c);
@@ -605,17 +703,13 @@ int engine_entity_summary_text(char *out_buf, int out_cap) {
         }
     }
 
-    /* Player start */
     const aether_entity_t *ps = aether_entity_find_first(g_entities, AETHER_ENTITY_PLAYER_START);
     if (ps) {
         w += snprintf(out_buf + w, (size_t)(out_cap - w),
                       "\nPlayer start:\n  %s @ (%.0f, %.0f, %.0f)\n",
                       ps->classname, ps->origin[0], ps->origin[1], ps->origin[2]);
-    } else {
-        w += snprintf(out_buf + w, (size_t)(out_cap - w), "\n⚠️ No player start found\n");
     }
 
-    /* First few monsters */
     w += snprintf(out_buf + w, (size_t)(out_cap - w), "\nFirst few monsters:\n");
     u32 shown = 0;
     for (u32 i = 0; i < total && shown < 5; ++i) {
@@ -628,8 +722,56 @@ int engine_entity_summary_text(char *out_buf, int out_cap) {
         }
     }
     if (shown == 0) w += snprintf(out_buf + w, (size_t)(out_cap - w), "  (none)\n");
-
     return 1;
+}
+
+/* ---------- Entity spawning ---------- */
+int engine_entity_spawn_current_map(void) {
+    if (!g_entity_mgr) return 0;
+    aether_entity_spawn_dump(g_entity_mgr);
+    return (int)aether_entity_mgr_count(g_entity_mgr);
+}
+int engine_entity_count(void) {
+    return g_entity_mgr ? (int)aether_entity_mgr_count(g_entity_mgr) : 0;
+}
+int engine_entity_monster_count(void) {
+    if (!g_monsters_init) return 0;
+    return (int)aether_monster_registry_count(&g_monsters);
+}
+int engine_entity_alive_monster_count(void) {
+    if (!g_monsters_init) return 0;
+    return (int)aether_monster_registry_alive(&g_monsters);
+}
+
+int engine_monster_positions_copy(float *out_xyz_flat, int max_monsters) {
+    if (!g_monsters_init || !out_xyz_flat || max_monsters <= 0) return 0;
+    int n = 0;
+    u32 total = aether_monster_registry_count(&g_monsters);
+    for (u32 i = 0; i < total && n < max_monsters; ++i) {
+        /* Access via public API? We have monster_registry_count/at? No at(). Use direct access */
+        /* Fallback: iterate through registry struct directly since we have the pointer */
+        const aether_monster_registry_t *reg = &g_monsters;
+        if (i >= reg->count) break;
+        const aether_monster_t *m = &reg->monsters[i];
+        if (!m->entity) continue;
+        out_xyz_flat[n*3 + 0] = m->entity->origin.x;
+        out_xyz_flat[n*3 + 1] = m->entity->origin.y;
+        out_xyz_flat[n*3 + 2] = m->entity->origin.z;
+        n++;
+    }
+    return n;
+}
+
+int engine_monster_healths_copy(int *out_health, int max_monsters) {
+    if (!g_monsters_init || !out_health || max_monsters <= 0) return 0;
+    int n = 0;
+    const aether_monster_registry_t *reg = &g_monsters;
+    for (u32 i = 0; i < reg->count && n < max_monsters; ++i) {
+        if (!reg->monsters[i].entity) continue;
+        out_health[n] = (int)reg->monsters[i].entity->health;
+        n++;
+    }
+    return n;
 }
 
 /* ---------- Utility ---------- */
