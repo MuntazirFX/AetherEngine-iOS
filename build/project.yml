@@ -1,13 +1,13 @@
 # project.yml
 # XcodeGen configuration for the AetherEngine iOS application.
-# Links the CMake-built libaether_engine.a via LIBRARY_SEARCH_PATHS + OTHER_LDFLAGS.
 # AetherEngine-iOS · Clean-room.
 
 name: AetherApp
+
 options:
   bundleIdPrefix: com.muntazirfx.aether
   deploymentTarget:
-    iOS: "14.0"
+    iOS: "15.0"
   createIntermediateGroups: true
   generateEmptyDirectories: true
   xcodeVersion: "15.4"
@@ -17,60 +17,102 @@ settings:
   base:
     SWIFT_VERSION: "5.9"
     ENABLE_BITCODE: NO
+
     CLANG_ENABLE_MODULES: YES
     CLANG_ENABLE_OBJC_ARC: YES
+
     GCC_C_LANGUAGE_STANDARD: c11
+
     GCC_WARN_UNUSED_FUNCTION: NO
     GCC_WARN_UNUSED_VARIABLE: NO
     GCC_WARN_UNUSED_VALUE: NO
     GCC_WARN_SIGN_COMPARE: NO
+
     CLANG_WARN_STRICT_PROTOTYPES: NO
     CLANG_WARN_SHORTEN_64_TO_32: NO
+
     HEADER_SEARCH_PATHS:
       - "$(SRCROOT)/../engine/core"
       - "$(SRCROOT)/../engine/game"
+      - "$(SRCROOT)/../engine/game/weapons"
+      - "$(SRCROOT)/../engine/game/monsters"
+      - "$(SRCROOT)/../engine/game/ai"
+      - "$(SRCROOT)/../engine/game/dll"
       - "$(SRCROOT)/../engine/input"
       - "$(SRCROOT)/../engine/config"
       - "$(SRCROOT)/../engine/fs"
       - "$(SRCROOT)/../engine/audio"
       - "$(SRCROOT)/../engine/render"
       - "$(SRCROOT)/../engine/bsp"
+      - "$(SRCROOT)/../engine/player"
+      - "$(SRCROOT)/../engine/texture"
+      - "$(SRCROOT)/../engine/model"
+      - "$(SRCROOT)/../engine/entity"
+      - "$(SRCROOT)/../engine/physics"
+      - "$(SRCROOT)/../engine/save"
+      - "$(SRCROOT)/../engine/net"
       - "$(SRCROOT)/../engine/vgui"
+      - "$(SRCROOT)/../engine/client/hud"
+      - "$(SRCROOT)/../engine/client/menu"
+
     SWIFT_OBJC_BRIDGING_HEADER: "$(SRCROOT)/../ios/AetherApp/Bridging-Header.h"
+
     CODE_SIGNING_ALLOWED: NO
     CODE_SIGN_IDENTITY: ""
     CODE_SIGNING_REQUIRED: NO
 
 targets:
+
   AetherApp:
+
     type: application
     platform: iOS
+
     sources:
-      # Only Swift sources — engine C files come from libaether_engine.a
       - path: ../ios/AetherApp
+
     settings:
       base:
+
         INFOPLIST_FILE: configs/Info.plist
+
         PRODUCT_BUNDLE_IDENTIFIER: com.muntazirfx.aether.app
         PRODUCT_NAME: AetherEngine
+
         TARGETED_DEVICE_FAMILY: "1,2"
+
         SUPPORTS_MACCATALYST: NO
-        IPHONEOS_DEPLOYMENT_TARGET: "14.0"
+
+        IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+
         GENERATE_INFOPLIST_FILE: NO
+
         SWIFT_EMIT_LOC_STRINGS: YES
+
         ONLY_ACTIVE_ARCH: NO
+
         VALID_ARCHS: arm64
         ARCHS: arm64
-        # Link the pre-built engine static library
-        LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/out/cmake-ios"
-        OTHER_LDFLAGS: "$(inherited) -laether_engine"
+
+        # Link the pre-built AetherEngine C static library.
+        LIBRARY_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(SRCROOT)/out/cmake-ios"
+
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-laether_engine"
+
       configs:
+
         Release:
           SWIFT_OPTIMIZATION_LEVEL: "-O"
           GCC_OPTIMIZATION_LEVEL: "s"
+
         Debug:
           SWIFT_OPTIMIZATION_LEVEL: "-Onone"
           GCC_OPTIMIZATION_LEVEL: "0"
+
     scheme:
       testTargets: []
       gatherCoverageData: false
