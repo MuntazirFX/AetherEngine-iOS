@@ -15,7 +15,7 @@ option(AETHER_BUILD_IOS   "Build for iOS (ARM64)"          OFF)
 if(AETHER_BUILD_IOS)
     set(CMAKE_SYSTEM_NAME iOS)
     set(CMAKE_OSX_ARCHITECTURES arm64)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "14.0")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0")
 endif()
 
 # ============================================================

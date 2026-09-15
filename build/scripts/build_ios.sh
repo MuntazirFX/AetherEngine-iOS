@@ -48,7 +48,7 @@ cmake -S "${BUILD_DIR}" -B "${OUT_DIR}/cmake-ios" \
     -DCMAKE_SYSTEM_NAME=iOS \
     -DCMAKE_OSX_ARCHITECTURES=arm64 \
     -DCMAKE_OSX_SYSROOT="${IOS_SDK_PATH}" \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0
 
 log "Building engine static library..."
 cmake --build "${OUT_DIR}/cmake-ios" --config Release -- -j"$(sysctl -n hw.ncpu)"

@@ -52,9 +52,8 @@ struct ClassicScoreboardChatOverlay: View {
                 }
                 if chatShown {
                     HStack {
-                        TextField("Say...", text: $chatText)
+                        TextField("Say...", text: $chatText, onCommit: { sendChat() })
                             .textFieldStyle(.plain).foregroundColor(.white)
-                            .onSubmit { sendChat() }
                         Button("SEND") { sendChat() }.font(.system(size: 11, weight: .bold, design: .serif))
                     }.padding(7).background(Color.black.opacity(0.75)).overlay(Rectangle().stroke(Color.white.opacity(0.25)))
                 }

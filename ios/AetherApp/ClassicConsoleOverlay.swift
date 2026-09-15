@@ -4,7 +4,6 @@ struct ClassicConsoleOverlay: View {
     @Binding var isPresented: Bool
     @State private var input = ""
     @State private var lines: [String] = []
-    @FocusState private var focused: Bool
     private let poll = Timer.publish(every: 0.15, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -28,16 +27,15 @@ struct ClassicConsoleOverlay: View {
                     }
                     HStack(spacing: 8) {
                         Text(">_").font(.system(size: 13, weight: .bold, design: .monospaced)).foregroundColor(.white)
-                        TextField("enter command", text: $input)
+                        TextField("enter command", text: $input, onCommit: { execute() })
                             .textFieldStyle(.plain).font(.system(size: 14, design: .monospaced)).foregroundColor(.white)
-                            .focused($focused).onSubmit { execute() }
                         Button("EXEC") { execute() }.font(.system(size: 12, weight: .bold, design: .monospaced)).foregroundColor(.white)
                     }.padding(10).background(Color.white.opacity(0.08))
                 }
                 .frame(width: min(900, geo.size.width * 0.94), height: min(620, geo.size.height * 0.82))
                 .background(Color.black.opacity(0.94))
                 .overlay(Rectangle().stroke(Color.white.opacity(0.25), lineWidth: 1))
-                .onAppear { refresh(); focused = true }
+                .onAppear { refresh() }
                 .onReceive(poll) { _ in refresh() }
             }
         }
@@ -58,7 +56,7 @@ struct ClassicConsoleOverlay: View {
         let command = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !command.isEmpty else { return }
         command.withCString { _ = engine_console_execute($0) }
-        input = ""; refresh(); focused = true
+        input = ""; refresh()
     }
-    private func close() { engine_console_set_visible(false); isPresented = false; focused = false }
+    private func close() { engine_console_set_visible(false); isPresented = false }
 }
