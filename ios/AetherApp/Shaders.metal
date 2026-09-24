@@ -187,3 +187,43 @@ vertex SkyVertexOut aether_sky_vertex(SkyVertexIn in [[stage_in]],
 fragment float4 aether_sky_fragment(SkyVertexOut in [[stage_in]]) {
     return in.color;
 }
+
+
+/* ============ Water plane (wavy surface from AetherWater) ============ */
+struct WaterVertexIn {
+    float3 position [[attribute(0)]];
+    float2 uv       [[attribute(1)]];
+    float4 color    [[attribute(2)]];
+};
+
+struct WaterVertexOut {
+    float4 position [[position]];
+    float2 uv;
+    float4 color;
+};
+
+struct WaterUniforms {
+    float4x4 view;
+    float4x4 proj;
+    float    time;
+    float    pad0, pad1, pad2;
+};
+
+vertex WaterVertexOut aether_water_vertex(WaterVertexIn in [[stage_in]],
+                                           constant WaterUniforms &U [[buffer(1)]]) {
+    WaterVertexOut out;
+    float4 world = float4(in.position, 1.0);
+    out.position = U.proj * U.view * world;
+    /* Mild UV scroll so the surface reads as moving even between mesh rebuilds. */
+    out.uv = in.uv + float2(U.time * 0.03, U.time * 0.02);
+    out.color = in.color;
+    return out;
+}
+
+fragment float4 aether_water_fragment(WaterVertexOut in [[stage_in]]) {
+    /* Soft procedural ripple tint — no textures / game assets. */
+    float ripple = 0.5 + 0.5 * sin(in.uv.x * 28.0 + in.uv.y * 18.0);
+    float3 tint = in.color.rgb * (0.85 + 0.20 * ripple);
+    float alpha = clamp(in.color.a, 0.0, 1.0);
+    return float4(tint, alpha);
+}

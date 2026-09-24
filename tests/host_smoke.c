@@ -23,6 +23,7 @@
 #include "AetherRenderFeatures.h"
 #include "AetherParticle.h"
 #include "AetherSky.h"
+#include "AetherWater.h"
 #include "AetherMath.h"
 
 /* Host stubs for Metal backend entry points (Swift provides these on iOS). */
@@ -122,6 +123,35 @@ int main(void) {
 
 
 
+
+    /* Water state: init → update → copy_render (feeds Metal plane). */
+    {
+        aether_water_t water;
+        expect(aether_water_init(&water) == AETHER_OK, "water_init");
+        expect(water.enabled, "water_enabled_default");
+        expect(water.size > 0.f, "water_size");
+        f32 wcol[4] = {0.1f, 0.4f, 0.6f, 0.7f};
+        expect(aether_water_set_color(&water, wcol) == AETHER_OK, "water_set_color");
+        expect(aether_water_set_size(&water, 256.f) == AETHER_OK, "water_set_size");
+        expect(aether_water_set_height(&water, -32.f) == AETHER_OK, "water_set_height");
+        expect(aether_water_set_origin(&water, 10.f, 20.f) == AETHER_OK, "water_set_origin");
+        expect(aether_water_set_wave(&water, 1.5f, 4.f, 0.05f) == AETHER_OK, "water_set_wave");
+        aether_water_update(&water, 0.5f);
+        expect(water.wave_time > 0.f, "water_wave_time");
+        u32 need = aether_water_render_vertex_count();
+        expect(need > 0 && (need % 3u) == 0u, "water_render_vertex_count");
+        aether_water_vertex_t *verts = (aether_water_vertex_t *)malloc(sizeof(*verts) * need);
+        expect(verts != NULL, "water_verts_alloc");
+        u32 copied = aether_water_copy_render(&water, verts, need);
+        expect(copied == need, "water_copy_render");
+        expect(verts[0].a > 0.f, "water_vertex_alpha");
+        free(verts);
+        aether_water_set_enabled(&water, false);
+        expect(aether_water_copy_render(&water, NULL, need) == 0, "water_copy_disabled");
+        aether_water_shutdown(&water);
+        expect(!water.enabled, "water_shutdown");
+    }
+
     /* Sky state: init → gradient → copy_render (feeds Metal dome). */
     {
         aether_sky_t sky;
@@ -199,6 +229,11 @@ int main(void) {
         expect(feat->sky.face_count == 6, "renderer_sky_faces");
         expect(aether_renderer_draw_feature(rend, AETHER_CMD_DRAW_SKY) == AETHER_OK,
                "renderer_draw_sky");
+        expect(feat->water.enabled, "renderer_water_enabled");
+        expect(aether_renderer_draw_feature(rend, AETHER_CMD_DRAW_WATER) == AETHER_OK,
+               "renderer_draw_water");
+        aether_renderer_tick_features(rend, 1.f / 30.f);
+        expect(feat->water.wave_time > 0.f, "renderer_water_wave_ticks");
     }
     expect(aether_renderer_draw_world(rend) == AETHER_OK, "renderer_draw_world");
     expect(aether_renderer_draw_hud(rend) == AETHER_OK, "renderer_draw_hud");
