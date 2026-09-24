@@ -619,10 +619,146 @@ int main(void) {
             expect(!aether_collision_point_in_solid(col, (aether_vec3_t){-180, 0, 0}, 2),
                    "water_alcove_crouch_still_fits");
 
+            /* --- Waterlevel tiers (feet/waist/eye) + splash + air stub --- */
+            {
+                i32 dry = aether_player_sample_waterlevel(
+                    col, (aether_vec3_t){0, 80, 0}, 28.f, 1);
+                expect(dry == AETHER_WATERLEVEL_DRY, "waterlevel_dry_outside");
+
+                /* Deep floor: feet+waist+eye all under surface z=48. */
+                i32 under = aether_player_sample_waterlevel(
+                    col, (aether_vec3_t){0, 170, 0}, 28.f, 1);
+                expect(under == AETHER_WATERLEVEL_EYE, "waterlevel_eye_deep");
+
+                /* Mid depth: feet+waist wet, eye at ~48 → empty → WAIST/swim. */
+                i32 swim = aether_player_sample_waterlevel(
+                    col, (aether_vec3_t){0, 170, 20}, 28.f, 1);
+                expect(swim == AETHER_WATERLEVEL_WAIST, "waterlevel_waist_mid");
+
+                /* Near surface: only feet wet → FEET/wade. */
+                i32 wade = aether_player_sample_waterlevel(
+                    col, (aether_vec3_t){0, 170, 40}, 28.f, 1);
+                expect(wade == AETHER_WATERLEVEL_FEET, "waterlevel_feet_wade");
+
+                /* Above surface samples → dry. */
+                i32 above = aether_player_sample_waterlevel(
+                    col, (aether_vec3_t){0, 170, 50}, 28.f, 1);
+                expect(above == AETHER_WATERLEVEL_DRY, "waterlevel_dry_above");
+            }
+
+            /* Enter splash: dry → wet transition. */
+            aether_player_init(&ply);
+            aether_player_set_position(&ply, (aether_vec3_t){0, 80, 0});
+            ply.on_ground = true;
+            ply.waterlevel = AETHER_WATERLEVEL_DRY;
+            ply.in_water = false;
+            /* One update still dry (outside pool). */
+            aether_input_begin_frame(in);
+            aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+            aether_input_end_frame(in);
+            expect(aether_player_take_splash_event(&ply) == AETHER_SPLASH_NONE,
+                   "splash_none_while_dry");
+
+            /* Teleport into deep water; next update should ENTER. */
+            aether_player_set_position(&ply, (aether_vec3_t){0, 170, 5});
+            ply.waterlevel = AETHER_WATERLEVEL_DRY;
+            ply.in_water = false;
+            ply.splash_event = AETHER_SPLASH_NONE;
+            aether_input_begin_frame(in);
+            aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+            aether_input_end_frame(in);
+            expect(ply.waterlevel >= AETHER_WATERLEVEL_FEET, "enter_sets_wet_tier");
+            expect(aether_player_take_splash_event(&ply) == AETHER_SPLASH_ENTER,
+                   "splash_enter_on_wet");
+            expect(aether_player_take_splash_event(&ply) == AETHER_SPLASH_NONE,
+                   "splash_enter_consumed");
+
+            /* Particle burst path used by splash FX. */
+            {
+                aether_particles_t parts;
+                expect(aether_particles_init(&parts) == AETHER_OK, "splash_parts_init");
+                f32 origin[3] = { ply.position.x, ply.position.y,
+                                  ply.position.z + ply.eye_height * 0.5f };
+                u32 n = aether_particles_spawn_burst(&parts, origin, 24);
+                expect(n == 24, "splash_particle_burst");
+                expect(aether_particles_active_count(&parts) == 24,
+                       "splash_particles_active");
+                aether_particles_clear(&parts);
+            }
+
+            /* Exit splash: walk out toward -Y. */
+            aether_player_set_position(&ply, (aether_vec3_t){0, 170, 0});
+            ply.on_ground = true;
+            ply.velocity = (aether_vec3_t){0, 0, 0};
+            ply.yaw = -1.5707963f;
+            ply.waterlevel = AETHER_WATERLEVEL_EYE;
+            ply.in_water = true;
+            ply.splash_event = AETHER_SPLASH_NONE;
+            ply.step_height = AETHER_DEFAULT_STEP_HEIGHT;
+            int saw_exit = 0;
+            for (int i = 0; i < 150; ++i) {
+                aether_input_begin_frame(in);
+                aether_input_set_move(in, 0.f, 1.f);
+                aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                aether_input_end_frame(in);
+                if (aether_player_take_splash_event(&ply) == AETHER_SPLASH_EXIT)
+                    saw_exit = 1;
+            }
+            expect(saw_exit, "splash_exit_on_leave");
+            expect(ply.waterlevel == AETHER_WATERLEVEL_DRY, "exit_waterlevel_dry");
+            expect(!ply.in_water, "exit_in_water_clear");
+
+            /* Air / drown stub: eye underwater drains air; dry recovers. */
+            aether_player_init(&ply);
+            aether_player_set_position(&ply, (aether_vec3_t){0, 170, 0});
+            ply.waterlevel = AETHER_WATERLEVEL_DRY;
+            expect(ply.air == AETHER_PLAYER_AIR_MAX, "air_full_on_init");
+            expect(!aether_player_is_drowning(&ply), "air_not_drowning_init");
+            for (int i = 0; i < 60; ++i) { /* 1s underwater */
+                aether_input_begin_frame(in);
+                aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                aether_input_end_frame(in);
+            }
+            expect(aether_player_eye_underwater(&ply), "air_eye_under_deep");
+            expect(ply.air < AETHER_PLAYER_AIR_MAX - 0.5f, "air_drains_under");
+            expect(!ply.drowning, "air_not_yet_drowned_1s");
+
+            /* Force drown stub: pin deep (buoyancy can surface) with air already empty. */
+            aether_player_set_position(&ply, (aether_vec3_t){0, 170, 0});
+            ply.velocity = (aether_vec3_t){0, 0, 0};
+            ply.air = 0.0f;
+            ply.drowning = false;
+            ply.waterlevel = AETHER_WATERLEVEL_DRY;
+            aether_input_begin_frame(in);
+            aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+            aether_input_end_frame(in);
+            expect(aether_player_eye_underwater(&ply), "air_still_under_for_drown");
+            expect(ply.air <= 0.f && aether_player_is_drowning(&ply),
+                   "air_drown_stub_trips");
+
+            /* Recover on dry land. */
+            aether_player_set_position(&ply, (aether_vec3_t){0, 80, 0});
+            ply.waterlevel = AETHER_WATERLEVEL_EYE; /* cleared on update */
+            ply.air = 1.0f;
+            ply.drowning = true;
+            for (int i = 0; i < 90; ++i) {
+                aether_input_begin_frame(in);
+                aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                aether_input_end_frame(in);
+            }
+            expect(ply.waterlevel == AETHER_WATERLEVEL_DRY, "air_recover_dry");
+            expect(ply.air > 1.0f, "air_recovers_on_surface");
+            expect(!ply.drowning, "air_drown_clears_on_surface");
+
+            /* Manual splash trigger API. */
+            aether_player_trigger_splash(&ply, AETHER_SPLASH_ENTER);
+            expect(aether_player_take_splash_event(&ply) == AETHER_SPLASH_ENTER,
+                   "splash_manual_trigger");
+
             aether_input_destroy(in);
             aether_collision_free(col);
             printf("  collision: floor z=%.3f, ledge climb x=%.1f z=%.1f, jump ceil~%.1f, "
-                   "water swim peak~%.1f, alcove duck ok\n",
+                   "water swim peak~%.1f, waterlevel/splash/air ok\n",
                    landed.z, climbed.x, climbed.z, jumped.z, swim_peak);
         }
 

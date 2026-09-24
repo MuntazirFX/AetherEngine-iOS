@@ -42,6 +42,17 @@ void  engine_player_set_crouching(bool crouching);
 int   engine_player_hull_index(void);
 float engine_player_eye_height(void);
 int   engine_player_in_water(void);
+/* Waterlevel: 0=dry, 1=feet/wade, 2=waist/swim, 3=eye/under. */
+int   engine_player_waterlevel(void);
+int   engine_player_eye_underwater(void);
+float engine_player_air(void);
+float engine_player_air_max(void);
+int   engine_player_is_drowning(void);
+/* Pending splash: 0=none, 1=enter, 2=exit. Consumes the event. */
+int   engine_player_take_splash(void);
+/* Queue splash + optionally spawn particle burst at (x,y,z). count<=0 → default 24. */
+void  engine_player_trigger_splash(int splash_kind);
+int   engine_player_splash_burst(float x, float y, float z, int count);
 
 /* ---------- Collision (clipnode hull) ---------- */
 int  engine_collision_ready(void);
