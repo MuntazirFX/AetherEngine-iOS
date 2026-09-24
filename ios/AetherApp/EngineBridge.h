@@ -87,6 +87,20 @@ void  engine_particles_clear(void);
 /* AETHER_CMD_DRAW_PARTICLES = 10 — submit feature draw through backend. */
 #define ENGINE_CMD_DRAW_PARTICLES 10
 
+/* ---------- Sky (render-feature placeholder dome) ---------- */
+int   engine_sky_enabled(void);
+void  engine_sky_set_enabled(bool enabled);
+int   engine_sky_face_count(void);
+float engine_sky_radius(void);
+void  engine_sky_set_radius(float radius);
+int   engine_sky_set_name(const char *name);
+int   engine_sky_get_name(char *out, int out_cap);
+/* Copy sky dome verts as flat floats: [x,y,z,r,g,b,a] * N. Returns N. */
+int   engine_sky_copy_render(float *out_xyz_rgba, int max_vertices);
+int   engine_sky_render_vertex_capacity(void);
+/* AETHER_CMD_DRAW_SKY = 7 — submit feature draw through backend. */
+#define ENGINE_CMD_DRAW_SKY 7
+
 /* ---------- BSP ---------- */
 int  engine_bsp_inspect(const char *bsp_path);
 int  engine_bsp_inspect_vfs(const char *vpath);

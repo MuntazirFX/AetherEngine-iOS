@@ -22,6 +22,7 @@
 #include "AetherRender.h"
 #include "AetherRenderFeatures.h"
 #include "AetherParticle.h"
+#include "AetherSky.h"
 #include "AetherMath.h"
 
 /* Host stubs for Metal backend entry points (Swift provides these on iOS). */
@@ -120,6 +121,32 @@ int main(void) {
     aether_vgui_runtime_shutdown();
 
 
+
+    /* Sky state: init → gradient → copy_render (feeds Metal dome). */
+    {
+        aether_sky_t sky;
+        expect(aether_sky_init(&sky) == AETHER_OK, "sky_init");
+        expect(sky.enabled, "sky_enabled_default");
+        expect(sky.face_count == (u32)AETHER_SKY_FACE_COUNT, "sky_face_count");
+        expect(sky.radius > 0.f, "sky_radius");
+        expect(aether_sky_set_name(&sky, "desert") == AETHER_OK, "sky_set_name");
+        f32 up[4] = {0.2f, 0.4f, 0.9f, 1.f};
+        expect(aether_sky_set_face_color(&sky, AETHER_SKY_FACE_UP, up) == AETHER_OK,
+               "sky_set_face_up");
+        aether_sky_rebuild_gradient(&sky);
+        expect(fabsf(sky.top_color[2] - 0.9f) < 1e-5f, "sky_top_from_up");
+        u32 need = aether_sky_render_vertex_count();
+        expect(need > 0 && (need % 3u) == 0u, "sky_render_vertex_count");
+        aether_sky_vertex_t *verts = (aether_sky_vertex_t *)malloc(sizeof(*verts) * need);
+        expect(verts != NULL, "sky_verts_alloc");
+        u32 copied = aether_sky_copy_render(&sky, verts, need);
+        expect(copied == need, "sky_copy_render");
+        expect(verts[0].a > 0.f, "sky_vertex_alpha");
+        free(verts);
+        aether_sky_shutdown(&sky);
+        expect(!sky.enabled && sky.face_count == 0, "sky_shutdown");
+    }
+
     /* Particle pool: spawn → tick → copy_render (feeds Metal). */
     {
         aether_particles_t parts;
@@ -168,6 +195,10 @@ int main(void) {
                "renderer_particles_still_active");
         expect(aether_renderer_draw_feature(rend, AETHER_CMD_DRAW_PARTICLES) == AETHER_OK,
                "renderer_draw_particles");
+        expect(feat->sky.enabled, "renderer_sky_enabled");
+        expect(feat->sky.face_count == 6, "renderer_sky_faces");
+        expect(aether_renderer_draw_feature(rend, AETHER_CMD_DRAW_SKY) == AETHER_OK,
+               "renderer_draw_sky");
     }
     expect(aether_renderer_draw_world(rend) == AETHER_OK, "renderer_draw_world");
     expect(aether_renderer_draw_hud(rend) == AETHER_OK, "renderer_draw_hud");

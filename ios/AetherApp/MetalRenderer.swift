@@ -1,5 +1,5 @@
 // MetalRenderer.swift
-// Renders BSP mesh + MDL model + entities + particles. STEP 18B / metal-particles.
+// Renders BSP mesh + MDL model + entities + particles + sky. STEP 18B / metal-sky.
 // Pushes view/proj + frame dt into EngineBridge each draw.
 // AetherEngine-iOS · Clean-room.
 
@@ -56,6 +56,12 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     private var particleSeedOrigin = simd_float3(0, 0, 64)
     private var particleRespawnAccum: Float = 0
 
+    // Sky dome (driven by AetherSky via EngineBridge)
+    var skyPipeline: MTLRenderPipelineState?
+    var skyDepthState: MTLDepthStencilState?
+    var skyBuffer: MTLBuffer?
+    var skyVertexCount: Int = 0
+
     private var lastTime: CFTimeInterval = CACurrentMediaTime()
 
     init?(mtkView: MTKView) {
@@ -75,6 +81,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         buildBspPipeline(mtkView: mtkView)
         buildMdlPipeline(mtkView: mtkView)
         buildParticlePipeline(mtkView: mtkView)
+        buildSkyPipeline(mtkView: mtkView)
         buildDepthState()
         buildSampler()
 
@@ -142,6 +149,23 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         catch { print("[MetalRenderer] particle pipeline error: \(error)") }
     }
 
+    private func buildSkyPipeline(mtkView: MTKView) {
+        guard let lib = device.makeDefaultLibrary(),
+              let vfn = lib.makeFunction(name: "aether_sky_vertex"),
+              let ffn = lib.makeFunction(name: "aether_sky_fragment") else { return }
+        let vd = MTLVertexDescriptor()
+        vd.attributes[0].format = .float3; vd.attributes[0].offset = 0;  vd.attributes[0].bufferIndex = 0
+        vd.attributes[1].format = .float4; vd.attributes[1].offset = 12; vd.attributes[1].bufferIndex = 0
+        vd.layouts[0].stride = 28
+        vd.layouts[0].stepFunction = .perVertex
+        let d = MTLRenderPipelineDescriptor()
+        d.vertexFunction = vfn; d.fragmentFunction = ffn; d.vertexDescriptor = vd
+        d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+        d.depthAttachmentPixelFormat = mtkView.depthStencilPixelFormat
+        do { skyPipeline = try device.makeRenderPipelineState(descriptor: d) }
+        catch { print("[MetalRenderer] sky pipeline error: \(error)") }
+    }
+
     private func buildDepthState() {
         let d = MTLDepthStencilDescriptor()
         d.depthCompareFunction = .less; d.isDepthWriteEnabled = true
@@ -149,6 +173,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let soft = MTLDepthStencilDescriptor()
         soft.depthCompareFunction = .less; soft.isDepthWriteEnabled = false
         particleDepthState = device.makeDepthStencilState(descriptor: soft)
+        let skyD = MTLDepthStencilDescriptor()
+        skyD.depthCompareFunction = .lessEqual; skyD.isDepthWriteEnabled = false
+        skyDepthState = device.makeDepthStencilState(descriptor: skyD)
     }
 
     private func buildSampler() {
@@ -164,6 +191,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         uploadAtlas()
         uploadMdlMesh()
         buildMonsterBoxes()
+        uploadSkyDome()
 
         // Try spawning player at info_player_start; fallback to mesh center
         if engine_player_has_start() {
@@ -180,7 +208,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         particleSeedOrigin = simd_float3(eye[0], eye[1], eye[2] + 24)
         engine_particles_clear()
         let seeded = engine_particles_spawn_burst(eye[0], eye[1], eye[2] + 24, 96)
-        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0), MDL=\(hasMdl), Monsters=\(monsterPositions.count), Particles=\(seeded))")
+        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0), MDL=\(hasMdl), Monsters=\(monsterPositions.count), Particles=\(seeded), Sky=\(skyVertexCount))")
     }
 
     private func uploadBspMesh() {
@@ -253,6 +281,25 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         hasMdl = true
     }
 
+
+    private func uploadSkyDome() {
+        let cap = Int(engine_sky_render_vertex_capacity())
+        guard cap > 0, engine_sky_enabled() != 0 else {
+            skyVertexCount = 0
+            return
+        }
+        var packed = [Float](repeating: 0, count: cap * 7)
+        let n = packed.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_sky_copy_render(buf.baseAddress, Int32(cap)))
+        }
+        skyVertexCount = Int(n)
+        guard skyVertexCount > 0 else { return }
+        let bytes = skyVertexCount * 28
+        skyBuffer = device.makeBuffer(bytes: packed, length: bytes, options: .storageModeShared)
+        _ = engine_sky_set_name("desert")
+        print("[MetalRenderer] Sky dome verts=\(skyVertexCount) faces=\(engine_sky_face_count()) r=\(engine_sky_radius())")
+    }
+
     // Build a 1x1x1 box for each monster at its position
     private func buildMonsterBoxes() {
         let maxMonsters = 128
@@ -312,7 +359,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
               let rpd      = view.currentRenderPassDescriptor,
               let cmd      = queue.makeCommandBuffer() else { return }
 
-        rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.25, green: 0.30, blue: 0.45, alpha: 1.0)
+        rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.45, green: 0.65, blue: 0.95, alpha: 1.0)
         rpd.colorAttachments[0].loadAction = .clear
 
         engine_renderer_begin_frame_dt(dt)
@@ -344,6 +391,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             }
         }
         engine_renderer_draw_world()
+
+        // ---- Sky (behind world; no depth write) ----
+        syncAndDrawSky(encoder: enc, viewMat: viewMat, projMat: projMat, eye: eyeV)
 
         // ---- BSP ----
         if let pipeline = bspPipeline, let vb = vertexBuffer, let ib = indexBuffer, indexCount > 0 {
@@ -414,6 +464,31 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         cmd.commit()
     }
 
+
+
+    private func syncAndDrawSky(encoder enc: MTLRenderCommandEncoder,
+                                viewMat: simd_float4x4,
+                                projMat: simd_float4x4,
+                                eye: simd_float3) {
+        guard skyVertexCount > 0, let pipeline = skyPipeline, let vb = skyBuffer else { return }
+        engine_renderer_draw_feature(Int32(ENGINE_CMD_DRAW_SKY))
+
+        struct SkyUniforms {
+            var view: simd_float4x4
+            var proj: simd_float4x4
+            var eye: simd_float3
+            var pad0: Float = 0
+        }
+        var SU = SkyUniforms(view: viewMat, proj: projMat, eye: eye, pad0: 0)
+        enc.setRenderPipelineState(pipeline)
+        if let sd = skyDepthState { enc.setDepthStencilState(sd) }
+        enc.setCullMode(.front) // dome faces inward
+        enc.setVertexBuffer(vb, offset: 0, index: 0)
+        enc.setVertexBytes(&SU, length: MemoryLayout<SkyUniforms>.stride, index: 1)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: skyVertexCount)
+        enc.setCullMode(.none)
+        if let ds = depthState { enc.setDepthStencilState(ds) }
+    }
 
     private func syncAndDrawParticles(encoder enc: MTLRenderCommandEncoder,
                                       viewMat: simd_float4x4,

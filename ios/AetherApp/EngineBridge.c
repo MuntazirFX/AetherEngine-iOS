@@ -18,6 +18,7 @@
 #include "../../engine/render/AetherRender.h"
 #include "../../engine/render/AetherRenderFeatures.h"
 #include "../../engine/render/AetherParticle.h"
+#include "../../engine/render/AetherSky.h"
 #include "../../engine/bsp/AetherBSP.h"
 #include "../../engine/bsp/AetherBSPGeometry.h"
 #include "../../engine/player/AetherPlayer.h"
@@ -408,6 +409,66 @@ void engine_particles_clear(void) {
     aether_particles_t *p = bridge_particles();
     if (p) aether_particles_clear(p);
 }
+
+/* ---------- Sky ---------- */
+static aether_sky_t *bridge_sky(void) {
+    if (!g_renderer) return NULL;
+    aether_render_features_t *f = aether_renderer_features(g_renderer);
+    return f ? &f->sky : NULL;
+}
+
+int engine_sky_enabled(void) {
+    aether_sky_t *s = bridge_sky();
+    return (s && s->enabled) ? 1 : 0;
+}
+
+void engine_sky_set_enabled(bool enabled) {
+    aether_sky_t *s = bridge_sky();
+    if (s) (void)aether_sky_set_enabled(s, enabled);
+}
+
+int engine_sky_face_count(void) {
+    aether_sky_t *s = bridge_sky();
+    return s ? (int)s->face_count : 0;
+}
+
+float engine_sky_radius(void) {
+    aether_sky_t *s = bridge_sky();
+    return s ? s->radius : 0.0f;
+}
+
+void engine_sky_set_radius(float radius) {
+    aether_sky_t *s = bridge_sky();
+    if (s) (void)aether_sky_set_radius(s, radius);
+}
+
+int engine_sky_set_name(const char *name) {
+    aether_sky_t *s = bridge_sky();
+    if (!s || !name) return 0;
+    return aether_sky_set_name(s, name) == AETHER_OK ? 1 : 0;
+}
+
+int engine_sky_get_name(char *out, int out_cap) {
+    aether_sky_t *s = bridge_sky();
+    if (!s || !out || out_cap <= 0) return 0;
+    aether_str_copy(out, (size_t)out_cap, s->name);
+    return 1;
+}
+
+int engine_sky_copy_render(float *out_xyz_rgba, int max_vertices) {
+    aether_sky_t *s = bridge_sky();
+    if (!s || !out_xyz_rgba || max_vertices <= 0) return 0;
+    /* Layout matches aether_sky_vertex_t (7 floats). */
+    return (int)aether_sky_copy_render(
+        s,
+        (aether_sky_vertex_t *)out_xyz_rgba,
+        (u32)max_vertices);
+}
+
+int engine_sky_render_vertex_capacity(void) {
+    return (int)aether_sky_render_vertex_count();
+}
+
 
 
 /* ---------- BSP inspect ---------- */

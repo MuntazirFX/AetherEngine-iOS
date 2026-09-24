@@ -150,3 +150,40 @@ fragment float4 aether_particle_fragment(ParticleVertexOut in [[stage_in]],
     c.a *= soft * soft;
     return c;
 }
+
+
+/* ============ Sky dome (gradient from AetherSky face colors) ============ */
+struct SkyVertexIn {
+    float3 position [[attribute(0)]];
+    float4 color    [[attribute(1)]];
+};
+
+struct SkyVertexOut {
+    float4 position [[position]];
+    float4 color;
+};
+
+struct SkyUniforms {
+    float4x4 view;
+    float4x4 proj;
+    float3   eye;
+    float    pad0;
+};
+
+vertex SkyVertexOut aether_sky_vertex(SkyVertexIn in [[stage_in]],
+                                       constant SkyUniforms &U [[buffer(1)]]) {
+    SkyVertexOut out;
+    /* Translate dome with the camera so it always surrounds the eye. */
+    float3 world = in.position + U.eye;
+    float4 viewPos = U.view * float4(world, 1.0);
+    /* Push depth to far plane so world geometry wins depth tests. */
+    float4 clip = U.proj * viewPos;
+    clip.z = clip.w * 0.999;
+    out.position = clip;
+    out.color = in.color;
+    return out;
+}
+
+fragment float4 aether_sky_fragment(SkyVertexOut in [[stage_in]]) {
+    return in.color;
+}
