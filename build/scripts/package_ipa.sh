@@ -17,9 +17,85 @@ OUT_DIR="${ROOT}/build/out"
 STAGE_DIR="${OUT_DIR}/ipa-stage"
 IPA_PATH="${OUT_DIR}/AetherEngine.ipa"
 
+# ---------- Flags (unsigned IPA dry-run polish) ----------
+#   --dry-run / -n     Print plan; do not require .app / do not zip (Linux-safe)
+#   --notes-only       Write DRY_RUN_NOTES.txt checklist then exit 0
+#   --help / -h        Show usage
+#   --sign-check       Note that this path is unsigned (no codesign invoked)
+DRY_RUN=0
+NOTES_ONLY=0
+SIGN_CHECK=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run|-n) DRY_RUN=1; shift ;;
+    --notes-only) NOTES_ONLY=1; shift ;;
+    --sign-check) SIGN_CHECK=1; shift ;;
+    --help|-h)
+      cat <<'USAGE'
+package_ipa.sh — unsigned IPA packager (macOS) + dry-run notes (any host)
+
+Usage:
+  ./build/scripts/package_ipa.sh              # package DerivedData .app → .ipa (macOS)
+  ./build/scripts/package_ipa.sh --dry-run    # print plan; no zip (Linux/CI safe)
+  ./build/scripts/package_ipa.sh --notes-only # write build/out/DRY_RUN_NOTES.txt
+  ./build/scripts/package_ipa.sh --sign-check # confirm unsigned path (no codesign)
+
+Flags may combine: --dry-run --notes-only --sign-check
+USAGE
+      exit 0
+      ;;
+    *) fail "unknown flag: $1 (try --help)" ;;
+  esac
+done
+
+write_dry_run_notes() {
+  mkdir -p "${OUT_DIR}"
+  NOTES="${OUT_DIR}/DRY_RUN_NOTES.txt"
+  {
+    echo "AetherEngine-iOS unsigned IPA dry-run notes"
+    echo "host=$(uname -s 2>/dev/null || echo unknown)"
+    echo "script=package_ipa.sh"
+    echo "unsigned=1"
+    echo "codesign=never (Payload zip only; strip _CodeSignature)"
+    echo "requires=macos+xcode for real IPA"
+    echo "workflow=build-arm64.yml workflow_dispatch"
+    echo "artifact=upload-artifact@v4 retention=30 compression-level=9"
+    echo "local_macos=./build/scripts/build_ios.sh && ./build/scripts/package_ipa.sh"
+    echo "dry_run_flag=--dry-run"
+    echo "notes_only_flag=--notes-only"
+    echo "sign_check_flag=--sign-check"
+    echo "sideload=AltStore|Sideloadly|TrollStore|ideviceinstaller"
+  } > "${NOTES}"
+  log "Wrote ${NOTES}"
+}
+
+if [[ "${NOTES_ONLY}" -eq 1 ]]; then
+  write_dry_run_notes
+  log "notes-only complete (no IPA built on this host)"
+  exit 0
+fi
+
+if [[ "${DRY_RUN}" -eq 1 ]]; then
+  log "DRY-RUN: unsigned IPA package plan (no .app required)"
+  log "  1. build_ios.sh → build/out/DerivedData/.../AetherEngine.app"
+  log "  2. package_ipa.sh → Payload/ zip → ${IPA_PATH}"
+  log "  3. strip _CodeSignature + embedded.mobileprovision"
+  log "  4. upload-artifact@v4 (Actions macos-14) or sideload locally"
+  if [[ "${SIGN_CHECK}" -eq 1 ]]; then
+    log "  sign-check: codesign NOT invoked; IPA remains unsigned"
+  fi
+  write_dry_run_notes
+  log "DRY-RUN done ✔ (IPA unbuilt here — expected on Linux/CI)"
+  exit 0
+fi
+
+if [[ "${SIGN_CHECK}" -eq 1 ]]; then
+  log "sign-check: this script never calls codesign; IPA is unsigned Payload zip"
+fi
+
 # ---------- 1. Find built .app ----------
 APP_PATH="$(find "${OUT_DIR}/DerivedData" -name 'AetherEngine.app' -type d | head -n1)"
-[ -n "${APP_PATH}" ] || fail "AetherEngine.app not found — run build_ios.sh first"
+[ -n "${APP_PATH}" ] || fail "AetherEngine.app not found — run build_ios.sh first (or use --dry-run)"
 
 log "App bundle: ${APP_PATH}"
 
@@ -146,3 +222,15 @@ log "Done ✔"
 # unless workflow_dispatch input raises it (1..90). Expired artifacts are not recoverable.
 
 
+
+
+# ---------- Unsigned IPA dry-run polish (batch17) ----------
+# Flags (work on Linux/CI without Xcode):
+#   --dry-run / -n     Print packaging plan; write DRY_RUN_NOTES.txt; exit 0
+#   --notes-only       Only write DRY_RUN_NOTES.txt
+#   --sign-check       Explicitly confirm no codesign is invoked
+#   --help / -h        Usage
+# Real IPA still requires macOS + Xcode (build_ios.sh) then this script without --dry-run.
+# Example Linux gate:
+#   bash build/scripts/package_ipa.sh --dry-run --sign-check
+#   test -f build/out/DRY_RUN_NOTES.txt

@@ -130,4 +130,42 @@ u32  aether_bsp_portal_graph_flood(const aether_bsp_portal_graph_t *g,
                                    u16 start_leaf, u32 max_depth,
                                    aether_bsp_portal_flood_t *out);
 
+
+/* ---------- Fuller portal windings from marksurfaces / planes ---------- */
+#define AETHER_BSP_PORTAL_WINDING_MAX       8
+#define AETHER_BSP_PORTAL_WINDING_MAX_VERTS 8
+
+typedef struct aether_bsp_portal_winding {
+    u16 leaf_a;
+    u16 leaf_b;
+    u16 face_index;     /* marksurface face that sourced the plane */
+    u16 plane_index;
+    f32 plane[4];       /* ax+by+cz+d ; d = -dist (point form) */
+    f32 verts[AETHER_BSP_PORTAL_WINDING_MAX_VERTS][3];
+    u32 vert_count;
+    f32 center[3];
+    bool from_marksurfaces;
+    bool valid;
+} aether_bsp_portal_winding_t;
+
+typedef struct aether_bsp_portal_winding_set {
+    u32 count;
+    aether_bsp_portal_winding_t windings[AETHER_BSP_PORTAL_WINDING_MAX];
+    bool from_bsp;
+} aether_bsp_portal_winding_set_t;
+
+void aether_bsp_portal_windings_init(aether_bsp_portal_winding_set_t *set);
+/* Build portal windings from leaf marksurfaces + face planes (synthetic/room). */
+u32  aether_bsp_portal_windings_from_marksurfaces(aether_bsp_portal_winding_set_t *set,
+                                                  const aether_bsp_t *bsp);
+/* Fixture windings (4 portals) when BSP lacks usable marksurfaces. */
+u32  aether_bsp_portal_windings_build_fixture(aether_bsp_portal_winding_set_t *set);
+/* Attach winding geometry onto matching portal-graph edges (by leaf pair). */
+u32  aether_bsp_portal_graph_attach_windings(aether_bsp_portal_graph_t *g,
+                                             const aether_bsp_portal_winding_set_t *set);
+/* Copy one winding into a rect-like aether_portal_winding (render path). */
+int  aether_bsp_portal_winding_to_render(const aether_bsp_portal_winding_t *src,
+                                         f32 out_verts[][3], u32 out_cap,
+                                         u32 *out_count, f32 out_plane[4]);
+
 #endif /* AETHER_BSP_VIS_H */

@@ -874,5 +874,36 @@ int  engine_mdl_skin_lumps_load_or_fixture(const unsigned char *bytes, unsigned 
 int  engine_mdl_skin_lumps_sample(unsigned index, float u, float v, float *out_rgba4);
 int  engine_mdl_skin_lump_bind_water_ent(unsigned ent_index, unsigned lump_index);
 
+
+/* ---------- Batch: hiz-gpu-downsample / portal-windings / mdl-skinref / ipa-sign ---------- */
+int  engine_mdl_hiz_array_downsample(unsigned *out_slices, unsigned *out_passes,
+                                     int *out_ready);
+int  engine_mdl_hiz_vis_query_downsampled(float x0, float y0, float x1, float y1,
+                                          float obj_depth, int preferred_mip,
+                                          int *out_visible, int *out_occluded,
+                                          float *out_hiz, int *out_mip);
+int  engine_depth_hiz_downsample_bind(unsigned slices, unsigned passes,
+                                      int *out_bound, int *out_vis_ready);
+
+int  engine_bsp_portal_windings_from_current(unsigned *out_count, int *out_from_bsp);
+int  engine_bsp_portal_windings_fixture(unsigned *out_count);
+int  engine_bsp_portal_winding_get(unsigned index,
+                                   float *out_plane4, unsigned *out_verts,
+                                   float *out_center3, int *out_from_marks);
+int  engine_bsp_portal_graph_attach_windings(unsigned *out_attached);
+unsigned engine_water_reflect_portal_winding_plan(float eye_x, float eye_y, float eye_z,
+                                                  unsigned winding_index, unsigned max_depth,
+                                                  unsigned *out_views);
+
+int  engine_mdl_skinref_init_fixture(unsigned *out_families, unsigned *out_entries);
+int  engine_mdl_skinref_select_family(unsigned family_id);
+int  engine_mdl_skinref_select_family_name(const char *name);
+int  engine_mdl_skinref_select_ref(unsigned ref_in_family);
+int  engine_mdl_skinref_cycle_family(int dir);
+int  engine_mdl_skinref_resolve(unsigned *out_family, unsigned *out_ref,
+                                unsigned *out_group, unsigned *out_tex,
+                                unsigned *out_skin_index);
+int  engine_mdl_skinref_sample(float u, float v, float *out_rgba4);
+
 #endif /* ENGINE_BRIDGE_H */
 

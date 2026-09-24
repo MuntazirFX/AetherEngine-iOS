@@ -575,4 +575,88 @@ int  aether_mdl_skin_lumps_sample(const aether_mdl_skin_lump_set_t *set,
 int  aether_mdl_skin_lump_to_page(const aether_mdl_skin_lump_t *lump,
                                   aether_mdl_skin_page_t *out_page);
 
+
+/* ---------- GPU Hi-Z downsample chain into texture2d_array slices ---------- */
+typedef struct aether_mdl_hiz_array_downsample {
+    u32 slices_written;     /* how many array slices filled by downsample */
+    u32 mip0_w, mip0_h;
+    u32 compute_passes;     /* host-simulated Metal compute/fragment passes */
+    bool from_mip0;         /* true when chain started from mip0 fill */
+    bool gpu_chain;         /* Metal compute/fragment downsample armed */
+    bool ready;             /* downsample complete; safe for vis query bind */
+} aether_mdl_hiz_array_downsample_t;
+
+void aether_mdl_hiz_array_downsample_init(aether_mdl_hiz_array_downsample_t *ds);
+/* Host-side 2x2 min-depth downsample into pyramid + array slice descriptors.
+ * Mirrors Metal aether_hiz_array_downsample compute/fragment chain. */
+u32  aether_mdl_hiz_array_downsample_chain(aether_mdl_hiz_pyramid_t *pyr,
+                                           aether_mdl_hiz_array_t *arr,
+                                           aether_mdl_hiz_array_downsample_t *out);
+void aether_mdl_hiz_array_downsample_set_gpu(aether_mdl_hiz_array_downsample_t *ds, bool armed);
+bool aether_mdl_hiz_array_downsample_gpu(const aether_mdl_hiz_array_downsample_t *ds);
+bool aether_mdl_hiz_array_downsample_ready(const aether_mdl_hiz_array_downsample_t *ds);
+
+/* Vis query that requires downsample output bound into the array path. */
+int  aether_mdl_hiz_vis_query_downsampled(const aether_mdl_hiz_pyramid_t *pyr,
+                                          const aether_mdl_hiz_array_t *arr,
+                                          const aether_mdl_hiz_array_downsample_t *ds,
+                                          f32 x0, f32 y0, f32 x1, f32 y1,
+                                          f32 object_depth, i32 preferred_mip,
+                                          aether_mdl_hiz_vis_query_t *out);
+
+/* ---------- MDL skinref / family select (studio skin families) ---------- */
+#define AETHER_MDL_SKINREF_MAX_FAMILIES   4
+#define AETHER_MDL_SKINREF_MAX_REFS       8
+#define AETHER_MDL_SKINREF_MAGIC          ((i32)0xAE7E5C20)
+#define AETHER_MDL_SKINREF_NAME_LEN       24
+
+typedef struct aether_mdl_skinref_entry {
+    u16 family;             /* family index */
+    u16 skin_index;         /* index into skin pages / lumps */
+    u8  group;              /* texture group */
+    u8  tex;                /* texture within group */
+    char name[AETHER_MDL_SKINREF_NAME_LEN];
+    bool valid;
+} aether_mdl_skinref_entry_t;
+
+typedef struct aether_mdl_skinref_family {
+    char name[AETHER_MDL_SKINREF_NAME_LEN];
+    u16  family_id;
+    u16  ref_count;
+    u16  ref_first;         /* index into entries[] */
+    bool valid;
+} aether_mdl_skinref_family_t;
+
+typedef struct aether_mdl_skinref_table {
+    u32 family_count;
+    u32 entry_count;
+    u32 selected_family;
+    u32 selected_ref;       /* within selected family (0..ref_count-1) */
+    aether_mdl_skinref_family_t families[AETHER_MDL_SKINREF_MAX_FAMILIES];
+    aether_mdl_skinref_entry_t  entries[AETHER_MDL_SKINREF_MAX_REFS];
+    bool from_fixture;
+} aether_mdl_skinref_table_t;
+
+void aether_mdl_skinref_init(aether_mdl_skinref_table_t *t);
+/* Build clean-room fixture: 2 families (default/camo), 2 refs each. */
+u32  aether_mdl_skinref_build_fixture(aether_mdl_skinref_table_t *t);
+/* Select family by id; returns 1 on success. */
+int  aether_mdl_skinref_select_family(aether_mdl_skinref_table_t *t, u32 family_id);
+/* Select family by name (case-sensitive short name). */
+int  aether_mdl_skinref_select_family_name(aether_mdl_skinref_table_t *t, const char *name);
+/* Select skinref within current family (0-based). */
+int  aether_mdl_skinref_select_ref(aether_mdl_skinref_table_t *t, u32 ref_in_family);
+/* Cycle family (+1/-1). Returns new family id or -1. */
+i32  aether_mdl_skinref_cycle_family(aether_mdl_skinref_table_t *t, int dir);
+/* Resolve current selection into group/tex/skin_index. */
+int  aether_mdl_skinref_resolve(const aether_mdl_skinref_table_t *t,
+                                u32 *out_family, u32 *out_ref,
+                                u8 *out_group, u8 *out_tex, u16 *out_skin_index);
+/* Sample active skinref via skin pages (builds pages if needed). */
+int  aether_mdl_skinref_sample(const aether_mdl_skinref_table_t *t,
+                               const aether_mdl_skin_page_set_t *pages,
+                               f32 u, f32 v, f32 out_rgba[4]);
+/* Write a tiny skinref trailer fixture into a buffer (for load tests). */
+u32  aether_mdl_write_skinref_fixture(u8 *out, u32 cap);
+
 #endif /* AETHER_MODEL_FIXTURE_H */

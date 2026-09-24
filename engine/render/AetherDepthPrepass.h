@@ -154,4 +154,25 @@ int  aether_depth_hiz_array_bind_encode(const aether_depth_hiz_bind_plan_t *plan
 void aether_depth_hiz_array_bind_mark_bound(aether_depth_hiz_array_bind_t *b);
 bool aether_depth_hiz_array_bind_was_bound(const aether_depth_hiz_array_bind_t *b);
 
+
+/* ---------- Bind GPU Hi-Z downsample output into vis query path ---------- */
+typedef struct aether_depth_hiz_downsample_bind {
+    bool downsample_ready;
+    bool vis_query_bound;   /* downsample slices wired into vis query */
+    bool gpu_chain;
+    u32  slices;
+    u32  compute_passes;
+    u32  mip0_w, mip0_h;
+    bool bound;
+} aether_depth_hiz_downsample_bind_t;
+
+void aether_depth_hiz_downsample_bind_init(aether_depth_hiz_downsample_bind_t *b);
+/* Encode: array bind + downsample chain → vis query path. */
+int  aether_depth_hiz_downsample_bind_encode(const aether_depth_hiz_array_bind_t *arr_bind,
+                                             u32 slices, u32 compute_passes,
+                                             aether_depth_hiz_downsample_bind_t *out);
+void aether_depth_hiz_downsample_bind_mark(aether_depth_hiz_downsample_bind_t *b);
+bool aether_depth_hiz_downsample_bind_was_bound(const aether_depth_hiz_downsample_bind_t *b);
+bool aether_depth_hiz_downsample_vis_ready(const aether_depth_hiz_downsample_bind_t *b);
+
 #endif /* AETHER_DEPTH_PREPASS_H */

@@ -379,4 +379,18 @@ u32  aether_water_reflect_portal_graph_plan(const aether_water_t *water,
                                             u32 max_depth,
                                             aether_water_reflect_portal_graph_plan_t *out);
 
+
+/* ---------- Portal winding from BSP marksurface/plane windings ---------- */
+/* Fill aether_portal_winding from BSP portal winding verts/plane. */
+int  aether_portal_winding_from_bsp(aether_portal_winding_t *out,
+                                    const f32 verts[][3], u32 vert_count,
+                                    const f32 plane[4]);
+/* Build reflect plan using first BSP-sourced portal winding (fuller clip). */
+u32  aether_water_reflect_portal_winding_plan(const aether_water_t *water,
+                                              const f32 eye[3],
+                                              const f32 verts[][3], u32 vert_count,
+                                              const f32 plane[4],
+                                              u32 max_depth,
+                                              aether_portal_reflect_plan_t *out);
+
 #endif /* AETHER_WATER_H */

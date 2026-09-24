@@ -920,3 +920,41 @@ u32 aether_water_reflect_portal_graph_plan(const aether_water_t *water,
     out->needed = (views > 0);
     return views;
 }
+
+
+int aether_portal_winding_from_bsp(aether_portal_winding_t *out,
+                                   const f32 verts[][3], u32 vert_count,
+                                   const f32 plane[4]) {
+    if (!out) return 0;
+    aether_portal_winding_init(out);
+    if (!verts || vert_count < 3 || !plane) return 0;
+    u32 n = vert_count;
+    if (n > AETHER_PORTAL_WINDING_MAX_VERTS) n = AETHER_PORTAL_WINDING_MAX_VERTS;
+    for (u32 i = 0; i < n; ++i) {
+        out->verts[i][0] = verts[i][0];
+        out->verts[i][1] = verts[i][1];
+        out->verts[i][2] = verts[i][2];
+    }
+    out->count = n;
+    out->plane[0] = plane[0];
+    out->plane[1] = plane[1];
+    out->plane[2] = plane[2];
+    out->plane[3] = plane[3];
+    out->valid = true;
+    return 1;
+}
+
+u32 aether_water_reflect_portal_winding_plan(const aether_water_t *water,
+                                             const f32 eye[3],
+                                             const f32 verts[][3], u32 vert_count,
+                                             const f32 plane[4],
+                                             u32 max_depth,
+                                             aether_portal_reflect_plan_t *out) {
+    aether_portal_winding_t wind;
+    if (!aether_portal_winding_from_bsp(&wind, verts, vert_count, plane)) {
+        if (out) aether_portal_reflect_plan_init(out);
+        return 0;
+    }
+    return aether_water_reflect_recursive_plan(water, eye, &wind, max_depth, out);
+}
+

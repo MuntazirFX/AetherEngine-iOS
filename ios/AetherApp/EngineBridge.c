@@ -4766,3 +4766,183 @@ int engine_mdl_skin_lump_bind_water_ent(unsigned ent_index, unsigned lump_index)
     if (!aether_mdl_skin_lump_to_page(&g_skin_lumps.lumps[lump_index], &page)) return 0;
     return aether_water_reflect_ent_bind_skin_page(&g_reflect_ents, ent_index, &page);
 }
+
+
+/* ===== Batch17: hiz-gpu-downsample / portal-windings / mdl-skinref / ipa-sign ===== */
+static aether_mdl_hiz_array_downsample_t g_hiz_downsample;
+static aether_depth_hiz_downsample_bind_t g_depth_hiz_ds;
+static aether_bsp_portal_winding_set_t g_portal_windings;
+static aether_mdl_skinref_table_t g_skinref;
+static aether_mdl_skin_page_set_t g_skinref_pages;
+static int g_skinref_ready = 0;
+static int g_skinref_pages_ready = 0;
+
+int engine_mdl_hiz_array_downsample(unsigned *out_slices, unsigned *out_passes,
+                                    int *out_ready) {
+    if (g_hiz_pyr.levels == 0 || !g_hiz_pyr.built) {
+        /* Seed a small pyramid so downsample chain can run on Metal encode. */
+        aether_mdl_hiz_pyramid_reset(&g_hiz_pyr, 64, 64);
+        for (u32 y = 16; y < 48; ++y)
+            for (u32 x = 16; x < 48; ++x)
+                aether_mdl_hiz_pyramid_write(&g_hiz_pyr, x, y, 0.2f);
+        aether_mdl_hiz_build_pyramid(&g_hiz_pyr);
+    }
+    u32 n = aether_mdl_hiz_array_downsample_chain(&g_hiz_pyr, &g_hiz_array, &g_hiz_downsample);
+    if (out_slices) *out_slices = g_hiz_downsample.slices_written;
+    if (out_passes) *out_passes = g_hiz_downsample.compute_passes;
+    if (out_ready) *out_ready = aether_mdl_hiz_array_downsample_ready(&g_hiz_downsample) ? 1 : 0;
+    return (n > 0) ? 1 : 0;
+}
+
+int engine_mdl_hiz_vis_query_downsampled(float x0, float y0, float x1, float y1,
+                                         float obj_depth, int preferred_mip,
+                                         int *out_visible, int *out_occluded,
+                                         float *out_hiz, int *out_mip) {
+    if (!aether_mdl_hiz_array_downsample_ready(&g_hiz_downsample))
+        (void)engine_mdl_hiz_array_downsample(NULL, NULL, NULL);
+    aether_mdl_hiz_vis_query_t q;
+    int vis = aether_mdl_hiz_vis_query_downsampled(&g_hiz_pyr, &g_hiz_array, &g_hiz_downsample,
+                                                   x0, y0, x1, y1, obj_depth, preferred_mip, &q);
+    if (out_visible) *out_visible = q.visible ? 1 : 0;
+    if (out_occluded) *out_occluded = q.occluded ? 1 : 0;
+    if (out_hiz) *out_hiz = q.nearest_hiz;
+    if (out_mip) *out_mip = q.mip_used;
+    return vis;
+}
+
+int engine_depth_hiz_downsample_bind(unsigned slices, unsigned passes,
+                                     int *out_bound, int *out_vis_ready) {
+    if (g_depth_hiz_array.slice_count == 0) {
+        aether_depth_hiz_bind_plan_t plan;
+        aether_depth_prepass_t dp;
+        aether_depth_prepass_init(&dp);
+        aether_depth_prepass_ensure(&dp, 64, 64);
+        aether_depth_hiz_bind_plan_encode(&dp, 64, 64, &plan);
+        aether_depth_hiz_array_bind_encode(&plan, slices ? slices : 4, &g_depth_hiz_array);
+        aether_depth_hiz_array_bind_mark_bound(&g_depth_hiz_array);
+    }
+    int ok = aether_depth_hiz_downsample_bind_encode(&g_depth_hiz_array, slices, passes, &g_depth_hiz_ds);
+    aether_depth_hiz_downsample_bind_mark(&g_depth_hiz_ds);
+    if (out_bound) *out_bound = aether_depth_hiz_downsample_bind_was_bound(&g_depth_hiz_ds) ? 1 : 0;
+    if (out_vis_ready) *out_vis_ready = aether_depth_hiz_downsample_vis_ready(&g_depth_hiz_ds) ? 1 : 0;
+    return ok;
+}
+
+int engine_bsp_portal_windings_from_current(unsigned *out_count, int *out_from_bsp) {
+    aether_bsp_t *bsp = aether_bsp_create_synthetic_room();
+    u32 n = aether_bsp_portal_windings_from_marksurfaces(&g_portal_windings, bsp);
+    if (bsp) aether_bsp_free(bsp);
+    if (out_count) *out_count = n;
+    if (out_from_bsp) *out_from_bsp = g_portal_windings.from_bsp ? 1 : 0;
+    return (n > 0) ? 1 : 0;
+}
+
+int engine_bsp_portal_windings_fixture(unsigned *out_count) {
+    u32 n = aether_bsp_portal_windings_build_fixture(&g_portal_windings);
+    if (out_count) *out_count = n;
+    return (n > 0) ? 1 : 0;
+}
+
+int engine_bsp_portal_winding_get(unsigned index,
+                                  float *out_plane4, unsigned *out_verts,
+                                  float *out_center3, int *out_from_marks) {
+    if (g_portal_windings.count == 0)
+        aether_bsp_portal_windings_build_fixture(&g_portal_windings);
+    if (index >= g_portal_windings.count) return 0;
+    const aether_bsp_portal_winding_t *w = &g_portal_windings.windings[index];
+    if (!w->valid) return 0;
+    if (out_plane4) {
+        out_plane4[0] = w->plane[0]; out_plane4[1] = w->plane[1];
+        out_plane4[2] = w->plane[2]; out_plane4[3] = w->plane[3];
+    }
+    if (out_verts) *out_verts = w->vert_count;
+    if (out_center3) {
+        out_center3[0] = w->center[0];
+        out_center3[1] = w->center[1];
+        out_center3[2] = w->center[2];
+    }
+    if (out_from_marks) *out_from_marks = w->from_marksurfaces ? 1 : 0;
+    return 1;
+}
+
+int engine_bsp_portal_graph_attach_windings(unsigned *out_attached) {
+    if (g_portal_graph.leaf_count == 0)
+        aether_bsp_portal_graph_build_multi_fixture(&g_portal_graph);
+    if (g_portal_windings.count == 0)
+        aether_bsp_portal_windings_build_fixture(&g_portal_windings);
+    u32 n = aether_bsp_portal_graph_attach_windings(&g_portal_graph, &g_portal_windings);
+    if (out_attached) *out_attached = n;
+    return (n > 0) ? 1 : 0;
+}
+
+unsigned engine_water_reflect_portal_winding_plan(float eye_x, float eye_y, float eye_z,
+                                                  unsigned winding_index, unsigned max_depth,
+                                                  unsigned *out_views) {
+    if (g_portal_windings.count == 0)
+        aether_bsp_portal_windings_build_fixture(&g_portal_windings);
+    if (winding_index >= g_portal_windings.count) return 0;
+    const aether_bsp_portal_winding_t *w = &g_portal_windings.windings[winding_index];
+    aether_water_t s_w; aether_water_init(&s_w); aether_water_set_enabled(&s_w, true);
+    f32 eye[3] = {eye_x, eye_y, eye_z};
+    aether_portal_reflect_plan_t plan;
+    u32 v = aether_water_reflect_portal_winding_plan(&s_w, eye, w->verts, w->vert_count,
+                                                     w->plane, max_depth, &plan);
+    if (out_views) *out_views = v;
+    return v;
+}
+
+int engine_mdl_skinref_init_fixture(unsigned *out_families, unsigned *out_entries) {
+    u32 n = aether_mdl_skinref_build_fixture(&g_skinref);
+    g_skinref_ready = (n > 0) ? 1 : 0;
+    if (!g_skinref_pages_ready) {
+        aether_mdl_skin_pages_build_fixture(&g_skinref_pages, 4);
+        g_skinref_pages_ready = 1;
+    }
+    if (out_families) *out_families = g_skinref.family_count;
+    if (out_entries) *out_entries = g_skinref.entry_count;
+    return g_skinref_ready;
+}
+
+int engine_mdl_skinref_select_family(unsigned family_id) {
+    if (!g_skinref_ready) (void)engine_mdl_skinref_init_fixture(NULL, NULL);
+    return aether_mdl_skinref_select_family(&g_skinref, family_id);
+}
+
+int engine_mdl_skinref_select_family_name(const char *name) {
+    if (!g_skinref_ready) (void)engine_mdl_skinref_init_fixture(NULL, NULL);
+    return aether_mdl_skinref_select_family_name(&g_skinref, name);
+}
+
+int engine_mdl_skinref_select_ref(unsigned ref_in_family) {
+    if (!g_skinref_ready) (void)engine_mdl_skinref_init_fixture(NULL, NULL);
+    return aether_mdl_skinref_select_ref(&g_skinref, ref_in_family);
+}
+
+int engine_mdl_skinref_cycle_family(int dir) {
+    if (!g_skinref_ready) (void)engine_mdl_skinref_init_fixture(NULL, NULL);
+    return (int)aether_mdl_skinref_cycle_family(&g_skinref, dir);
+}
+
+int engine_mdl_skinref_resolve(unsigned *out_family, unsigned *out_ref,
+                               unsigned *out_group, unsigned *out_tex,
+                               unsigned *out_skin_index) {
+    if (!g_skinref_ready) (void)engine_mdl_skinref_init_fixture(NULL, NULL);
+    u32 fam = 0, ref = 0; u8 g = 0, t = 0; u16 skin = 0;
+    if (!aether_mdl_skinref_resolve(&g_skinref, &fam, &ref, &g, &t, &skin)) return 0;
+    if (out_family) *out_family = fam;
+    if (out_ref) *out_ref = ref;
+    if (out_group) *out_group = g;
+    if (out_tex) *out_tex = t;
+    if (out_skin_index) *out_skin_index = skin;
+    return 1;
+}
+
+int engine_mdl_skinref_sample(float u, float v, float *out_rgba4) {
+    if (!g_skinref_ready) (void)engine_mdl_skinref_init_fixture(NULL, NULL);
+    if (!g_skinref_pages_ready) {
+        aether_mdl_skin_pages_build_fixture(&g_skinref_pages, 4);
+        g_skinref_pages_ready = 1;
+    }
+    return aether_mdl_skinref_sample(&g_skinref, &g_skinref_pages, u, v, out_rgba4);
+}
+

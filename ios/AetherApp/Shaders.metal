@@ -956,3 +956,108 @@ fragment float4 aether_mdl_skin_lump_fragment(WaterVertexOut in [[stage_in]],
     float4 s = skinLump.sample(samp, in.uv);
     return float4(s.rgb * tint.rgb, s.a * tint.a);
 }
+
+
+/* ============ GPU Hi-Z array downsample chain + skinref sample + portal winding ============ */
+struct HizArrayDownsampleUniforms {
+    uint srcWidth;
+    uint srcHeight;
+    uint dstWidth;
+    uint dstHeight;
+    uint srcSlice;
+    uint dstSlice;
+    uint passIndex;
+    uint pad0;
+};
+
+/* Compute: downsample mip N → array slice N+1 (min-z of 2x2). */
+kernel void aether_hiz_array_downsample(texture2d_array<float, access::read> src [[texture(0)]],
+                                        texture2d_array<float, access::write> dst [[texture(1)]],
+                                        constant HizArrayDownsampleUniforms &U [[buffer(0)]],
+                                        uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= U.dstWidth || gid.y >= U.dstHeight) return;
+    uint2 s0 = gid * 2;
+    float z = src.read(uint3(s0, U.srcSlice)).r;
+    if (s0.x + 1 < U.srcWidth) z = min(z, src.read(uint3(s0 + uint2(1, 0), U.srcSlice)).r);
+    if (s0.y + 1 < U.srcHeight) {
+        z = min(z, src.read(uint3(s0 + uint2(0, 1), U.srcSlice)).r);
+        if (s0.x + 1 < U.srcWidth)
+            z = min(z, src.read(uint3(s0 + uint2(1, 1), U.srcSlice)).r);
+    }
+    dst.write(float4(z, z, z, 1.0), uint3(gid, U.dstSlice));
+}
+
+/* Fragment path alternate: sample src slice, write min into destination encoding. */
+fragment float4 aether_hiz_array_downsample_fragment(constant HizArrayDownsampleUniforms &U [[buffer(0)]],
+                                                     texture2d_array<float> src [[texture(0)]],
+                                                     sampler samp [[sampler(0)]],
+                                                     float2 uv [[stage_in]]) {
+    float2 texel = float2(1.0 / max(float(U.srcWidth), 1.0), 1.0 / max(float(U.srcHeight), 1.0));
+    float z = src.sample(samp, uv, U.srcSlice).r;
+    z = min(z, src.sample(samp, uv + float2(texel.x, 0.0), U.srcSlice).r);
+    z = min(z, src.sample(samp, uv + float2(0.0, texel.y), U.srcSlice).r);
+    z = min(z, src.sample(samp, uv + texel, U.srcSlice).r);
+    return float4(z, z, float(U.dstSlice) / 8.0, 1.0);
+}
+
+struct HizDownsampleVisUniforms {
+    float4 rect;
+    float  objectDepth;
+    float  arrayMip;
+    float  downsampleReady; /* 1 when chain bound into vis */
+    float  pad0;
+};
+
+/* Vis query that reads downsample-filled array slices. */
+fragment HizArrayVisResult aether_hiz_vis_query_downsampled_fragment(constant HizDownsampleVisUniforms &Q [[buffer(0)]],
+                                                                     texture2d_array<float> hizArray [[texture(0)]],
+                                                                     sampler samp [[sampler(0)]]) {
+    HizArrayVisResult r;
+    if (Q.downsampleReady < 0.5) {
+        r.nearestHiz = 1.0; r.occluded = 0.0; r.mipUsed = -1.0; r.valid = 0.0;
+        return r;
+    }
+    float2 uv = float2((Q.rect.x + Q.rect.z) * 0.5, (Q.rect.y + Q.rect.w) * 0.5);
+    uint slice = (uint)max(Q.arrayMip, 0.0);
+    if (slice >= hizArray.get_array_size()) slice = hizArray.get_array_size() - 1;
+    float hz = hizArray.sample(samp, uv, slice).r;
+    r.nearestHiz = hz;
+    r.occluded = (hz + 0.01 < Q.objectDepth) ? 1.0 : 0.0;
+    r.mipUsed = float(slice);
+    r.valid = 1.0;
+    return r;
+}
+
+struct PortalWindingUniforms {
+    float4 plane;
+    uint   vertCount;
+    uint   fromMarksurfaces;
+    uint   pad0, pad1;
+};
+
+/* Documents fuller portal winding from marksurfaces/planes. */
+fragment float4 aether_portal_winding_marksurface_fragment(constant PortalWindingUniforms &U [[buffer(0)]],
+                                                           float2 uv [[stage_in]]) {
+    float side = U.plane.x * uv.x + U.plane.y * uv.y + U.plane.z * 0.5 + U.plane.w;
+    float mark = (U.fromMarksurfaces > 0) ? 1.0 : 0.35;
+    return float4(mark, float(U.vertCount) / 8.0, saturate(side * 0.1 + 0.5), 1.0);
+}
+
+struct SkinrefSelectUniforms {
+    uint family;
+    uint refIndex;
+    uint group;
+    uint tex;
+};
+
+fragment float4 aether_mdl_skinref_select_fragment(WaterVertexOut in [[stage_in]],
+                                                   constant SkinrefSelectUniforms &U [[buffer(2)]],
+                                                   constant float4 &tint [[buffer(3)]]) {
+    float2 uv = in.uv;
+    float fam = float(U.family) * 0.25;
+    float rf = float(U.refIndex) * 0.15;
+    float checker = (((int)(uv.x * 8.0) + (int)(uv.y * 8.0) + (int)U.group) & 1) ? 1.0 : 0.85;
+    float3 rgb = tint.rgb * float3(0.55 + fam, 0.50 + rf, 0.45 + float(U.tex) * 0.1) * checker;
+    return float4(rgb, tint.a);
+}
+

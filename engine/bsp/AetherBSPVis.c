@@ -1,6 +1,7 @@
 /* AetherBSPVis.c — Leaf find + PVS stub + visible-face index cull.
  * AetherEngine-iOS · Clean-room.
  */
+#include <math.h>
 #include "AetherBSPVis.h"
 #include <stdlib.h>
 #include <string.h>
@@ -537,3 +538,247 @@ u32 aether_bsp_portal_graph_flood(const aether_bsp_portal_graph_t *g,
     out->valid = (out->reached_count > 0);
     return out->reached_count;
 }
+
+
+/* ===== Fuller portal windings from marksurfaces / planes (batch17) ===== */
+
+void aether_bsp_portal_windings_init(aether_bsp_portal_winding_set_t *set) {
+    if (!set) return;
+    memset(set, 0, sizeof(*set));
+}
+
+static void portal_winding_rect(aether_bsp_portal_winding_t *w,
+                                const f32 center[3], const f32 normal[3],
+                                f32 half_w, f32 half_h,
+                                u16 la, u16 lb, u16 face, u16 plane_i) {
+    memset(w, 0, sizeof(*w));
+    w->leaf_a = la; w->leaf_b = lb;
+    w->face_index = face; w->plane_index = plane_i;
+    f32 nx = normal[0], ny = normal[1], nz = normal[2];
+    f32 len = sqrtf(nx * nx + ny * ny + nz * nz);
+    if (len < 1e-6f) { nx = 0.f; ny = 1.f; nz = 0.f; len = 1.f; }
+    nx /= len; ny /= len; nz /= len;
+    /* Build tangent basis. */
+    f32 tx, ty, tz, ux, uy, uz;
+    if (fabsf(ny) < 0.9f) {
+        /* right = up × n  with up=(0,1,0) */
+        tx = nz; ty = 0.f; tz = -nx;
+    } else {
+        tx = 0.f; ty = -nz; tz = ny;
+    }
+    f32 tl = sqrtf(tx * tx + ty * ty + tz * tz);
+    if (tl < 1e-6f) { tx = 1.f; ty = 0.f; tz = 0.f; tl = 1.f; }
+    tx /= tl; ty /= tl; tz /= tl;
+    ux = ny * tz - nz * ty;
+    uy = nz * tx - nx * tz;
+    uz = nx * ty - ny * tx;
+    f32 ul = sqrtf(ux * ux + uy * uy + uz * uz);
+    if (ul > 1e-6f) { ux /= ul; uy /= ul; uz /= ul; }
+
+    for (int i = 0; i < 4; ++i) {
+        f32 sw = (i == 0 || i == 3) ? -half_w : half_w;
+        f32 sh = (i < 2) ? -half_h : half_h;
+        w->verts[i][0] = center[0] + tx * sw + ux * sh;
+        w->verts[i][1] = center[1] + ty * sw + uy * sh;
+        w->verts[i][2] = center[2] + tz * sw + uz * sh;
+    }
+    w->vert_count = 4;
+    w->center[0] = center[0]; w->center[1] = center[1]; w->center[2] = center[2];
+    w->plane[0] = nx; w->plane[1] = ny; w->plane[2] = nz;
+    w->plane[3] = -(nx * center[0] + ny * center[1] + nz * center[2]);
+    w->from_marksurfaces = false;
+    w->valid = true;
+}
+
+u32 aether_bsp_portal_windings_build_fixture(aether_bsp_portal_winding_set_t *set) {
+    if (!set) return 0;
+    aether_bsp_portal_windings_init(set);
+    f32 c01[3] = {0, 0, 0}, n01[3] = {1, 0, 0};
+    f32 c12[3] = {64, 0, 0}, n12[3] = {0, 0, 1};
+    f32 c23[3] = {64, 64, 0}, n23[3] = {-1, 0, 0};
+    f32 c30[3] = {0, 64, 0}, n30[3] = {0, 0, -1};
+    portal_winding_rect(&set->windings[0], c01, n01, 24.f, 32.f, 0, 1, 0, 0);
+    portal_winding_rect(&set->windings[1], c12, n12, 24.f, 32.f, 1, 2, 1, 1);
+    portal_winding_rect(&set->windings[2], c23, n23, 24.f, 32.f, 2, 3, 2, 2);
+    portal_winding_rect(&set->windings[3], c30, n30, 24.f, 32.f, 3, 0, 3, 3);
+    set->count = 4;
+    set->from_bsp = false;
+    return set->count;
+}
+
+u32 aether_bsp_portal_windings_from_marksurfaces(aether_bsp_portal_winding_set_t *set,
+                                                 const aether_bsp_t *bsp) {
+    if (!set) return 0;
+    aether_bsp_portal_windings_init(set);
+    if (!bsp) return aether_bsp_portal_windings_build_fixture(set);
+
+    u32 leaf_count = aether_bsp_leaf_count(bsp);
+    u32 face_count = aether_bsp_face_count(bsp);
+    u32 plane_count = aether_bsp_plane_count(bsp);
+    const u16 *marks = NULL;
+    u32 mark_count = 0;
+    /* marksurfaces lump is u16 indices */
+    {
+        u32 msz = aether_bsp_lump_size(bsp, AETHER_BSP_LUMP_MARKSURFACES);
+        mark_count = msz / sizeof(u16);
+        marks = (const u16 *)aether_bsp_lump_data(bsp, AETHER_BSP_LUMP_MARKSURFACES);
+    }
+    if (leaf_count < 2 || face_count == 0 || plane_count == 0 || !marks || mark_count == 0)
+        return aether_bsp_portal_windings_build_fixture(set);
+
+    /* For each drawable leaf, take marksurfaces → face → plane → rect winding.
+     * Pair consecutive drawable leaves as portal endpoints (clean-room stub). */
+    u16 drawable[AETHER_BSP_PORTAL_GRAPH_MAX_LEAVES];
+    u32 dc = 0;
+    for (u32 i = 0; i < leaf_count && dc < AETHER_BSP_PORTAL_GRAPH_MAX_LEAVES; ++i) {
+        if (aether_bsp_leaf_is_drawable(bsp, (i32)i))
+            drawable[dc++] = (u16)i;
+    }
+    if (dc < 2)
+        return aether_bsp_portal_windings_build_fixture(set);
+
+    for (u32 di = 0; di + 1 < dc && set->count < AETHER_BSP_PORTAL_WINDING_MAX; ++di) {
+        u16 la = drawable[di];
+        u16 lb = drawable[di + 1];
+        const aether_bsp_leaf_t *leaf = aether_bsp_leaf_at(bsp, la);
+        if (!leaf || leaf->num_marksurfaces == 0) continue;
+
+        u16 face_i = 0;
+        u16 plane_i = 0;
+        f32 center[3] = {0, 0, 0};
+        f32 normal[3] = {0, 1, 0};
+        bool got = false;
+
+        for (u32 m = 0; m < leaf->num_marksurfaces; ++m) {
+            u32 off = (u32)leaf->first_marksurface + m;
+            if (off >= mark_count) break;
+            u16 fi = marks[off];
+            if (fi >= face_count) continue;
+            const aether_bsp_face_t *face = aether_bsp_face_at(bsp, fi);
+            if (!face) continue;
+            if (face->plane >= plane_count) continue;
+            const aether_bsp_plane_t *pl = aether_bsp_plane_at(bsp, face->plane);
+            if (!pl) continue;
+            face_i = fi;
+            plane_i = face->plane;
+            normal[0] = pl->normal[0];
+            normal[1] = pl->normal[1];
+            normal[2] = pl->normal[2];
+            /* Leaf AABB center as portal mid. */
+            center[0] = 0.5f * ((f32)leaf->mins[0] + (f32)leaf->maxs[0]);
+            center[1] = 0.5f * ((f32)leaf->mins[1] + (f32)leaf->maxs[1]);
+            center[2] = 0.5f * ((f32)leaf->mins[2] + (f32)leaf->maxs[2]);
+            /* Project center onto plane for better portal placement. */
+            f32 d = pl->dist;
+            f32 side = normal[0] * center[0] + normal[1] * center[1] + normal[2] * center[2] - d;
+            center[0] -= normal[0] * side;
+            center[1] -= normal[1] * side;
+            center[2] -= normal[2] * side;
+            got = true;
+            break;
+        }
+        if (!got) continue;
+
+        aether_bsp_portal_winding_t *w = &set->windings[set->count];
+        f32 half_w = 24.f, half_h = 32.f;
+        if (leaf->maxs[0] > leaf->mins[0])
+            half_w = 0.25f * (f32)(leaf->maxs[0] - leaf->mins[0]);
+        if (leaf->maxs[2] > leaf->mins[2])
+            half_h = 0.25f * (f32)(leaf->maxs[2] - leaf->mins[2]);
+        if (half_w < 8.f) half_w = 8.f;
+        if (half_h < 8.f) half_h = 8.f;
+        portal_winding_rect(w, center, normal, half_w, half_h, la, lb, face_i, plane_i);
+        w->from_marksurfaces = true;
+        set->count++;
+    }
+
+    /* Close ring: last → first */
+    if (dc >= 2 && set->count < AETHER_BSP_PORTAL_WINDING_MAX) {
+        u16 la = drawable[dc - 1];
+        u16 lb = drawable[0];
+        const aether_bsp_leaf_t *leaf = aether_bsp_leaf_at(bsp, la);
+        if (leaf && leaf->num_marksurfaces > 0) {
+            f32 center[3] = {
+                0.5f * ((f32)leaf->mins[0] + (f32)leaf->maxs[0]),
+                0.5f * ((f32)leaf->mins[1] + (f32)leaf->maxs[1]),
+                0.5f * ((f32)leaf->mins[2] + (f32)leaf->maxs[2])
+            };
+            f32 normal[3] = {0, 0, 1};
+            u16 face_i = 0, plane_i = 0;
+            u32 off = leaf->first_marksurface;
+            if (off < mark_count) {
+                u16 fi = marks[off];
+                if (fi < face_count) {
+                    const aether_bsp_face_t *face = aether_bsp_face_at(bsp, fi);
+                    if (face && face->plane < plane_count) {
+                        const aether_bsp_plane_t *pl = aether_bsp_plane_at(bsp, face->plane);
+                        if (pl) {
+                            normal[0] = pl->normal[0];
+                            normal[1] = pl->normal[1];
+                            normal[2] = pl->normal[2];
+                            face_i = fi; plane_i = face->plane;
+                        }
+                    }
+                }
+            }
+            aether_bsp_portal_winding_t *w = &set->windings[set->count];
+            portal_winding_rect(w, center, normal, 24.f, 32.f, la, lb, face_i, plane_i);
+            w->from_marksurfaces = true;
+            set->count++;
+        }
+    }
+
+    if (set->count == 0)
+        return aether_bsp_portal_windings_build_fixture(set);
+    set->from_bsp = true;
+    return set->count;
+}
+
+u32 aether_bsp_portal_graph_attach_windings(aether_bsp_portal_graph_t *g,
+                                            const aether_bsp_portal_winding_set_t *set) {
+    if (!g || !set || set->count == 0) return 0;
+    u32 attached = 0;
+    for (u32 e = 0; e < g->edge_count; ++e) {
+        aether_bsp_portal_edge_t *edge = &g->edges[e];
+        for (u32 w = 0; w < set->count; ++w) {
+            const aether_bsp_portal_winding_t *pw = &set->windings[w];
+            if (!pw->valid) continue;
+            bool match = (edge->leaf_a == pw->leaf_a && edge->leaf_b == pw->leaf_b) ||
+                         (edge->leaf_a == pw->leaf_b && edge->leaf_b == pw->leaf_a);
+            if (!match) continue;
+            edge->center[0] = pw->center[0];
+            edge->center[1] = pw->center[1];
+            edge->center[2] = pw->center[2];
+            edge->normal[0] = pw->plane[0];
+            edge->normal[1] = pw->plane[1];
+            edge->normal[2] = pw->plane[2];
+            edge->valid = true;
+            attached++;
+            break;
+        }
+    }
+    return attached;
+}
+
+int aether_bsp_portal_winding_to_render(const aether_bsp_portal_winding_t *src,
+                                        f32 out_verts[][3], u32 out_cap,
+                                        u32 *out_count, f32 out_plane[4]) {
+    if (!src || !src->valid || !out_verts || out_cap == 0) return 0;
+    u32 n = src->vert_count;
+    if (n > out_cap) n = out_cap;
+    if (n > AETHER_BSP_PORTAL_WINDING_MAX_VERTS) n = AETHER_BSP_PORTAL_WINDING_MAX_VERTS;
+    for (u32 i = 0; i < n; ++i) {
+        out_verts[i][0] = src->verts[i][0];
+        out_verts[i][1] = src->verts[i][1];
+        out_verts[i][2] = src->verts[i][2];
+    }
+    if (out_count) *out_count = n;
+    if (out_plane) {
+        out_plane[0] = src->plane[0];
+        out_plane[1] = src->plane[1];
+        out_plane[2] = src->plane[2];
+        out_plane[3] = src->plane[3];
+    }
+    return 1;
+}
+
