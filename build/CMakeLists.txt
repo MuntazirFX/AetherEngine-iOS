@@ -286,13 +286,16 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/client/hud/AetherCrosshair.h
 
     # -------- VGUI / UI compatibility layer --------
-    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUI.c
-    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIResource.c
-    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIScheme.c
-    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIFont.c
-    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUILocalization.c
-    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIServerBrowser.c
-    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIConsole.c
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUI.h
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUI1.h
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUI2.h
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIResource.h
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIScheme.h
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIFont.h
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUILocalization.h
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIServerBrowser.h
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIConsole.h
+    ${CMAKE_SOURCE_DIR}/../engine/vgui/AetherVGUIRuntime.h
 
     # -------- client/menu --------
     ${CMAKE_SOURCE_DIR}/../engine/client/menu/AetherMenu.h
@@ -316,6 +319,9 @@ target_include_directories(aether_engine PUBLIC
     ${CMAKE_SOURCE_DIR}/../engine/game
     ${CMAKE_SOURCE_DIR}/../engine/game/weapons
     ${CMAKE_SOURCE_DIR}/../engine/game/monsters
+    ${CMAKE_SOURCE_DIR}/../engine/game/dll
+    ${CMAKE_SOURCE_DIR}/../engine/game/ai
+    ${CMAKE_SOURCE_DIR}/../engine/physics
     ${CMAKE_SOURCE_DIR}/../engine/save
     ${CMAKE_SOURCE_DIR}/../engine/net
     ${CMAKE_SOURCE_DIR}/../engine/input
@@ -330,6 +336,7 @@ target_include_directories(aether_engine PUBLIC
     ${CMAKE_SOURCE_DIR}/../engine/entity
     ${CMAKE_SOURCE_DIR}/../engine/client/hud
     ${CMAKE_SOURCE_DIR}/../engine/client/menu
+    ${CMAKE_SOURCE_DIR}/../engine/vgui
 )
 
 # ============================================================
@@ -356,4 +363,25 @@ if(AETHER_BUILD_IOS)
         "-framework AVFoundation"
         "-framework CoreGraphics"
     )
+endif()
+
+# ============================================================
+# HOST SMOKE TEST (Linux/macOS; no iOS SDK required)
+# ============================================================
+if(AETHER_BUILD_TESTS)
+    add_executable(host_smoke ${CMAKE_SOURCE_DIR}/../tests/host_smoke.c)
+    target_link_libraries(host_smoke PRIVATE aether_engine m)
+    target_include_directories(host_smoke PRIVATE
+        ${CMAKE_SOURCE_DIR}/../engine/core
+        ${CMAKE_SOURCE_DIR}/../engine/game
+        ${CMAKE_SOURCE_DIR}/../engine/game/weapons
+        ${CMAKE_SOURCE_DIR}/../engine/game/monsters
+        ${CMAKE_SOURCE_DIR}/../engine/entity
+        ${CMAKE_SOURCE_DIR}/../engine/player
+        ${CMAKE_SOURCE_DIR}/../engine/net
+        ${CMAKE_SOURCE_DIR}/../engine/vgui
+    )
+    enable_testing()
+    add_test(NAME host_smoke COMMAND host_smoke
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/..)
 endif()
