@@ -1,5 +1,5 @@
 // MetalRenderer.swift
-// Renders BSP mesh + MDL model + entities + particles + sky + water. STEP 18B / metal-water.
+// Renders BSP mesh + MDL model + entities + particles + sky + water + fog. STEP 18B / metal-fog.
 // Pushes view/proj + frame dt into EngineBridge each draw.
 // AetherEngine-iOS · Clean-room.
 
@@ -68,6 +68,12 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     var waterBuffer: MTLBuffer?
     var waterVertexCount: Int = 0
 
+    // Fog fullscreen tint (driven by AetherFog via EngineBridge)
+    var fogPipeline: MTLRenderPipelineState?
+    var fogDepthState: MTLDepthStencilState?
+    var fogBuffer: MTLBuffer?
+    var fogVertexCount: Int = 0
+
     private var lastTime: CFTimeInterval = CACurrentMediaTime()
 
     init?(mtkView: MTKView) {
@@ -89,6 +95,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         buildParticlePipeline(mtkView: mtkView)
         buildSkyPipeline(mtkView: mtkView)
         buildWaterPipeline(mtkView: mtkView)
+        buildFogPipeline(mtkView: mtkView)
         buildDepthState()
         buildSampler()
 
@@ -198,6 +205,31 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         catch { print("[MetalRenderer] water pipeline error: \(error)") }
     }
 
+    private func buildFogPipeline(mtkView: MTKView) {
+        guard let lib = device.makeDefaultLibrary(),
+              let vfn = lib.makeFunction(name: "aether_fog_vertex"),
+              let ffn = lib.makeFunction(name: "aether_fog_fragment") else { return }
+        let vd = MTLVertexDescriptor()
+        vd.attributes[0].format = .float2; vd.attributes[0].offset = 0;  vd.attributes[0].bufferIndex = 0
+        vd.attributes[1].format = .float2; vd.attributes[1].offset = 8;  vd.attributes[1].bufferIndex = 0
+        vd.attributes[2].format = .float4; vd.attributes[2].offset = 16; vd.attributes[2].bufferIndex = 0
+        vd.layouts[0].stride = 32
+        vd.layouts[0].stepFunction = .perVertex
+        let d = MTLRenderPipelineDescriptor()
+        d.vertexFunction = vfn; d.fragmentFunction = ffn; d.vertexDescriptor = vd
+        d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+        d.colorAttachments[0].isBlendingEnabled = true
+        d.colorAttachments[0].rgbBlendOperation = .add
+        d.colorAttachments[0].alphaBlendOperation = .add
+        d.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        d.colorAttachments[0].sourceAlphaBlendFactor = .one
+        d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        d.depthAttachmentPixelFormat = mtkView.depthStencilPixelFormat
+        do { fogPipeline = try device.makeRenderPipelineState(descriptor: d) }
+        catch { print("[MetalRenderer] fog pipeline error: \(error)") }
+    }
+
     private func buildDepthState() {
         let d = MTLDepthStencilDescriptor()
         d.depthCompareFunction = .less; d.isDepthWriteEnabled = true
@@ -211,6 +243,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let waterD = MTLDepthStencilDescriptor()
         waterD.depthCompareFunction = .less; waterD.isDepthWriteEnabled = false
         waterDepthState = device.makeDepthStencilState(descriptor: waterD)
+        let fogD = MTLDepthStencilDescriptor()
+        fogD.depthCompareFunction = .always; fogD.isDepthWriteEnabled = false
+        fogDepthState = device.makeDepthStencilState(descriptor: fogD)
     }
 
     private func buildSampler() {
@@ -523,6 +558,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         // ---- Particles (AetherParticle pool) ----
         syncAndDrawParticles(encoder: enc, viewMat: viewMat, projMat: projMat, dt: dt)
 
+        // ---- Fog (fullscreen tint from AetherFog) ----
+        syncAndDrawFog(encoder: enc)
+
         enc.endEncoding()
         engine_renderer_draw_hud()
         engine_renderer_end_frame()
@@ -655,6 +693,51 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         enc.setVertexBytes(&PU, length: MemoryLayout<ParticleUniforms>.stride, index: 1)
         enc.drawPrimitives(type: .point, vertexStart: 0, vertexCount: particleCount)
         // Restore default depth write for any later passes
+        if let ds = depthState { enc.setDepthStencilState(ds) }
+    }
+
+
+    private func syncAndDrawFog(encoder enc: MTLRenderCommandEncoder) {
+        guard engine_fog_enabled() != 0, let pipeline = fogPipeline else { return }
+
+        let cap = Int(engine_fog_render_vertex_capacity())
+        guard cap > 0 else { return }
+        var packed = [Float](repeating: 0, count: cap * 8)
+        let n = packed.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_fog_copy_render(buf.baseAddress, Int32(cap)))
+        }
+        fogVertexCount = Int(n)
+        guard fogVertexCount > 0 else { return }
+
+        let bytes = fogVertexCount * 32
+        if fogBuffer == nil || fogBuffer!.length < bytes {
+            fogBuffer = device.makeBuffer(length: max(bytes, cap * 32), options: .storageModeShared)
+        }
+        if let buf = fogBuffer {
+            packed.withUnsafeBytes { raw in
+                if let base = raw.baseAddress {
+                    buf.contents().copyMemory(from: base, byteCount: bytes)
+                }
+            }
+        }
+
+        engine_renderer_draw_feature(Int32(ENGINE_CMD_DRAW_FOG))
+
+        struct FogUniforms {
+            var density: Float
+            var factor: Float
+            var pad0: Float = 0
+            var pad1: Float = 0
+        }
+        var FU = FogUniforms(density: engine_fog_density(), factor: engine_fog_factor())
+        enc.setRenderPipelineState(pipeline)
+        if let fd = fogDepthState { enc.setDepthStencilState(fd) }
+        enc.setCullMode(.none)
+        if let vb = fogBuffer {
+            enc.setVertexBuffer(vb, offset: 0, index: 0)
+        }
+        enc.setVertexBytes(&FU, length: MemoryLayout<FogUniforms>.stride, index: 1)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: fogVertexCount)
         if let ds = depthState { enc.setDepthStencilState(ds) }
     }
 

@@ -20,6 +20,7 @@
 #include "../../engine/render/AetherParticle.h"
 #include "../../engine/render/AetherSky.h"
 #include "../../engine/render/AetherWater.h"
+#include "../../engine/render/AetherFog.h"
 #include "../../engine/bsp/AetherBSP.h"
 #include "../../engine/bsp/AetherBSPGeometry.h"
 #include "../../engine/player/AetherPlayer.h"
@@ -541,6 +542,91 @@ int engine_water_render_vertex_capacity(void) {
 
 
 
+
+
+
+/* ---------- Fog ---------- */
+static aether_fog_t *bridge_fog(void) {
+    if (!g_renderer) return NULL;
+    aether_render_features_t *f = aether_renderer_features(g_renderer);
+    return f ? &f->fog : NULL;
+}
+
+int engine_fog_enabled(void) {
+    aether_fog_t *fog = bridge_fog();
+    return (fog && fog->enabled) ? 1 : 0;
+}
+
+void engine_fog_set_enabled(bool enabled) {
+    aether_fog_t *fog = bridge_fog();
+    if (fog) aether_fog_set_enabled(fog, enabled);
+}
+
+float engine_fog_density(void) {
+    aether_fog_t *fog = bridge_fog();
+    return fog ? fog->density : 0.0f;
+}
+
+float engine_fog_factor(void) {
+    aether_fog_t *fog = bridge_fog();
+    return fog ? fog->factor : 0.0f;
+}
+
+float engine_fog_start(void) {
+    aether_fog_t *fog = bridge_fog();
+    return fog ? fog->start : 0.0f;
+}
+
+float engine_fog_end(void) {
+    aether_fog_t *fog = bridge_fog();
+    return fog ? fog->end : 0.0f;
+}
+
+void engine_fog_set_density(float density) {
+    aether_fog_t *fog = bridge_fog();
+    if (fog) aether_fog_set_density(fog, density);
+}
+
+void engine_fog_set_factor(float factor) {
+    aether_fog_t *fog = bridge_fog();
+    if (fog) (void)aether_fog_set_factor(fog, factor);
+}
+
+void engine_fog_set_range(float start, float end) {
+    aether_fog_t *fog = bridge_fog();
+    if (fog) aether_fog_set_range(fog, start, end);
+}
+
+void engine_fog_set_color(float r, float g, float b, float a) {
+    aether_fog_t *fog = bridge_fog();
+    if (!fog) return;
+    f32 rgba[4] = { r, g, b, a };
+    (void)aether_fog_set_color(fog, rgba);
+}
+
+void engine_fog_get_color(float out_rgba[4]) {
+    aether_fog_t *fog = bridge_fog();
+    if (!out_rgba) return;
+    if (!fog) { out_rgba[0]=out_rgba[1]=out_rgba[2]=out_rgba[3]=0.0f; return; }
+    out_rgba[0] = fog->color[0];
+    out_rgba[1] = fog->color[1];
+    out_rgba[2] = fog->color[2];
+    out_rgba[3] = fog->color[3];
+}
+
+int engine_fog_copy_render(float *out_xy_uv_rgba, int max_vertices) {
+    aether_fog_t *fog = bridge_fog();
+    if (!fog || !out_xy_uv_rgba || max_vertices <= 0) return 0;
+    /* Layout matches aether_fog_vertex_t (8 floats). */
+    return (int)aether_fog_copy_render(
+        fog,
+        (aether_fog_vertex_t *)out_xy_uv_rgba,
+        (u32)max_vertices);
+}
+
+int engine_fog_render_vertex_capacity(void) {
+    return (int)aether_fog_render_vertex_count();
+}
 
 
 /* ---------- BSP inspect ---------- */

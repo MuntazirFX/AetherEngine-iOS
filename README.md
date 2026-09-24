@@ -35,6 +35,7 @@ GitHub Actions workflow `.github/workflows/verify.yml` runs the same script on e
 - [x] STEP 2c: Metal particles — C pool getters + bridge + point-sprite encode from engine state (see `continue/metal-particles`)
 - [x] STEP 2d: Metal sky — AetherSky face colors → gradient dome + bridge + Metal placeholder (see `continue/metal-sky`)
 - [x] STEP 2e: Metal water — AetherWater wavy plane + bridge + Metal translucent pass (see `continue/metal-water`)
+- [x] STEP 2f: Metal fog — AetherFog params + fullscreen tint copy_render + bridge + Metal pass (see `continue/metal-fog`)
 - [ ] STEP 3: Engine foundation
 - [ ] STEP 4: iOS application
 - [ ] STEP 5: 5-game configuration
@@ -61,7 +62,7 @@ AetherEngine now exposes an Xash3D-class renderer feature layer with clean-room 
 - `AetherLightmap` — lightmap/style state
 - `AetherWater` — animated water state + wavy plane vertex copy for Metal
 - `AetherSky` — six-face sky state + gradient dome vertex copy for Metal
-- `AetherFog` — fog parameters
+- `AetherFog` — fog parameters + fullscreen tint vertex copy for Metal
 - `AetherDecal` — decal pool (blood/bullet-style decals)
 - `AetherParticle` — particle pool/update + burst spawn + render vertex copy
 - `AetherSprite` — sprite state/UVs

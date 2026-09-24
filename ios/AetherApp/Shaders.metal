@@ -227,3 +227,49 @@ fragment float4 aether_water_fragment(WaterVertexOut in [[stage_in]]) {
     float alpha = clamp(in.color.a, 0.0, 1.0);
     return float4(tint, alpha);
 }
+
+
+/* ============ Fog fullscreen tint (from AetherFog) ============ */
+struct FogVertexIn {
+    float2 position [[attribute(0)]];
+    float2 uv       [[attribute(1)]];
+    float4 color    [[attribute(2)]];
+};
+
+struct FogVertexOut {
+    float4 position [[position]];
+    float2 uv;
+    float4 color;
+};
+
+struct FogUniforms {
+    float density;
+    float factor;
+    float pad0, pad1;
+};
+
+vertex FogVertexOut aether_fog_vertex(FogVertexIn in [[stage_in]],
+                                       constant FogUniforms &U [[buffer(1)]]) {
+    FogVertexOut out;
+    /* Positions already in NDC from C copy_render. */
+    out.position = float4(in.position, 0.0, 1.0);
+    out.uv = in.uv;
+    /* C bakes density*factor into alpha; uniforms allow a live scale. */
+    float scale = clamp(U.density * U.factor, 0.0, 1.0);
+    if (scale <= 0.0) scale = 1.0; /* uniforms unused → trust vertex alpha */
+    float a = clamp(in.color.a * ((U.density > 0.0 || U.factor > 0.0) ? scale : 1.0), 0.0, 1.0);
+    /* Prefer the pre-baked alpha from copy_render when uniforms are demo defaults. */
+    a = clamp(in.color.a, 0.0, 1.0);
+    out.color = float4(in.color.rgb, a);
+    (void)U;
+    return out;
+}
+
+fragment float4 aether_fog_fragment(FogVertexOut in [[stage_in]]) {
+    /* Soft vignette so the tint reads as atmospheric haze, not a flat wash. */
+    float2 d = in.uv * 2.0 - 1.0;
+    float vignette = clamp(0.55 + 0.45 * dot(d, d), 0.0, 1.0);
+    float4 c = in.color;
+    c.a *= vignette;
+    return c;
+}
