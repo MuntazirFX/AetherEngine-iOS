@@ -1,4 +1,5 @@
 /* AetherPlayer.c — Player movement with gravity + collision + swim + waterlevel.
+ * Air drain/recover sets drowning; host/bridge applies aether_player_tick_drown.
  * AetherEngine-iOS · Clean-room.
  */
 #include "AetherPlayer.h"

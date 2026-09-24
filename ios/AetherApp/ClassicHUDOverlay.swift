@@ -12,6 +12,9 @@ struct ClassicHUDOverlay: View {
     @State private var reserve: Int = 0
     @State private var weapon: Int = 0
     @State private var alive: Bool = true
+    @State private var air: Int = 100
+    @State private var airMax: Int = 100
+    @State private var drowning: Bool = false
     @State private var crosshairSpread: CGFloat = 0
 
     private let poll = Timer.publish(every: 1.0 / 15.0, on: .main, in: .common).autoconnect()
@@ -73,6 +76,15 @@ struct ClassicHUDOverlay: View {
                     .font(.system(size: 12, weight: .bold, design: .serif))
                     .foregroundColor(.white.opacity(0.65))
             }
+            // Air meter when breath is draining or drowning (HEV-style).
+            if air < airMax || drowning {
+                Text("AIR")
+                    .font(.system(size: 12, weight: .bold, design: .serif))
+                    .foregroundColor(.white.opacity(0.65))
+                Text("\(air)")
+                    .font(.system(size: 24, weight: .bold, design: .serif))
+                    .foregroundColor(airColor)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -107,6 +119,12 @@ struct ClassicHUDOverlay: View {
         return .red
     }
 
+    private var airColor: Color {
+        if drowning { return .red }
+        if airMax > 0 && air * 100 / max(airMax, 1) <= 25 { return .orange }
+        return .cyan
+    }
+
     private var weaponName: String {
         switch weapon {
         case 1: return "CROWBAR"
@@ -136,6 +154,15 @@ struct ClassicHUDOverlay: View {
         reserve = Int(engine_hud_reserve_ammo())
         weapon = Int(engine_hud_active_weapon())
         alive = engine_hud_alive()
+        let amax = engine_hud_air_max()
+        airMax = max(Int(amax.rounded()), 1)
+        // Present air as 0..100 style meter relative to air_max.
+        if amax > 0 {
+            air = Int(((engine_hud_air() / amax) * 100.0).rounded())
+        } else {
+            air = 0
+        }
+        drowning = engine_hud_drowning() != 0
         crosshairSpread = CGFloat(engine_hud_crosshair_spread())
         _ = clipMax
     }

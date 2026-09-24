@@ -46,8 +46,10 @@ void aether_player_apply_damage(aether_player_health_t *h,
 /* Fall damage based on landing velocity (GoldSrc formula). */
 f32 aether_player_calc_fall_damage(f32 velocity_z);
 
-/* Per-frame hazard ticks */
-void aether_player_tick_drown(aether_player_health_t *h, f32 dt, bool underwater);
+/* Per-frame hazard ticks.
+ * Drown: pass drowning=true only when air is depleted while eye underwater
+ * (aether_player_is_drowning). Surface clears the flag → no damage. */
+void aether_player_tick_drown(aether_player_health_t *h, f32 dt, bool drowning);
 void aether_player_tick_fire(aether_player_health_t *h, f32 dt, bool on_fire);
 void aether_player_tick_radiation(aether_player_health_t *h, f32 dt, bool in_rad);
 

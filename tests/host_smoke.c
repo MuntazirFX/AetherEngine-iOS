@@ -35,6 +35,8 @@
 #include "AetherWorld.h"
 #include "AetherCollision.h"
 #include "AetherPlayer.h"
+#include "AetherPlayerHealth.h"
+#include "AetherPlayerDamage.h"
 #include "AetherInput.h"
 #include "AetherMath.h"
 
@@ -750,6 +752,59 @@ int main(void) {
             expect(ply.air > 1.0f, "air_recovers_on_surface");
             expect(!ply.drowning, "air_drown_clears_on_surface");
 
+            /* Drown → health damage tick (STEP 2o). Surface stops damage + air recovers. */
+            {
+                aether_player_health_t hp;
+                aether_player_health_init(&hp);
+                expect(aether_player_health_get(&hp) == AETHER_PLAYER_START_HEALTH,
+                       "drown_hp_full_init");
+
+                /* Deep + air empty → drowning flag → tick_drown drains HP. */
+                aether_player_init(&ply);
+                aether_player_set_position(&ply, (aether_vec3_t){0, 170, 0});
+                ply.air = 0.0f;
+                ply.drowning = false;
+                aether_input_begin_frame(in);
+                aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                aether_input_end_frame(in);
+                expect(aether_player_is_drowning(&ply), "drown_flag_for_damage");
+
+                f32 hp0 = aether_player_health_get(&hp);
+                /* Simulate ~1s of drown damage at 10 hp/s (bridge calls this each tick). */
+                for (int i = 0; i < 60; ++i)
+                    aether_player_tick_drown(&hp, 1.f / 60.f,
+                                             aether_player_is_drowning(&ply));
+                f32 hp1 = aether_player_health_get(&hp);
+                expect(hp1 < hp0 - 8.0f && hp1 > hp0 - 12.0f,
+                       "drown_health_drops_approx_10ps");
+
+                /* No damage while flag false (even if tick_drown called). */
+                aether_player_tick_drown(&hp, 1.0f, false);
+                expect(aether_player_health_get(&hp) == hp1,
+                       "drown_no_damage_when_not_drowning");
+
+                /* Surface: drowning clears, air recovers, further ticks do not hurt. */
+                aether_player_set_position(&ply, (aether_vec3_t){0, 80, 0});
+                ply.air = 0.5f;
+                ply.drowning = true;
+                for (int i = 0; i < 90; ++i) {
+                    aether_input_begin_frame(in);
+                    aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                    aether_input_end_frame(in);
+                    aether_player_tick_drown(&hp, 1.f / 60.f,
+                                             aether_player_is_drowning(&ply));
+                }
+                expect(!ply.drowning, "drown_clears_on_surface_for_hp");
+                expect(ply.air > 0.5f, "air_recovers_with_hp_wire");
+                expect(aether_player_health_get(&hp) == hp1,
+                       "drown_damage_stops_on_surface");
+
+                /* HUD bridge field contract (ClassicHUD reads these via EngineBridge). */
+                expect(aether_player_air(&ply) == ply.air, "hud_air_getter_matches");
+                expect(ply.air_max == AETHER_PLAYER_AIR_MAX, "hud_air_max_contract");
+                expect(!aether_player_is_drowning(&ply), "hud_drowning_false_surface");
+            }
+
             /* Manual splash trigger API. */
             aether_player_trigger_splash(&ply, AETHER_SPLASH_ENTER);
             expect(aether_player_take_splash_event(&ply) == AETHER_SPLASH_ENTER,
@@ -758,7 +813,7 @@ int main(void) {
             aether_input_destroy(in);
             aether_collision_free(col);
             printf("  collision: floor z=%.3f, ledge climb x=%.1f z=%.1f, jump ceil~%.1f, "
-                   "water swim peak~%.1f, waterlevel/splash/air ok\n",
+                   "water swim peak~%.1f, waterlevel/splash/air/drown-hp ok\n",
                    landed.z, climbed.x, climbed.z, jumped.z, swim_peak);
         }
 

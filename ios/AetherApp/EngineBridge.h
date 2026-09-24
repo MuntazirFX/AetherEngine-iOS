@@ -74,6 +74,10 @@ float engine_hud_max_health(void);
 float engine_hud_armor(void);
 float engine_hud_battery(void);
 bool  engine_hud_alive(void);
+/* Air / drown meter (HEV-style readout; mirrors player air state). */
+float engine_hud_air(void);
+float engine_hud_air_max(void);
+int   engine_hud_drowning(void);
 int   engine_hud_active_weapon(void);
 int   engine_hud_reserve_ammo(void);
 int   engine_hud_clip(void);
