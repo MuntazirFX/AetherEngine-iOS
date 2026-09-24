@@ -373,4 +373,63 @@ i32 aether_mdl_lod_gpu_issue_draw_hiz(const aether_mdl_lod_table_t *table,
                                       aether_mdl_lod_gpu_draw_t *out,
                                       aether_mdl_hiz_gate_t *gate);
 
+/* ---------- Real hierarchical Hi-Z mip pyramid + visibility queries ---------- */
+#define AETHER_MDL_HIZ_MIP_LEVELS   6
+#define AETHER_MDL_HIZ_MIP0_W      64
+#define AETHER_MDL_HIZ_MIP0_H      64
+#define AETHER_MDL_HIZ_PYRAMID_TEXELS \
+    ((AETHER_MDL_HIZ_MIP0_W * AETHER_MDL_HIZ_MIP0_H) * 2) /* mip0 + smaller sum */
+
+typedef struct aether_mdl_hiz_pyramid {
+    f32  depth[AETHER_MDL_HIZ_PYRAMID_TEXELS]; /* hierarchical max-Z (farther = larger) */
+    u32  level_offset[AETHER_MDL_HIZ_MIP_LEVELS];
+    u32  level_w[AETHER_MDL_HIZ_MIP_LEVELS];
+    u32  level_h[AETHER_MDL_HIZ_MIP_LEVELS];
+    u32  levels;           /* built mip count */
+    u32  mip0_w, mip0_h;
+    bool built;
+    bool gpu_hooks;        /* Metal encode path armed */
+    u32  vis_queries;      /* count of visibility queries this frame */
+    u32  vis_occluded;     /* how many returned occluded */
+} aether_mdl_hiz_pyramid_t;
+
+typedef struct aether_mdl_hiz_vis_query {
+    f32  screen_x0, screen_y0, screen_x1, screen_y1; /* NDC 0..1 rect */
+    f32  object_depth;     /* NDC depth of object (0 near .. 1 far) */
+    f32  nearest_hiz;      /* sampled pyramid min-Z over rect */
+    i32  mip_used;
+    bool visible;
+    bool occluded;
+    bool valid;
+} aether_mdl_hiz_vis_query_t;
+
+void aether_mdl_hiz_pyramid_init(aether_mdl_hiz_pyramid_t *pyr);
+void aether_mdl_hiz_pyramid_reset(aether_mdl_hiz_pyramid_t *pyr, u32 mip0_w, u32 mip0_h);
+/* Write a mip0 depth texel (x,y in mip0 coords). Returns 1 if stored. */
+int  aether_mdl_hiz_pyramid_write(aether_mdl_hiz_pyramid_t *pyr, u32 x, u32 y, f32 depth);
+/* Fill mip0 from a full-screen depth stub (row-major, size mip0_w*mip0_h). */
+u32  aether_mdl_hiz_pyramid_fill_mip0(aether_mdl_hiz_pyramid_t *pyr,
+                                      const f32 *depth_mip0, u32 count);
+/* Build hierarchical max-Z pyramid (conservative occlusion: farther Z covers). */
+u32  aether_mdl_hiz_build_pyramid(aether_mdl_hiz_pyramid_t *pyr);
+/* Sample max-Z at mip level covering rect; returns nearest (min) covering Z. */
+f32  aether_mdl_hiz_pyramid_sample_rect(const aether_mdl_hiz_pyramid_t *pyr,
+                                        f32 x0, f32 y0, f32 x1, f32 y1, i32 *out_mip);
+/* Visibility query: object behind nearer Hi-Z → occluded. */
+int  aether_mdl_hiz_vis_query(const aether_mdl_hiz_pyramid_t *pyr,
+                              f32 x0, f32 y0, f32 x1, f32 y1, f32 object_depth,
+                              aether_mdl_hiz_vis_query_t *out);
+/* Arm Metal GPU hooks (downsample + query encode). Host sets flag; Metal reads. */
+void aether_mdl_hiz_pyramid_set_gpu_hooks(aether_mdl_hiz_pyramid_t *pyr, bool armed);
+bool aether_mdl_hiz_pyramid_gpu_hooks(const aether_mdl_hiz_pyramid_t *pyr);
+
+/* Gate LOD using pyramid vis query (preferred over sample-buffer stub). */
+i32 aether_mdl_lod_hiz_pyramid_gate(const aether_mdl_lod_table_t *table,
+                                    const aether_mdl_lod_mesh_set_t *meshes,
+                                    const aether_mdl_hiz_pyramid_t *pyr,
+                                    f32 distance, f32 aabb_radius, f32 fov_y_deg,
+                                    f32 min_pixels, f32 max_distance,
+                                    f32 sx, f32 sy, f32 depth_ndc,
+                                    aether_mdl_hiz_gate_t *out);
+
 #endif /* AETHER_MODEL_FIXTURE_H */

@@ -787,3 +787,69 @@ float3 aether_water_reflect_transform(float3 p, constant WaterReflectUniforms &R
 float3 aether_water_reflect_sample(texture2d<float> tex, sampler s, float2 uv) {
     return tex.sample(s, uv).rgb;
 }
+
+/* ============ Hi-Z mip pyramid downsample + visibility query hooks ============ */
+struct HiZUniforms {
+    uint srcWidth;
+    uint srcHeight;
+    uint dstWidth;
+    uint dstHeight;
+    uint level;
+    uint pad0, pad1, pad2;
+};
+
+/* Downsample: store min depth of 2x2 (nearer covers) into next mip. */
+kernel void aether_hiz_downsample(texture2d<float, access::read> src [[texture(0)]],
+                                  texture2d<float, access::write> dst [[texture(1)]],
+                                  constant HiZUniforms &U [[buffer(0)]],
+                                  uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= U.dstWidth || gid.y >= U.dstHeight) return;
+    uint2 s0 = gid * 2;
+    float z = src.read(s0).r;
+    if (s0.x + 1 < U.srcWidth) z = min(z, src.read(s0 + uint2(1, 0)).r);
+    if (s0.y + 1 < U.srcHeight) {
+        z = min(z, src.read(s0 + uint2(0, 1)).r);
+        if (s0.x + 1 < U.srcWidth) z = min(z, src.read(s0 + uint2(1, 1)).r);
+    }
+    dst.write(float4(z, z, z, 1.0), gid);
+}
+
+struct HiZVisQuery {
+    float4 rect;       /* x0,y0,x1,y1 in 0..1 */
+    float  objectDepth;
+    float  pad0, pad1, pad2;
+};
+
+struct HiZVisResult {
+    float nearestHiz;
+    float occluded;    /* 1 if occluded */
+    float mipUsed;
+    float valid;
+};
+
+/* CPU/host also implements query; this fragment documents the Metal hook. */
+fragment HiZVisResult aether_hiz_vis_query_fragment(constant HiZVisQuery &Q [[buffer(0)]],
+                                                    texture2d<float> hiz [[texture(0)]],
+                                                    sampler samp [[sampler(0)]]) {
+    HiZVisResult r;
+    float2 uv = float2((Q.rect.x + Q.rect.z) * 0.5, (Q.rect.y + Q.rect.w) * 0.5);
+    float hz = hiz.sample(samp, uv).r;
+    r.nearestHiz = hz;
+    r.occluded = (hz + 0.01 < Q.objectDepth) ? 1.0 : 0.0;
+    r.mipUsed = 0.0;
+    r.valid = 1.0;
+    return r;
+}
+
+/* Studio texture sample for water reflect RT (procedural atlas tint). */
+fragment float4 aether_studio_reflect_tex_fragment(WaterVertexOut in [[stage_in]],
+                                                   constant float4 &tint [[buffer(2)]],
+                                                   constant float4 &atlas [[buffer(3)]]) {
+    float2 uv = in.uv;
+    float au = mix(atlas.x, atlas.z, fract(uv.x));
+    float av = mix(atlas.y, atlas.w, fract(uv.y));
+    float wave = 0.5 + 0.5 * sin(au * 40.0 + av * 28.0);
+    float checker = (((int)(au * 16.0) + (int)(av * 16.0)) & 1) ? 1.0 : 0.85;
+    float3 rgb = tint.rgb * float3(0.75 + 0.25 * wave, 0.80 + 0.20 * (1.0 - wave), 0.70 + 0.30 * wave) * checker;
+    return float4(rgb, tint.a);
+}

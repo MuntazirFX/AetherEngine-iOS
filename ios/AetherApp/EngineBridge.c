@@ -70,6 +70,8 @@
 #include "../../engine/net/AetherNetCmd.h"
 #include "../../engine/net/AetherLagComp.h"
 #include "../../engine/game/weapons/AetherWeaponView.h"
+#include "../../engine/game/weapons/AetherWeapon.h"
+#include "../../engine/game/weapons/AetherWeaponFiring.h"
 #include "../../engine/render/AetherMDLAnimation.h"
 #include "../../engine/console/AetherCVar.h"
 #include "../../engine/game/AetherManifest.h"
@@ -4265,4 +4267,191 @@ int engine_spectator_get_target_hp(void) {
 int engine_spectator_get_target_name(char *out, unsigned cap) {
     ensure_spectator();
     return (int)aether_spectator_get_target_name(&g_spectator, out, cap);
+}
+
+/* ---- Batch gpu-hiz-mip / weapon-auth / portal-reflect / studio-tex / assist ---- */
+
+static aether_mdl_hiz_pyramid_t g_hiz_pyr;
+static int g_hiz_pyr_init = 0;
+static aether_water_reflect_portal_t g_reflect_portal;
+static int g_reflect_portal_ready = 0;
+
+static void ensure_hiz_pyr(void) {
+    if (!g_hiz_pyr_init) {
+        aether_mdl_hiz_pyramid_init(&g_hiz_pyr);
+        g_hiz_pyr_init = 1;
+    }
+}
+
+int engine_mdl_hiz_pyramid_reset(unsigned mip0_w, unsigned mip0_h) {
+    ensure_hiz_pyr();
+    aether_mdl_hiz_pyramid_reset(&g_hiz_pyr, mip0_w, mip0_h);
+    return 1;
+}
+int engine_mdl_hiz_pyramid_write(unsigned x, unsigned y, float depth) {
+    ensure_hiz_pyr();
+    return aether_mdl_hiz_pyramid_write(&g_hiz_pyr, x, y, depth);
+}
+int engine_mdl_hiz_pyramid_fill_mip0(const float *depths, unsigned count) {
+    ensure_hiz_pyr();
+    return (int)aether_mdl_hiz_pyramid_fill_mip0(&g_hiz_pyr, depths, count);
+}
+unsigned engine_mdl_hiz_build_pyramid(void) {
+    ensure_hiz_pyr();
+    return aether_mdl_hiz_build_pyramid(&g_hiz_pyr);
+}
+int engine_mdl_hiz_vis_query(float x0, float y0, float x1, float y1, float obj_depth,
+                             int *out_visible, int *out_occluded, float *out_hiz, int *out_mip) {
+    ensure_hiz_pyr();
+    aether_mdl_hiz_vis_query_t q;
+    int vis = aether_mdl_hiz_vis_query(&g_hiz_pyr, x0, y0, x1, y1, obj_depth, &q);
+    g_hiz_pyr.vis_queries++;
+    if (q.occluded) g_hiz_pyr.vis_occluded++;
+    if (out_visible) *out_visible = q.visible ? 1 : 0;
+    if (out_occluded) *out_occluded = q.occluded ? 1 : 0;
+    if (out_hiz) *out_hiz = q.nearest_hiz;
+    if (out_mip) *out_mip = q.mip_used;
+    return vis;
+}
+int engine_mdl_hiz_pyramid_set_gpu_hooks(int armed) {
+    ensure_hiz_pyr();
+    aether_mdl_hiz_pyramid_set_gpu_hooks(&g_hiz_pyr, armed != 0);
+    return 1;
+}
+int engine_mdl_hiz_pyramid_gpu_hooks(void) {
+    ensure_hiz_pyr();
+    return aether_mdl_hiz_pyramid_gpu_hooks(&g_hiz_pyr) ? 1 : 0;
+}
+int engine_mdl_lod_hiz_pyramid_gate(float distance, float aabb_radius,
+                                    float min_pixels, float sx, float sy, float depth_ndc,
+                                    int *out_lod, int *out_issue, int *out_occluded,
+                                    float *out_screen_px) {
+    ensure_hiz_pyr();
+    ensure_hiz();
+    ensure_lod_meshes();
+    aether_mdl_hiz_gate_t g;
+    i32 lod = aether_mdl_lod_hiz_pyramid_gate(&g_lod_table, &g_lod_meshes, &g_hiz_pyr,
+                                              distance, aabb_radius, 75.f, min_pixels, 0.f,
+                                              sx, sy, depth_ndc, &g);
+    if (out_lod) *out_lod = lod;
+    if (out_issue) *out_issue = g.issue ? 1 : 0;
+    if (out_occluded) *out_occluded = g.occluded ? 1 : 0;
+    if (out_screen_px) *out_screen_px = g.screen_pixels;
+    return lod;
+}
+
+int engine_game_weapon_hit_auth(unsigned weapon_id, float now,
+                                float ox, float oy, float oz,
+                                float dx, float dy, float dz,
+                                unsigned killer_id, unsigned victim_id,
+                                int force_hit,
+                                int *out_fired, int *out_queued, int *out_died,
+                                int *out_registered, float *out_damage) {
+    if (!g_game_manager) return 0;
+    if (!engine_game_has_auth_server()) engine_game_bind_auth_server_demo();
+    aether_weapon_state_t ws;
+    aether_weapon_state_init(&ws, (aether_weapon_id_t)weapon_id);
+    if (ws.def && ws.def->clip_size > 0) ws.clip_ammo = ws.def->clip_size;
+    aether_player_inventory_t inv;
+    memset(&inv, 0, sizeof inv);
+    aether_game_weapon_auth_result_t r;
+    u32 kills = aether_game_weapon_hit_auth(g_game_manager, &ws, &inv, now,
+                                            ox, oy, oz, dx, dy, dz,
+                                            killer_id, victim_id, force_hit != 0, &r);
+    if (out_fired) *out_fired = r.fired ? 1 : 0;
+    if (out_queued) *out_queued = r.queued ? 1 : 0;
+    if (out_died) *out_died = r.died ? 1 : 0;
+    if (out_registered) *out_registered = r.registered_kill ? 1 : 0;
+    if (out_damage) *out_damage = r.damage;
+    (void)kills;
+    return r.registered_kill ? 1 : (r.queued ? 1 : 0);
+}
+
+int engine_water_reflect_portal_set(float in_x, float in_y, float in_z,
+                                    float out_x, float out_y, float out_z,
+                                    int eye_crossed) {
+    f32 ino[3] = {in_x, in_y, in_z};
+    f32 outo[3] = {out_x, out_y, out_z};
+    aether_water_reflect_portal_set(&g_reflect_portal, ino, outo, eye_crossed != 0);
+    g_reflect_portal_ready = 1;
+    return 1;
+}
+int engine_water_reflect_compute_portal(float eye_x, float eye_y, float eye_z) {
+    aether_water_t *w = bridge_water();
+    f32 eye[3] = {eye_x, eye_y, eye_z};
+    if (!g_reflect_portal_ready) aether_water_reflect_portal_init(&g_reflect_portal);
+    aether_water_reflect_compute_portal(w, eye, &g_reflect_portal, &g_water_reflect);
+    g_water_reflect_ready = 1;
+    return g_water_reflect.enabled ? 1 : 0;
+}
+int engine_water_reflect_rt_build_mirror_mvp_portal(float *out_mvp16) {
+    if (!out_mvp16) return 0;
+    ensure_water_rt();
+    if (!g_water_reflect_ready) {
+        f32 eye[3] = {0, 0, 64};
+        aether_water_t *w = bridge_water();
+        aether_water_reflect_compute(w, eye, &g_water_reflect);
+        g_water_reflect_ready = 1;
+    }
+    f32 id[16]; memset(id, 0, sizeof id); id[0]=id[5]=id[10]=id[15]=1.f;
+    if (!g_reflect_portal_ready) aether_water_reflect_portal_init(&g_reflect_portal);
+    aether_water_reflect_rt_build_mirror_mvp_portal(&g_water_reflect, &g_reflect_portal,
+                                                    id, id, out_mvp16, NULL);
+    return 1;
+}
+
+int engine_water_reflect_ent_set_studio_tex(unsigned index, unsigned skin_group, unsigned skin_tex) {
+    ensure_reflect_ents();
+    return aether_water_reflect_ent_set_studio_tex(&g_reflect_ents, index,
+                                                   (u8)skin_group, (u8)skin_tex);
+}
+int engine_water_reflect_ent_sample_studio_tex(unsigned index, float u, float v, float *out_rgba4) {
+    ensure_reflect_ents();
+    aether_water_reflect_studio_tex_t tex;
+    if (!aether_water_reflect_ent_get_studio_tex(&g_reflect_ents, index, &tex)) return 0;
+    aether_water_reflect_studio_tex_sample(&tex, u, v, out_rgba4);
+    return 1;
+}
+int engine_water_reflect_studio_tex_sample(unsigned skin_group, unsigned skin_tex,
+                                           float u, float v, float *out_rgba4) {
+    aether_water_reflect_studio_tex_t tex;
+    aether_water_reflect_studio_tex_init(&tex, (u8)skin_group, (u8)skin_tex);
+    aether_water_reflect_studio_tex_sample(&tex, u, v, out_rgba4);
+    return 1;
+}
+
+int engine_scoreboard_format_assist_line(int event_index, char *out, unsigned cap) {
+    ensure_sb_events();
+    aether_scoreboard_event_t e;
+    if (!aether_scoreboard_events_get(&g_sb_events, (u32)event_index, &e)) return 0;
+    return (int)aether_scoreboard_format_assist_line(&e, out, cap);
+}
+int engine_scoreboard_get_event_ex(int index, int *out_kind, unsigned *out_id,
+                                   char *name, int name_cap,
+                                   char *victim, int victim_cap,
+                                   char *line, int line_cap, float *out_time) {
+    ensure_sb_events();
+    aether_scoreboard_event_t e;
+    char buf[128];
+    if (!aether_scoreboard_events_get_ex(&g_sb_events, (u32)index, &e, buf, sizeof buf))
+        return 0;
+    if (out_kind) *out_kind = (int)e.kind;
+    if (out_id) *out_id = e.player_id;
+    if (out_time) *out_time = e.time;
+    if (name && name_cap > 0) {
+        size_t n = strlen(e.name);
+        if ((int)n >= name_cap) n = (size_t)name_cap - 1;
+        memcpy(name, e.name, n); name[n] = 0;
+    }
+    if (victim && victim_cap > 0) {
+        size_t n = strlen(e.victim_name);
+        if ((int)n >= victim_cap) n = (size_t)victim_cap - 1;
+        memcpy(victim, e.victim_name, n); victim[n] = 0;
+    }
+    if (line && line_cap > 0) {
+        size_t n = strlen(buf);
+        if ((int)n >= line_cap) n = (size_t)line_cap - 1;
+        memcpy(line, buf, n); line[n] = 0;
+    }
+    return 1;
 }

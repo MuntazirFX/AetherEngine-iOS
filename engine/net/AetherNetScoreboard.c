@@ -4,6 +4,7 @@
 #include "AetherNetScoreboard.h"
 #include "AetherNetBuffer.h"
 #include <string.h>
+#include <stdio.h>
 
 void aether_scoreboard_init(aether_scoreboard_t *sb) {
     if (!sb) return;
@@ -365,4 +366,33 @@ void aether_scoreboard_apply_assist(aether_scoreboard_t *sb,
     }
     ev->head = (ev->head + 1) % AETHER_SCOREBOARD_MAX_EVENTS;
     ev->count++;
+}
+
+u32 aether_scoreboard_format_assist_line(const aether_scoreboard_event_t *e,
+                                         char *out, u32 cap) {
+    if (!e || !out || cap < 8) return 0;
+    const char *a = e->name[0] ? e->name : "Player";
+    const char *v = e->victim_name[0] ? e->victim_name : "Enemy";
+    int n = snprintf(out, cap, "%s assisted vs %s", a, v);
+    if (n < 0) return 0;
+    if ((u32)n >= cap) n = (int)cap - 1;
+    return (u32)n;
+}
+
+int aether_scoreboard_events_get_ex(const aether_scoreboard_events_t *ev, u32 index,
+                                    aether_scoreboard_event_t *out,
+                                    char *line, u32 line_cap) {
+    if (!aether_scoreboard_events_get(ev, index, out)) return 0;
+    if (line && line_cap > 0) {
+        if (out->kind == (u8)AETHER_SB_EVENT_ASSIST)
+            aether_scoreboard_format_assist_line(out, line, line_cap);
+        else if (out->kind == (u8)AETHER_SB_EVENT_KILL) {
+            const char *k = out->name[0] ? out->name : "Player";
+            const char *v = out->victim_name[0] ? out->victim_name : "Enemy";
+            snprintf(line, line_cap, "%s killed %s", k, v);
+        } else {
+            snprintf(line, line_cap, "%s", out->name);
+        }
+    }
+    return 1;
 }

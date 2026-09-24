@@ -769,4 +769,43 @@ int  engine_spectator_set_target_name(const char *name);
 int  engine_spectator_get_target_hp(void);
 int  engine_spectator_get_target_name(char *out, unsigned cap);
 
+/* ---------- Batch: gpu-hiz-mip / weapon-auth / portal-reflect / studio-tex / assist polish ---------- */
+int  engine_mdl_hiz_pyramid_reset(unsigned mip0_w, unsigned mip0_h);
+int  engine_mdl_hiz_pyramid_write(unsigned x, unsigned y, float depth);
+int  engine_mdl_hiz_pyramid_fill_mip0(const float *depths, unsigned count);
+unsigned engine_mdl_hiz_build_pyramid(void);
+int  engine_mdl_hiz_vis_query(float x0, float y0, float x1, float y1, float obj_depth,
+                              int *out_visible, int *out_occluded, float *out_hiz, int *out_mip);
+int  engine_mdl_hiz_pyramid_set_gpu_hooks(int armed);
+int  engine_mdl_hiz_pyramid_gpu_hooks(void);
+int  engine_mdl_lod_hiz_pyramid_gate(float distance, float aabb_radius,
+                                     float min_pixels, float sx, float sy, float depth_ndc,
+                                     int *out_lod, int *out_issue, int *out_occluded,
+                                     float *out_screen_px);
+
+int  engine_game_weapon_hit_auth(unsigned weapon_id, float now,
+                                 float ox, float oy, float oz,
+                                 float dx, float dy, float dz,
+                                 unsigned killer_id, unsigned victim_id,
+                                 int force_hit,
+                                 int *out_fired, int *out_queued, int *out_died,
+                                 int *out_registered, float *out_damage);
+
+int  engine_water_reflect_portal_set(float in_x, float in_y, float in_z,
+                                     float out_x, float out_y, float out_z,
+                                     int eye_crossed);
+int  engine_water_reflect_compute_portal(float eye_x, float eye_y, float eye_z);
+int  engine_water_reflect_rt_build_mirror_mvp_portal(float *out_mvp16);
+
+int  engine_water_reflect_ent_set_studio_tex(unsigned index, unsigned skin_group, unsigned skin_tex);
+int  engine_water_reflect_ent_sample_studio_tex(unsigned index, float u, float v, float *out_rgba4);
+int  engine_water_reflect_studio_tex_sample(unsigned skin_group, unsigned skin_tex,
+                                            float u, float v, float *out_rgba4);
+
+int  engine_scoreboard_format_assist_line(int event_index, char *out, unsigned cap);
+int  engine_scoreboard_get_event_ex(int index, int *out_kind, unsigned *out_id,
+                                    char *name, int name_cap,
+                                    char *victim, int victim_cap,
+                                    char *line, int line_cap, float *out_time);
+
 #endif /* ENGINE_BRIDGE_H */

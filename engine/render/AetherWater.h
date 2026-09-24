@@ -174,6 +174,13 @@ typedef struct aether_water_reflect_ent {
     f32 tint[4];         /* RGBA */
     f32 attach_origin[3];
     u8  has_attach;
+    /* Fuller studio texture sample (atlas UV + procedural sample) */
+    u8  tex_sample_mode;
+    f32 tex_uv_scale[2];
+    f32 tex_uv_offset[2];
+    f32 tex_atlas[4]; /* u0,v0,u1,v1 */
+    f32 tex_sample_rgba[4];
+    u8  has_studio_tex;
 } aether_water_reflect_ent_t;
 
 typedef struct aether_water_reflect_ent_list {
@@ -246,5 +253,51 @@ int  aether_water_reflect_ent_get_studio(const aether_water_reflect_ent_list_t *
 /* Tint helper: skin_group/tex → soft color (clean-room procedural). */
 void aether_water_reflect_skin_tint(u8 skin_group, u8 skin_tex, f32 out_rgba[4]);
 
+/* ---------- Portal/teleport-aware water reflect camera ---------- */
+typedef struct aether_water_reflect_portal {
+    bool active;
+    bool eye_crossed;      /* eye teleported through portal this frame */
+    f32  in_origin[3];     /* portal entry center */
+    f32  out_origin[3];    /* portal exit center */
+    f32  out_delta[3];     /* out - in (teleport translation) */
+    f32  eye_warped[3];    /* eye after portal warp (before mirror) */
+} aether_water_reflect_portal_t;
+
+void aether_water_reflect_portal_init(aether_water_reflect_portal_t *p);
+void aether_water_reflect_portal_set(aether_water_reflect_portal_t *p,
+                                     const f32 in_origin[3], const f32 out_origin[3],
+                                     bool eye_crossed);
+/* Warp eye by portal translation when crossed; then planar reflect. */
+void aether_water_reflect_compute_portal(const aether_water_t *w, const f32 eye[3],
+                                         const aether_water_reflect_portal_t *portal,
+                                         aether_water_reflect_t *out);
+/* Mirror MVP that applies portal warp to view before mirror. */
+void aether_water_reflect_rt_build_mirror_mvp_portal(
+    const aether_water_reflect_t *reflect,
+    const aether_water_reflect_portal_t *portal,
+    const f32 view[16], const f32 proj[16],
+    f32 out_mvp[16], f32 out_view_m[16]);
+
+/* ---------- Fuller studio texture sample for water RT ---------- */
+typedef struct aether_water_reflect_studio_tex {
+    f32 uv_scale[2];
+    f32 uv_offset[2];
+    f32 atlas_u0, atlas_v0, atlas_u1, atlas_v1;
+    u8  sample_mode;   /* 0=tint, 1=procedural atlas, 2=sampled */
+    f32 sample_rgba[4];
+    bool valid;
+} aether_water_reflect_studio_tex_t;
+
+void aether_water_reflect_studio_tex_init(aether_water_reflect_studio_tex_t *tex,
+                                          u8 skin_group, u8 skin_tex);
+/* Procedural atlas UV + filtered sample (clean-room, no HL assets). */
+void aether_water_reflect_studio_tex_sample(const aether_water_reflect_studio_tex_t *tex,
+                                            f32 u, f32 v, f32 out_rgba[4]);
+/* Bind studio tex onto ent slot; returns 1 if stored. */
+int  aether_water_reflect_ent_set_studio_tex(aether_water_reflect_ent_list_t *list,
+                                             u32 index, u8 skin_group, u8 skin_tex);
+int  aether_water_reflect_ent_get_studio_tex(const aether_water_reflect_ent_list_t *list,
+                                             u32 index,
+                                             aether_water_reflect_studio_tex_t *out);
 
 #endif /* AETHER_WATER_H */

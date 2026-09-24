@@ -95,22 +95,46 @@ struct ClassicScoreboardChatOverlay: View {
         for i in 0..<ec {
             var kind: Int32 = 0; var pid: UInt32 = 0; var tsec: Float = 0
             var name = [CChar](repeating: 0, count: 64)
-            if engine_scoreboard_get_event(Int32(i), &kind, &pid, &name, Int32(name.count), &tsec) != 0 {
+            var victim = [CChar](repeating: 0, count: 64)
+            var line = [CChar](repeating: 0, count: 128)
+            // Assist feed polish: "Name assisted vs Victim" via get_event_ex
+            if engine_scoreboard_get_event_ex(Int32(i), &kind, &pid, &name, Int32(name.count),
+                                              &victim, Int32(victim.count),
+                                              &line, Int32(line.count), &tsec) != 0 {
+                let colorKind: Int
+                let text: String
+                if kind == 3 {
+                    colorKind = 3
+                    let formatted = String(cString: line)
+                    text = formatted.isEmpty
+                        ? "* \(String(cString: name)) assisted vs \(String(cString: victim))"
+                        : "* \(formatted)"
+                } else if kind == 2 {
+                    colorKind = 2
+                    let formatted = String(cString: line)
+                    text = formatted.isEmpty
+                        ? "* \(String(cString: name)) killed \(String(cString: victim))"
+                        : "* \(formatted)"
+                } else if kind == 0 {
+                    colorKind = 0; text = "* \(String(cString: name)) joined"
+                } else {
+                    colorKind = 1; text = "* \(String(cString: name)) left"
+                }
+                newEvents.append(JoinLeaveRow(id: i, kind: colorKind, text: text))
+            } else if engine_scoreboard_get_event(Int32(i), &kind, &pid, &name, Int32(name.count), &tsec) != 0 {
                 let label: String
                 let colorKind: Int
                 if kind == 2 {
-                    label = "killed" // kill feed stub
-                    colorKind = 2
+                    label = "killed"; colorKind = 2
                 } else if kind == 3 {
-                    label = "assisted" // assist feed HUD line
-                    colorKind = 3
+                    label = "assisted"; colorKind = 3
                 } else if kind == 0 {
                     label = "joined"; colorKind = 0
                 } else {
                     label = "left"; colorKind = 1
                 }
                 newEvents.append(JoinLeaveRow(id: i, kind: colorKind,
-                    text: kind == 2 ? "* \(String(cString: name)) \(label)" : "* \(String(cString: name)) \(label)"))
+                    text: "* \(String(cString: name)) \(label)"))
             }
         }
         events = newEvents

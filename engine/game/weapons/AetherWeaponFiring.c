@@ -2,6 +2,7 @@
  * AetherEngine-iOS · Clean-room.
  */
 #include "AetherWeaponFiring.h"
+#include "../../player/AetherPlayerDamage.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -78,4 +79,59 @@ void aether_weapon_apply_recoil(aether_vec3_t *view_angles,
     /* Kick pitch up + slight yaw jitter */
     view_angles->x -= recoil_strength;      /* pitch up */
     view_angles->y += rng_range(-recoil_strength * 0.5f, recoil_strength * 0.5f);
+}
+
+u32 aether_weapon_fire_combat_auth(aether_weapon_state_t *ws,
+                                   aether_player_inventory_t *inv,
+                                   f32 now,
+                                   aether_vec3_t origin,
+                                   aether_vec3_t view_dir,
+                                   u32 killer_id, u32 victim_id,
+                                   bool force_hit,
+                                   aether_weapon_auth_queue_fn queue_fn,
+                                   void *queue_user,
+                                   aether_weapon_combat_hit_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!ws || !ws->def) return 0;
+    if (!aether_weapon_fire(ws, inv, now)) {
+        if (out) out->fired = false;
+        return 0;
+    }
+    aether_hitscan_result_t results[16];
+    u32 n = aether_weapon_fire_hitscan(ws->def, origin, view_dir, results, 16);
+    f32 total = 0.f;
+    bool any_hit = force_hit;
+    for (u32 i = 0; i < n; ++i) {
+        if (force_hit) {
+            results[i].hit = true;
+            results[i].distance = ws->def->range * 0.25f;
+            results[i].hit_point = aether_vec3_add(origin,
+                aether_vec3_scale(aether_vec3_normalize(view_dir), results[i].distance));
+        }
+        if (results[i].hit) {
+            any_hit = true;
+            total += results[i].damage;
+        }
+    }
+    if (force_hit && total <= 0.f && n > 0) total = results[0].damage;
+    if (force_hit && total <= 0.f) total = (f32)ws->def->damage;
+    u32 dmg_type = (u32)AETHER_DMG_BULLET;
+    if (ws->def->flags & AETHER_WFLAG_EXPLOSIVE) dmg_type = (u32)AETHER_DMG_BLAST;
+    bool queued = false;
+    if (any_hit && total > 0.f && queue_fn) {
+        queue_fn(queue_user, killer_id, victim_id, total, dmg_type);
+        queued = true;
+    }
+    if (out) {
+        out->fired = true;
+        out->hit = any_hit;
+        out->queued = queued;
+        out->pellets = n;
+        out->killer_id = killer_id;
+        out->victim_id = victim_id;
+        out->damage = total;
+        out->dmg_type = dmg_type;
+        if (n > 0) out->primary = results[0];
+    }
+    return queued ? 1 : 0;
 }
