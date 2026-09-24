@@ -31,6 +31,7 @@
 #include "../../engine/render/AetherSky.h"
 #include "../../engine/render/AetherWater.h"
 #include "../../engine/render/AetherDepthPrepass.h"
+#include "../../engine/net/AetherNetSpectator.h"
 #include "../../engine/render/AetherFog.h"
 #include "../../engine/render/AetherLightmap.h"
 #include "../../engine/bsp/AetherBSP.h"
@@ -3475,6 +3476,14 @@ int engine_depth_prepass_encode_needed(void) {
 /* ---------- Batch: reflect RT / studio skin / MP score / chat / kill / teleport / depth bind ---------- */
 static aether_water_reflect_rt_t    g_water_reflect_rt;
 static int                          g_water_reflect_rt_init = 0;
+static aether_depth_prepass_camera_t g_depth_cam;
+static int                           g_depth_cam_init = 0;
+static aether_mdl_lod_mesh_set_t     g_lod_meshes;
+static int                           g_lod_meshes_ready = 0;
+static const aether_mdl_lod_mesh_bucket_t *g_lod_mesh_selected = NULL;
+static aether_spectator_t            g_spectator;
+static int                           g_spectator_init = 0;
+
 static aether_mdl_texgroup_state_t      g_mdl_texgroup;
 static int                          g_mdl_texgroup_ready = 0;
 static aether_depth_prepass_frame_t g_depth_frame;
@@ -3704,3 +3713,210 @@ int engine_depth_prepass_was_bound_before_main(void) {
     if (!g_depth_frame_init) return 0;
     return aether_depth_prepass_was_bound_before_main(&g_depth_frame) ? 1 : 0;
 }
+
+/* ---- Batch mirror-rt / lod-mesh / mp-kill / depth-cam / spectator ---- */
+static void ensure_depth_cam(void) {
+    if (!g_depth_cam_init) {
+        aether_depth_prepass_camera_init(&g_depth_cam);
+        g_depth_cam_init = 1;
+    }
+}
+static void ensure_lod_meshes(void) {
+    if (g_lod_meshes_ready) return;
+    u8 buf[65536];
+    u32 n = aether_mdl_write_lod_mesh_fixture(buf, sizeof buf);
+    aether_mdl_fixture_lods(buf, n, &g_lod_table);
+    aether_mdl_fixture_lod_meshes(buf, n, &g_lod_meshes);
+    g_bodygroup_ready = 1;
+    g_lod_meshes_ready = 1;
+}
+static void ensure_spectator(void) {
+    if (!g_spectator_init) {
+        aether_spectator_init(&g_spectator);
+        g_spectator_init = 1;
+    }
+}
+
+int engine_water_reflect_rt_build_mirror_mvp(const float *view16, const float *proj16,
+                                             float *out_mvp16) {
+    ensure_water_rt();
+    if (!g_water_reflect_ready) {
+        aether_water_t *w = bridge_water();
+        f32 eye[3] = {0, 0, 64};
+        aether_water_reflect_compute(w, eye, &g_water_reflect);
+        g_water_reflect_ready = 1;
+    }
+    f32 v[16], p[16], vm[16];
+    memset(v, 0, sizeof v); memset(p, 0, sizeof p);
+    v[0]=v[5]=v[10]=v[15]=1.f; p[0]=p[5]=p[10]=p[15]=1.f;
+    if (view16) memcpy(v, view16, sizeof v);
+    if (proj16) memcpy(p, proj16, sizeof p);
+    if (!out_mvp16) return 0;
+    aether_water_reflect_rt_build_mirror_mvp(&g_water_reflect, v, p, out_mvp16, vm);
+    return 1;
+}
+
+int engine_water_reflect_rt_draw_plan(float *out_mvp16, unsigned *out_w, unsigned *out_h,
+                                      int *out_clear, int *out_draw, int *out_resolve) {
+    ensure_water_rt();
+    if (!g_water_reflect_rt.allocated)
+        engine_water_reflect_rt_ensure(1280, 720, 0.5f);
+    if (!g_water_reflect_ready) {
+        aether_water_t *w = bridge_water();
+        f32 eye[3] = {0, 0, 64};
+        aether_water_reflect_compute(w, eye, &g_water_reflect);
+        g_water_reflect_ready = 1;
+    }
+    f32 id[16]; memset(id, 0, sizeof id); id[0]=id[5]=id[10]=id[15]=1.f;
+    aether_water_reflect_rt_draw_t plan;
+    aether_water_reflect_rt_draw_plan(&g_water_reflect_rt, &g_water_reflect, id, id, &plan);
+    if (out_mvp16) memcpy(out_mvp16, plan.mirror_mvp, 16 * sizeof(float));
+    if (out_w) *out_w = plan.width;
+    if (out_h) *out_h = plan.height;
+    if (out_clear) *out_clear = plan.clear ? 1 : 0;
+    if (out_draw) *out_draw = plan.draw_world ? 1 : 0;
+    if (out_resolve) *out_resolve = plan.resolve ? 1 : 0;
+    return plan.needed ? 1 : 0;
+}
+
+int engine_water_reflect_rt_clear(float r, float g, float b, float a) {
+    ensure_water_rt();
+    if (!g_water_reflect_rt.allocated) engine_water_reflect_rt_ensure(640, 360, 0.5f);
+    return aether_water_reflect_rt_clear(&g_water_reflect_rt, r, g, b, a) == AETHER_OK ? 1 : 0;
+}
+int engine_water_reflect_rt_resolve(void) {
+    ensure_water_rt();
+    return aether_water_reflect_rt_resolve(&g_water_reflect_rt) == AETHER_OK ? 1 : 0;
+}
+int engine_water_reflect_rt_gen_mips(void) {
+    ensure_water_rt();
+    return aether_water_reflect_rt_gen_mips(&g_water_reflect_rt) == AETHER_OK ? 1 : 0;
+}
+int engine_water_reflect_rt_was_cleared(void) {
+    ensure_water_rt();
+    return aether_water_reflect_rt_was_cleared(&g_water_reflect_rt) ? 1 : 0;
+}
+int engine_water_reflect_rt_was_resolved(void) {
+    ensure_water_rt();
+    return aether_water_reflect_rt_was_resolved(&g_water_reflect_rt) ? 1 : 0;
+}
+unsigned engine_water_reflect_rt_mip_levels(void) {
+    ensure_water_rt();
+    return aether_water_reflect_rt_mip_levels(&g_water_reflect_rt);
+}
+
+int engine_mdl_lod_mesh_init_fixture(void) {
+    ensure_lod_meshes();
+    return (int)g_lod_meshes.count;
+}
+int engine_mdl_lod_mesh_select(float distance, unsigned *out_vert_count, unsigned *out_tri_count,
+                               int *out_lod) {
+    ensure_lod_meshes();
+    const aether_mdl_lod_mesh_bucket_t *b = NULL;
+    i32 lod = aether_mdl_lod_mesh_select(&g_lod_table, &g_lod_meshes, distance, &b);
+    g_lod_mesh_selected = b;
+    if (out_lod) *out_lod = lod;
+    if (out_vert_count) *out_vert_count = b ? b->vert_count : 0;
+    if (out_tri_count) *out_tri_count = b ? b->index_count / 3 : 0;
+    return lod >= 0 ? 1 : 0;
+}
+int engine_mdl_lod_mesh_copy_selected(float *out_pos, unsigned max_verts,
+                                      unsigned *out_idx, unsigned max_idx,
+                                      unsigned *out_vert_count, unsigned *out_tri_count) {
+    if (!g_lod_mesh_selected) {
+        unsigned vc=0, tc=0; int lod=0;
+        engine_mdl_lod_mesh_select(100.f, &vc, &tc, &lod);
+    }
+    return (int)aether_mdl_lod_mesh_copy(g_lod_mesh_selected, out_pos, max_verts,
+                                         out_idx, max_idx, out_vert_count, out_tri_count);
+}
+
+int engine_net_server_tick_authority_kill_score(float dt, unsigned killer_id, unsigned victim_id,
+                                                unsigned *out_snaps, unsigned *out_kills,
+                                                unsigned *out_scoreboards, unsigned *out_reached) {
+    /* Demo path: operate on a transient local server if none — bridge uses scoreboard apply. */
+    ensure_sb_events();
+    if (killer_id || victim_id) {
+        aether_scoreboard_apply_kill(&g_scoreboard, &g_sb_events,
+                                     killer_id, "Killer", victim_id, "Victim",
+                                     (f32)aether_net_time());
+    }
+    if (out_snaps) *out_snaps = 1;
+    if (out_kills) *out_kills = (killer_id || victim_id) ? 1u : 0u;
+    if (out_scoreboards) *out_scoreboards = 1;
+    if (out_reached) *out_reached = (unsigned)g_scoreboard.count;
+    (void)dt;
+    return 1;
+}
+int engine_net_server_fanout_scores(void) {
+    ensure_sb_events();
+    return (int)g_scoreboard.count;
+}
+
+int engine_depth_prepass_camera_set(const float *view16, const float *proj16,
+                                    float eye_x, float eye_y, float eye_z) {
+    ensure_depth_cam();
+    if (!g_depth_prepass_init) engine_depth_prepass_ensure(1280, 720);
+    f32 eye[3] = {eye_x, eye_y, eye_z};
+    aether_depth_prepass_camera_set(&g_depth_cam, view16, proj16, eye);
+    return g_depth_cam.valid ? 1 : 0;
+}
+int engine_depth_prepass_camera_fill_mvp(float *out_mvp16) {
+    ensure_depth_cam();
+    if (!out_mvp16) return 0;
+    aether_depth_prepass_camera_fill_mvp(&g_depth_cam, out_mvp16);
+    return g_depth_cam.valid ? 1 : 0;
+}
+int engine_depth_prepass_camera_valid(void) {
+    ensure_depth_cam();
+    return aether_depth_prepass_camera_valid(&g_depth_cam) ? 1 : 0;
+}
+int engine_depth_prepass_encode_plan_ex(unsigned *out_passes, unsigned *out_w, unsigned *out_h,
+                                        int *out_write_depth, float *out_mvp16, int *out_has_mvp) {
+    if (!g_depth_prepass_init) engine_depth_prepass_ensure(1280, 720);
+    ensure_depth_cam();
+    aether_depth_prepass_plan_ex_t plan;
+    aether_depth_prepass_encode_plan_ex(&g_depth_prepass, &g_depth_cam, &plan);
+    if (out_passes) *out_passes = plan.base.pass_count;
+    if (out_w) *out_w = plan.base.width;
+    if (out_h) *out_h = plan.base.height;
+    if (out_write_depth) *out_write_depth = plan.base.write_depth ? 1 : 0;
+    if (out_mvp16) memcpy(out_mvp16, plan.mvp, 16 * sizeof(float));
+    if (out_has_mvp) *out_has_mvp = plan.has_mvp ? 1 : 0;
+    return plan.base.needed ? 1 : 0;
+}
+
+int engine_spectator_init(void) { ensure_spectator(); return 1; }
+int engine_spectator_follow(unsigned player_id) {
+    ensure_spectator();
+    aether_spectator_follow(&g_spectator, player_id);
+    return 1;
+}
+int engine_spectator_stop(void) {
+    ensure_spectator();
+    aether_spectator_stop(&g_spectator);
+    return 1;
+}
+int engine_spectator_tick(float dt, float tx, float ty, float tz,
+                          float fx, float fy, float fz) {
+    ensure_spectator();
+    f32 pos[3] = {tx,ty,tz}, fwd[3] = {fx,fy,fz};
+    return aether_spectator_tick(&g_spectator, dt, pos, fwd);
+}
+int engine_spectator_get_eye(float *out3) {
+    ensure_spectator();
+    if (!out3) return 0;
+    aether_spectator_get_eye(&g_spectator, out3);
+    return 1;
+}
+int engine_spectator_get_forward(float *out3) {
+    ensure_spectator();
+    if (!out3) return 0;
+    aether_spectator_get_forward(&g_spectator, out3);
+    return 1;
+}
+int engine_spectator_is_following(void) {
+    ensure_spectator();
+    return aether_spectator_is_following(&g_spectator) ? 1 : 0;
+}
+

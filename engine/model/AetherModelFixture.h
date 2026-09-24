@@ -250,4 +250,43 @@ u32  aether_mdl_texgroup_get(const aether_mdl_texgroup_state_t *st, u32 group);
 u32  aether_mdl_texgroup_cycle(aether_mdl_texgroup_state_t *st, u32 group, int dir);
 i32  aether_mdl_texgroup_select(aether_mdl_texgroup_state_t *st, u32 group);
 
+
+/* ---------- Real multi-mesh LOD buckets (separate meshes, not just tri fans) ---------- */
+#define AETHER_MDL_LOD_BUCKET_MAGIC    ((i32)0xAE7E10D1)
+#define AETHER_MDL_LOD_BUCKET_MAX_VERTS 48
+#define AETHER_MDL_LOD_BUCKET_MAX_IDX   96
+
+typedef struct aether_mdl_lod_mesh_bucket {
+    i32  lod;            /* which LOD level this bucket belongs to */
+    u32  vert_count;
+    u32  index_count;    /* always multiple of 3 */
+    f32  positions[AETHER_MDL_LOD_BUCKET_MAX_VERTS * 3];
+    u32  indices[AETHER_MDL_LOD_BUCKET_MAX_IDX];
+} aether_mdl_lod_mesh_bucket_t;
+
+typedef struct aether_mdl_lod_mesh_set {
+    u32 count; /* one bucket per LOD (up to AETHER_MDL_MAX_LODS) */
+    aether_mdl_lod_mesh_bucket_t buckets[AETHER_MDL_MAX_LODS];
+} aether_mdl_lod_mesh_set_t;
+
+/* Write LOD fixture that also embeds distinct mesh buckets per LOD. */
+u32 aether_mdl_write_lod_mesh_fixture(u8 *out, u32 cap);
+u32 aether_mdl_write_lod_mesh_fixture_file(const char *filepath);
+
+/* Parse mesh buckets from fixture. Returns bucket count. */
+u32 aether_mdl_fixture_lod_meshes(const u8 *data, u32 size,
+                                  aether_mdl_lod_mesh_set_t *out);
+
+/* Select bucket by camera distance (uses LOD table distances). Returns lod or -1. */
+i32 aether_mdl_lod_mesh_select(const aether_mdl_lod_table_t *table,
+                               const aether_mdl_lod_mesh_set_t *meshes,
+                               f32 distance,
+                               const aether_mdl_lod_mesh_bucket_t **out_bucket);
+
+/* Copy selected bucket verts/indices into caller buffers. Returns tri count. */
+u32 aether_mdl_lod_mesh_copy(const aether_mdl_lod_mesh_bucket_t *bucket,
+                             f32 *out_pos, u32 max_verts,
+                             u32 *out_idx, u32 max_idx,
+                             u32 *out_vert_count, u32 *out_tri_count);
+
 #endif /* AETHER_MODEL_FIXTURE_H */

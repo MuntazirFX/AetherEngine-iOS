@@ -1231,3 +1231,195 @@ i32 aether_mdl_texgroup_select(aether_mdl_texgroup_state_t *st, u32 group) {
     st->active_group = (i32)group;
     return st->active_group;
 }
+
+#ifndef AETHER_LOD_BUCKET_MAGIC_C
+#define AETHER_LOD_BUCKET_MAGIC_C ((i32)0xAE7E10D1)
+#endif
+
+/* Build a distinct procedural mesh per LOD: LOD0 = box-ish (12 tris),
+ * LOD1 = octahedron-ish (8), LOD2 = tetra (4). Separate vertex pools. */
+static void fill_bucket_box(aether_mdl_lod_mesh_bucket_t *b) {
+    memset(b, 0, sizeof(*b));
+    b->lod = 0;
+    /* 8 corners of a unit box scaled */
+    const f32 s = 10.f;
+    f32 c[8][3] = {
+        {-s,-s,-s},{ s,-s,-s},{ s, s,-s},{-s, s,-s},
+        {-s,-s, s},{ s,-s, s},{ s, s, s},{-s, s, s}
+    };
+    for (int i = 0; i < 8; ++i) {
+        b->positions[i*3+0]=c[i][0]; b->positions[i*3+1]=c[i][1]; b->positions[i*3+2]=c[i][2];
+    }
+    b->vert_count = 8;
+    static const u32 faces[12][3] = {
+        {0,1,2},{0,2,3}, {4,6,5},{4,7,6},
+        {0,4,5},{0,5,1}, {2,6,7},{2,7,3},
+        {0,3,7},{0,7,4}, {1,5,6},{1,6,2}
+    };
+    for (int t = 0; t < 12; ++t) {
+        b->indices[t*3+0]=faces[t][0]; b->indices[t*3+1]=faces[t][1]; b->indices[t*3+2]=faces[t][2];
+    }
+    b->index_count = 36;
+}
+
+static void fill_bucket_octa(aether_mdl_lod_mesh_bucket_t *b) {
+    memset(b, 0, sizeof(*b));
+    b->lod = 1;
+    const f32 s = 9.f;
+    f32 v[6][3] = {{0,0,s},{0,0,-s},{s,0,0},{-s,0,0},{0,s,0},{0,-s,0}};
+    for (int i = 0; i < 6; ++i) {
+        b->positions[i*3+0]=v[i][0]; b->positions[i*3+1]=v[i][1]; b->positions[i*3+2]=v[i][2];
+    }
+    b->vert_count = 6;
+    static const u32 faces[8][3] = {
+        {0,2,4},{0,4,3},{0,3,5},{0,5,2},
+        {1,4,2},{1,3,4},{1,5,3},{1,2,5}
+    };
+    for (int t = 0; t < 8; ++t) {
+        b->indices[t*3+0]=faces[t][0]; b->indices[t*3+1]=faces[t][1]; b->indices[t*3+2]=faces[t][2];
+    }
+    b->index_count = 24;
+}
+
+static void fill_bucket_tetra(aether_mdl_lod_mesh_bucket_t *b) {
+    memset(b, 0, sizeof(*b));
+    b->lod = 2;
+    const f32 s = 8.f;
+    f32 v[4][3] = {{ s, s, s},{-s,-s, s},{-s, s,-s},{ s,-s,-s}};
+    for (int i = 0; i < 4; ++i) {
+        b->positions[i*3+0]=v[i][0]; b->positions[i*3+1]=v[i][1]; b->positions[i*3+2]=v[i][2];
+    }
+    b->vert_count = 4;
+    static const u32 faces[4][3] = {{0,1,2},{0,3,1},{0,2,3},{1,3,2}};
+    for (int t = 0; t < 4; ++t) {
+        b->indices[t*3+0]=faces[t][0]; b->indices[t*3+1]=faces[t][1]; b->indices[t*3+2]=faces[t][2];
+    }
+    b->index_count = 12;
+}
+
+u32 aether_mdl_write_lod_mesh_fixture(u8 *out, u32 cap) {
+    u32 n = aether_mdl_write_skin_lod_fixture(out, cap);
+    if (!n || !out) return 0;
+    aether_mdl_lod_mesh_set_t set;
+    memset(&set, 0, sizeof set);
+    set.count = 3;
+    fill_bucket_box(&set.buckets[0]);
+    fill_bucket_octa(&set.buckets[1]);
+    fill_bucket_tetra(&set.buckets[2]);
+    /* Serialize: magic, count, then per-bucket: lod, vc, ic, pos[vc*3], idx[ic] */
+    u32 need = 16;
+    for (u32 i = 0; i < set.count; ++i) {
+        need += 12 + set.buckets[i].vert_count * 12 + set.buckets[i].index_count * 4;
+    }
+    if (cap < n + need) return 0;
+    u8 *p = out + n;
+    wr_i32(p + 0, AETHER_LOD_BUCKET_MAGIC_C);
+    wr_i32(p + 4, (i32)set.count);
+    wr_i32(p + 8, 0);
+    wr_i32(p + 12, 0);
+    u32 off = 16;
+    for (u32 i = 0; i < set.count; ++i) {
+        const aether_mdl_lod_mesh_bucket_t *b = &set.buckets[i];
+        wr_i32(p + off, b->lod); off += 4;
+        wr_i32(p + off, (i32)b->vert_count); off += 4;
+        wr_i32(p + off, (i32)b->index_count); off += 4;
+        for (u32 v = 0; v < b->vert_count * 3; ++v) {
+            wr_f32(p + off, b->positions[v]); off += 4;
+        }
+        for (u32 k = 0; k < b->index_count; ++k) {
+            wr_i32(p + off, (i32)b->indices[k]); off += 4;
+        }
+    }
+    return n + off;
+}
+
+u32 aether_mdl_write_lod_mesh_fixture_file(const char *filepath) {
+    if (!filepath) return 0;
+    u8 buf[65536];
+    u32 n = aether_mdl_write_lod_mesh_fixture(buf, sizeof buf);
+    if (!n) return 0;
+    FILE *f = fopen(filepath, "wb");
+    if (!f) return 0;
+    size_t w = fwrite(buf, 1, n, f);
+    fclose(f);
+    return (u32)w;
+}
+
+u32 aether_mdl_fixture_lod_meshes(const u8 *data, u32 size,
+                                  aether_mdl_lod_mesh_set_t *out) {
+    if (!out) return 0;
+    memset(out, 0, sizeof(*out));
+    if (!data || size < 16) {
+        /* Defaults without fixture bytes */
+        out->count = 3;
+        fill_bucket_box(&out->buckets[0]);
+        fill_bucket_octa(&out->buckets[1]);
+        fill_bucket_tetra(&out->buckets[2]);
+        return out->count;
+    }
+    for (u32 off = 0; off + 16 < size; ++off) {
+        if (rd_i32_le(data + off) != AETHER_LOD_BUCKET_MAGIC_C) continue;
+        i32 count = rd_i32_le(data + off + 4);
+        if (count <= 0 || count > (i32)AETHER_MDL_MAX_LODS) return 0;
+        u32 p = off + 16;
+        out->count = (u32)count;
+        for (u32 i = 0; i < out->count; ++i) {
+            if (p + 12 > size) return 0;
+            aether_mdl_lod_mesh_bucket_t *b = &out->buckets[i];
+            memset(b, 0, sizeof(*b));
+            b->lod = rd_i32_le(data + p); p += 4;
+            b->vert_count = (u32)rd_i32_le(data + p); p += 4;
+            b->index_count = (u32)rd_i32_le(data + p); p += 4;
+            if (b->vert_count > AETHER_MDL_LOD_BUCKET_MAX_VERTS) return 0;
+            if (b->index_count > AETHER_MDL_LOD_BUCKET_MAX_IDX) return 0;
+            if (p + b->vert_count * 12 + b->index_count * 4 > size) return 0;
+            for (u32 v = 0; v < b->vert_count * 3; ++v) {
+                b->positions[v] = rd_f32_le(data + p); p += 4;
+            }
+            for (u32 k = 0; k < b->index_count; ++k) {
+                b->indices[k] = (u32)rd_i32_le(data + p); p += 4;
+            }
+        }
+        return out->count;
+    }
+    return aether_mdl_fixture_lod_meshes(NULL, 0, out);
+}
+
+i32 aether_mdl_lod_mesh_select(const aether_mdl_lod_table_t *table,
+                               const aether_mdl_lod_mesh_set_t *meshes,
+                               f32 distance,
+                               const aether_mdl_lod_mesh_bucket_t **out_bucket) {
+    if (out_bucket) *out_bucket = NULL;
+    if (!meshes || meshes->count == 0) return -1;
+    i32 lod = aether_mdl_lod_select(table, distance);
+    if (lod < 0) lod = (i32)meshes->count - 1;
+    if (lod >= (i32)meshes->count) lod = (i32)meshes->count - 1;
+    for (u32 i = 0; i < meshes->count; ++i) {
+        if (meshes->buckets[i].lod == lod) {
+            if (out_bucket) *out_bucket = &meshes->buckets[i];
+            return lod;
+        }
+    }
+    /* Fallback: index == lod */
+    if ((u32)lod < meshes->count) {
+        if (out_bucket) *out_bucket = &meshes->buckets[lod];
+        return lod;
+    }
+    return -1;
+}
+
+u32 aether_mdl_lod_mesh_copy(const aether_mdl_lod_mesh_bucket_t *bucket,
+                             f32 *out_pos, u32 max_verts,
+                             u32 *out_idx, u32 max_idx,
+                             u32 *out_vert_count, u32 *out_tri_count) {
+    if (out_vert_count) *out_vert_count = 0;
+    if (out_tri_count) *out_tri_count = 0;
+    if (!bucket || !out_pos || !out_idx) return 0;
+    if (bucket->vert_count > max_verts || bucket->index_count > max_idx) return 0;
+    memcpy(out_pos, bucket->positions, bucket->vert_count * 3 * sizeof(f32));
+    memcpy(out_idx, bucket->indices, bucket->index_count * sizeof(u32));
+    u32 tris = bucket->index_count / 3;
+    if (out_vert_count) *out_vert_count = bucket->vert_count;
+    if (out_tri_count) *out_tri_count = tris;
+    return tris;
+}

@@ -359,10 +359,60 @@ prepass bound before main pass — still clean-room:
 - IPA still requires macOS + Xcode via workflow_dispatch
 
 ### Progress toward playable unsigned IPA demo
-Rough overall estimate after this batch: **~68–70%** toward a playable unsigned IPA demo
+Rough overall estimate after reflect-rt batch: **~68–70%** (superseded by mirror-rt batch below) toward a playable unsigned IPA demo
 (synthetic BSP walk/swim/combat stubs + Metal world/particles/post + net/predict foundations).
 IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
 Remaining: real game-data FS paths, fuller studio/GPU reflection encode, signed packaging on macOS/Xcode,
+and tighter netplay/HUD polish.
+
+
+
+
+## Mirror-RT / multi-mesh LOD / MP kill-score / IPA docs (`continue/batch-mirror-rt-lod-mp-ipa-docs`)
+
+One PR advances mirrored-camera water RT encode, real multi-mesh LOD buckets, live MP authority
+kill/score fanout, depth-prepass camera MVP, IPA dry-run docs, kill/score consistency smoke,
+water RT clear/resolve/mips, and a spectator follow stub — still clean-room (no HL assets):
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Mirrored-camera → water RT | **done** | `aether_water_reflect_rt_build_mirror_mvp` / `draw_plan`; Metal `encodeWaterReflectPass` clear+draw+resolve |
+| 2 | Real multi-mesh LOD | **done** | Per-LOD mesh buckets (box/octa/tetra) in fixture — not just tri-budget fans |
+| 3 | Live MP authority kill/score fanout | **done** | `tick_authority_kill_score` + `fanout_scores` to clients |
+| 4 | Depth prepass real camera MVP | **done** | `aether_depth_prepass_camera_set` / `encode_plan_ex`; Metal threads view/proj |
+| 5 | IPA dry-run docs | **done** | macOS `build_ios.sh` / `package_ipa.sh` + `workflow_dispatch` checklist (below) |
+| 6 | Kill feed + score consistency smoke | **done** | register_kill → UDP kill pkt → HUD scores match authority |
+| 7 | Water RT clear/resolve/mips | **done** | `clear` / `resolve` / `gen_mips` hooks + Metal mipmapped RT |
+| 8 | Spectator follow stub | **done** | `aether_spectator_*` follow eye behind target |
+| 9 | Host smokes + verify | **done** | `smoke_batch_mirror_rt_lod_mp_ipa_docs` + verify greps |
+| 10 | README + honest % | **done** | This table; cap ~72% while IPA unbuilt on this host |
+
+### IPA dry-run (macOS + Xcode) — workflow_dispatch checklist
+
+This Linux/CI host cannot produce an IPA. On a macOS runner / Mac with Xcode:
+
+1. **Prereqs:** Xcode 15+, `cmake`, `xcodegen` (`brew install cmake xcodegen`), iPhoneOS SDK.
+2. **Host verify first:** `bash build/scripts/verify_host.sh` (must be green).
+3. **Build unsigned app:** `bash build/scripts/build_ios.sh` → `build/out/DerivedData/.../AetherEngine.app`.
+4. **Package IPA:** `bash build/scripts/package_ipa.sh` → `build/out/AetherEngine.ipa`.
+5. **GitHub Actions:** Actions → **Build AetherEngine IPA** → **Run workflow** (`workflow_dispatch`).
+   - Inputs: `version` (e.g. `v0.1.0`), `publish_release` (bool).
+   - Job `build_ipa` runs only on dispatch (PR/push only run `verify_host` on macos-14).
+6. **Sideload:** AltStore / Sideloadly / TrollStore / `ideviceinstaller` with the unsigned IPA.
+7. **Do not** treat host-smoke green as a packaged demo — IPA remains unbuilt until macOS/Xcode runs the scripts above.
+
+### Known gaps after mirror-rt / lod-mp / ipa-docs batch
+- Mirrored RT draws the BSP mesh with mirrored MVP (not a full second scene graph / entities pass)
+- LOD mesh buckets are clean-room procedural (not GoldSrc multi-res studio LODs from real MDLs)
+- Authority kill/score fanout is protocol/HUD-complete; gameplay damage→kill wiring still stubby
+- Spectator is a follow-cam stub (no free-look / next-player cycle UI yet)
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+### Progress toward playable unsigned IPA demo
+Rough overall estimate after this batch: **~70–72%** toward a playable unsigned IPA demo
+(synthetic BSP walk/swim/combat stubs + Metal world/particles/post + net/predict + reflection RT encode).
+IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
+Remaining: real game-data FS paths, fuller studio/GPU entity reflection, signed packaging on macOS/Xcode,
 and tighter netplay/HUD polish.
 
 

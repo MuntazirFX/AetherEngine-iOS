@@ -69,4 +69,33 @@ bool aether_depth_prepass_was_bound_before_main(const aether_depth_prepass_frame
 #ifdef __cplusplus
 }
 #endif
+
+/* ---------- Camera matrices for depth prepass (not identity stub) ---------- */
+typedef struct aether_depth_prepass_camera {
+    f32 view[16];
+    f32 proj[16];
+    f32 mvp[16];       /* proj * view */
+    f32 eye[3];
+    bool valid;
+} aether_depth_prepass_camera_t;
+
+void aether_depth_prepass_camera_init(aether_depth_prepass_camera_t *c);
+void aether_depth_prepass_camera_set(aether_depth_prepass_camera_t *c,
+                                     const f32 view[16], const f32 proj[16],
+                                     const f32 eye[3]);
+void aether_depth_prepass_camera_fill_mvp(const aether_depth_prepass_camera_t *c,
+                                          f32 out_mvp[16]);
+bool aether_depth_prepass_camera_valid(const aether_depth_prepass_camera_t *c);
+
+/* Encode plan that also carries MVP when camera is valid. */
+typedef struct aether_depth_prepass_plan_ex {
+    aether_depth_prepass_plan_t base;
+    f32 mvp[16];
+    bool has_mvp;
+} aether_depth_prepass_plan_ex_t;
+
+void aether_depth_prepass_encode_plan_ex(const aether_depth_prepass_t *d,
+                                         const aether_depth_prepass_camera_t *cam,
+                                         aether_depth_prepass_plan_ex_t *out);
+
 #endif /* AETHER_DEPTH_PREPASS_H */
