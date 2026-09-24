@@ -330,10 +330,39 @@ still clean-room:
 - Depth prepass pipeline is depth-write stub (color mask none); full early-Z occlusion cull still thin
 - IPA still requires macOS + Xcode via workflow_dispatch
 
+## Reflect RT / Studio skin / MP score / Chat cue / Kill HUD (`continue/batch-reflect-rt-studio-skin-mp-hud`)
+
+One PR advances Metal water reflection render-target (allocate + sample), fuller studio LOD
+mesh extract by distance, MP frags/deaths UDP snapshot sync, voice/chat cue → HUD, kill-feed
+net events, studio texture-group (skin) select, prediction teleport snap threshold, and depth
+prepass bound before main pass — still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Water reflection RT | **done** | `aether_water_reflect_rt_ensure` / encode plan allocates RT + sample flag; Metal `waterReflectTexture` + fragment sample |
+| 2 | Fuller studio LOD extract | **done** | `aether_mdl_lod_extract_mesh` / `extract_by_distance` multi tri-budget fan mesh |
+| 3 | MP score sync UDP | **done** | `aether_net_server_set_score` + snapshot frags/deaths over UDP → scoreboard HUD |
+| 4 | Voice/chat cue sync | **done** | `aether_chat_encode` / `encode_voice_cue` + apply_net → chat HUD |
+| 5 | Classic HUD kill feed | **done** | `AETHER_MSG_KILL` / `SB_EVENT_KILL` encode/handle + Swift ticker |
+| 6 | Studio texture-group select | **done** | `aether_mdl_texgroup_*` + skin_lod fixture + console `skin` |
+| 7 | Predict teleport snap | **done** | `reconcile_teleport` hard-snaps when error length ≥ threshold (default 64) |
+| 8 | Depth prepass before main | **done** | `bind_before_main` + Metal `encodeDepthPrepassIfNeeded` before world draw |
+| 9 | Host smokes + verify | **done** | `smoke_batch_reflect_rt_studio_skin_mp_hud` + verify greps |
+| 10 | README + gaps | **done** | This table; honest % (IPA still unbuilt) |
+
+### Known gaps after reflect-rt / studio-skin / mp-hud batch
+- Reflection RT is allocated and sampled as a stub (scene not yet re-rendered into the RT from mirrored camera)
+- LOD extract builds procedural fan meshes from tri budgets (not true GoldSrc multi-res studio meshes)
+- Kill feed / chat voice cues are protocol stubs (no real Opus/voice capture)
+- Texture groups are fixture metadata (not full studio texture remaps; distinct from bone skinning matrices)
+- Depth prepass draws world with identity MVP stub until camera matrices are threaded through
+- IPA still requires macOS + Xcode via workflow_dispatch
+
 ### Progress toward playable unsigned IPA demo
-Rough overall estimate after this batch: **~72–76%** toward a playable unsigned IPA demo
+Rough overall estimate after this batch: **~68–70%** toward a playable unsigned IPA demo
 (synthetic BSP walk/swim/combat stubs + Metal world/particles/post + net/predict foundations).
-Remaining: real game-data FS paths, fuller studio/GPU features, signed packaging on macOS/Xcode,
+IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
+Remaining: real game-data FS paths, fuller studio/GPU reflection encode, signed packaging on macOS/Xcode,
 and tighter netplay/HUD polish.
 
 

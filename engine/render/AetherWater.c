@@ -215,3 +215,65 @@ bool aether_water_reflect_encode_needed(const aether_water_reflect_t *r) {
     /* Mirror scale on Z should be -1. */
     return fabsf(r->mirror[10] + 1.f) < 1e-4f;
 }
+
+aether_result_t aether_water_reflect_rt_init(aether_water_reflect_rt_t *rt) {
+    if (!rt) return AETHER_ERR_INVALID_ARG;
+    memset(rt, 0, sizeof(*rt));
+    rt->scale = 0.5f;
+    rt->sample_enabled = true;
+    rt->enabled = true;
+    return AETHER_OK;
+}
+
+void aether_water_reflect_rt_shutdown(aether_water_reflect_rt_t *rt) {
+    if (rt) memset(rt, 0, sizeof(*rt));
+}
+
+void aether_water_reflect_rt_set_enabled(aether_water_reflect_rt_t *rt, bool enabled) {
+    if (rt) rt->enabled = enabled;
+}
+
+aether_result_t aether_water_reflect_rt_ensure(aether_water_reflect_rt_t *rt,
+                                               u32 fb_w, u32 fb_h, f32 scale) {
+    if (!rt) return AETHER_ERR_INVALID_ARG;
+    if (fb_w == 0 || fb_h == 0) return AETHER_ERR_INVALID_ARG;
+    if (scale <= 0.05f) scale = 0.5f;
+    if (scale > 1.f) scale = 1.f;
+    u32 w = (u32)((f32)fb_w * scale);
+    u32 h = (u32)((f32)fb_h * scale);
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    rt->width = w;
+    rt->height = h;
+    rt->scale = scale;
+    rt->allocated = true;
+    /* Non-zero stub id so Metal/host can tell RT is planned (texture made on GPU). */
+    rt->tex_stub_id = 0xAE7E0001u ^ (w * 65537u + h);
+    if (rt->tex_stub_id == 0) rt->tex_stub_id = 1;
+    return AETHER_OK;
+}
+
+bool aether_water_reflect_rt_sample_needed(const aether_water_reflect_rt_t *rt) {
+    return rt && rt->enabled && rt->allocated && rt->sample_enabled
+        && rt->width > 0 && rt->height > 0 && rt->tex_stub_id != 0;
+}
+
+bool aether_water_reflect_rt_encode_needed(const aether_water_reflect_rt_t *rt,
+                                           const aether_water_reflect_t *reflect) {
+    if (!aether_water_reflect_rt_sample_needed(rt)) return false;
+    return reflect ? aether_water_reflect_encode_needed(reflect) : true;
+}
+
+void aether_water_reflect_rt_encode_plan(const aether_water_reflect_rt_t *rt,
+                                         const aether_water_reflect_t *reflect,
+                                         aether_water_reflect_rt_plan_t *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    if (!rt) return;
+    out->needed = aether_water_reflect_rt_encode_needed(rt, reflect);
+    out->width = rt->width;
+    out->height = rt->height;
+    out->allocate = rt->allocated && rt->tex_stub_id != 0;
+    out->sample = aether_water_reflect_rt_sample_needed(rt);
+    out->pass_count = out->needed ? 1u : 0u;
+}

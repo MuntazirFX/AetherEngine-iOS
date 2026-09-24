@@ -236,10 +236,18 @@ vertex WaterVertexOut aether_water_vertex(WaterVertexIn in [[stage_in]],
     return out;
 }
 
-fragment float4 aether_water_fragment(WaterVertexOut in [[stage_in]]) {
-    /* Soft procedural ripple tint — no textures / game assets. */
+fragment float4 aether_water_fragment(WaterVertexOut in [[stage_in]],
+                                        texture2d<float> reflectTex [[texture(1)]],
+                                        sampler samp [[sampler(0)]],
+                                        constant float &reflectOn [[buffer(2)]]) {
+    /* Soft procedural ripple tint — no game assets. Optional reflection RT sample. */
     float ripple = 0.5 + 0.5 * sin(in.uv.x * 28.0 + in.uv.y * 18.0);
     float3 tint = in.color.rgb * (0.85 + 0.20 * ripple);
+    if (reflectOn > 0.5) {
+        float2 ruv = float2(in.uv.x, 1.0 - in.uv.y);
+        float3 refl = reflectTex.sample(samp, ruv).rgb;
+        tint = mix(tint, refl, 0.35);
+    }
     float alpha = clamp(in.color.a, 0.0, 1.0);
     return float4(tint, alpha);
 }
@@ -774,4 +782,8 @@ struct WaterReflectUniforms {
 float3 aether_water_reflect_transform(float3 p, constant WaterReflectUniforms &R) {
     float4 h = R.mirror * float4(p, 1.0);
     return h.xyz;
+}
+/* Sample reflection render-target (allocated by Metal from encode plan). */
+float3 aether_water_reflect_sample(texture2d<float> tex, sampler s, float2 uv) {
+    return tex.sample(s, uv).rgb;
 }

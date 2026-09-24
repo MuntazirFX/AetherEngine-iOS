@@ -25,6 +25,7 @@ typedef struct aether_chat_log {
     bool               visible;
     char               input[AETHER_NET_MAX_CHAT];  /* current input */
     u32                input_len;
+    u8                 last_cue_kind; /* aether_chat_cue_kind_t from last net apply */
 } aether_chat_log_t;
 
 void aether_chat_init(aether_chat_log_t *cl);
@@ -33,6 +34,22 @@ void aether_chat_add_system(aether_chat_log_t *cl, const char *text, f32 now);
 void aether_chat_set_visible(aether_chat_log_t *cl, bool visible);
 void aether_chat_handle_packet(aether_chat_log_t *cl, const u8 *data, u32 size, f32 now);
 void aether_chat_dump(const aether_chat_log_t *cl);
+
+/* Voice/chat cue kinds for HUD sync stub. */
+typedef enum aether_chat_cue_kind {
+    AETHER_CHAT_CUE_TEXT  = 0,
+    AETHER_CHAT_CUE_VOICE = 1
+} aether_chat_cue_kind_t;
+
+/* Encode CHAT packet (optionally voice cue). Returns bytes. */
+u32 aether_chat_encode(u8 *out, u32 cap, u32 player_id, const char *text);
+u32 aether_chat_encode_voice_cue(u8 *out, u32 cap, u32 player_id, const char *cue);
+
+/* Last cue kind applied by handle_packet (0=text, 1=voice). */
+u8  aether_chat_last_cue_kind(const aether_chat_log_t *cl);
+
+/* Apply encoded chat/voice packet → log (same as handle_packet; returns lines added). */
+u32 aether_chat_apply_net(aether_chat_log_t *cl, const u8 *data, u32 size, f32 now);
 
 #ifdef __cplusplus
 }

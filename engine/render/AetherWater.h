@@ -73,4 +73,41 @@ void aether_water_reflect_point(const aether_water_t *w, const f32 in[3], f32 ou
 /* True when reflection hooks are ready for Metal encode. */
 bool aether_water_reflect_encode_needed(const aether_water_reflect_t *r);
 
-#endif
+/* ---------- Reflection render-target plan (allocates RT + samples it) ---------- */
+typedef struct aether_water_reflect_rt {
+    u32  width;
+    u32  height;
+    f32  scale;          /* relative to framebuffer; default 0.5 */
+    bool allocated;      /* ensure() succeeded */
+    bool sample_enabled; /* fragment samples reflection texture */
+    bool enabled;
+    u32  tex_stub_id;    /* host/Metal texture handle stub (non-zero when allocated) */
+} aether_water_reflect_rt_t;
+
+typedef struct aether_water_reflect_rt_plan {
+    u32  pass_count;     /* 1 = render mirrored scene into RT */
+    u32  width;
+    u32  height;
+    bool allocate;
+    bool sample;
+    bool needed;
+} aether_water_reflect_rt_plan_t;
+
+aether_result_t aether_water_reflect_rt_init(aether_water_reflect_rt_t *rt);
+void aether_water_reflect_rt_shutdown(aether_water_reflect_rt_t *rt);
+void aether_water_reflect_rt_set_enabled(aether_water_reflect_rt_t *rt, bool enabled);
+
+/* Allocate (or resize) reflection RT at fb_w*scale × fb_h*scale. Marks allocated. */
+aether_result_t aether_water_reflect_rt_ensure(aether_water_reflect_rt_t *rt,
+                                               u32 fb_w, u32 fb_h, f32 scale);
+
+/* Encode plan: allocate RT + sample it (not uniforms-only). */
+void aether_water_reflect_rt_encode_plan(const aether_water_reflect_rt_t *rt,
+                                         const aether_water_reflect_t *reflect,
+                                         aether_water_reflect_rt_plan_t *out);
+
+bool aether_water_reflect_rt_sample_needed(const aether_water_reflect_rt_t *rt);
+bool aether_water_reflect_rt_encode_needed(const aether_water_reflect_rt_t *rt,
+                                           const aether_water_reflect_t *reflect);
+
+#endif /* AETHER_WATER_H */

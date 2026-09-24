@@ -13,6 +13,8 @@ void aether_net_predict_init(aether_net_predict_t *pr, u32 local_id) {
     pr->local_id = local_id;
     pr->speed = 320.f; /* GoldSrc-ish walk */
     pr->error_decay = 12.f;
+    pr->teleport_threshold = AETHER_NET_PREDICT_TELEPORT_DEFAULT;
+    pr->teleported = false;
     pr->active = true;
 }
 
@@ -179,4 +181,47 @@ void aether_net_predict_reconcile_smooth(aether_net_predict_t *pr,
     pr->error[2] *= rem;
     if (pr->error_decay <= 0.f) pr->error_decay = 12.f;
     (void)aether_net_predict_smooth_tick(pr, dt);
+}
+
+void aether_net_predict_set_teleport_threshold(aether_net_predict_t *pr, f32 units) {
+    if (!pr) return;
+    if (units < 1.f) units = 1.f;
+    pr->teleport_threshold = units;
+}
+
+f32 aether_net_predict_get_teleport_threshold(const aether_net_predict_t *pr) {
+    if (!pr) return AETHER_NET_PREDICT_TELEPORT_DEFAULT;
+    return pr->teleport_threshold > 0.f ? pr->teleport_threshold : AETHER_NET_PREDICT_TELEPORT_DEFAULT;
+}
+
+int aether_net_predict_reconcile_teleport(aether_net_predict_t *pr,
+                                          const aether_net_snapshot_t *snap,
+                                          f32 soft_blend) {
+    if (!pr || !snap) return 0;
+    pr->teleported = false;
+    const aether_net_snapshot_player_t *found = NULL;
+    for (u32 i = 0; i < snap->player_count && i < AETHER_NET_MAX_PLAYERS; ++i) {
+        if (snap->players[i].player_id == pr->local_id) {
+            found = &snap->players[i];
+            break;
+        }
+    }
+    if (!found) return 0;
+    f32 dx = found->origin[0] - pr->origin[0];
+    f32 dy = found->origin[1] - pr->origin[1];
+    f32 dz = found->origin[2] - pr->origin[2];
+    f32 len = sqrtf(dx*dx + dy*dy + dz*dz);
+    f32 thresh = aether_net_predict_get_teleport_threshold(pr);
+    if (len >= thresh) {
+        /* Hard snap — teleport / large correction edge case. */
+        pr->origin[0] = found->origin[0];
+        pr->origin[1] = found->origin[1];
+        pr->origin[2] = found->origin[2];
+        pr->error[0] = pr->error[1] = pr->error[2] = 0.f;
+        pr->last_ack_tick = snap->tick;
+        pr->teleported = true;
+        return 1;
+    }
+    aether_net_predict_reconcile(pr, snap, soft_blend);
+    return 0;
 }
