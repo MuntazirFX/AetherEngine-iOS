@@ -15,6 +15,8 @@ public enum AetherMetalCommandState {
     public static var viewportW: UInt32 = 0
     public static var viewportH: UInt32 = 0
     public static var submitCount: UInt64 = 0
+    public static var particleSubmitCount: UInt64 = 0
+    public static var lastFeatureCmd: Int32 = 0
 }
 
 // Offsets must match aether_render_cmd_t (verified host sizeof=156).
@@ -26,6 +28,7 @@ private let kCmdOffViewportH: Int = 152
 
 private let kCmdBeginFrame: Int32 = 1
 private let kCmdSetViewport: Int32 = 3
+private let kCmdDrawParticles: Int32 = 10
 
 private func loadMat4(from base: UnsafeRawPointer, offset: Int) -> simd_float4x4 {
     let fp = base.advanced(by: offset).assumingMemoryBound(to: Float.self)
@@ -67,6 +70,10 @@ public func aether_metal_submit_swift(_ user: UnsafeMutableRawPointer?,
     if type == kCmdBeginFrame || type == kCmdSetViewport {
         AetherMetalCommandState.view = loadMat4(from: cmd, offset: kCmdOffView)
         AetherMetalCommandState.proj = loadMat4(from: cmd, offset: kCmdOffProj)
+    }
+    if type == kCmdDrawParticles {
+        AetherMetalCommandState.lastFeatureCmd = type
+        AetherMetalCommandState.particleSubmitCount &+= 1
     }
     return 0
 }

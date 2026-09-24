@@ -109,3 +109,44 @@ fragment float4 aether_model_fragment(MdlVertexOut in [[stage_in]],
 
     return float4(color, 1.0);
 }
+
+/* ============ Particle point sprites (engine state driven) ============ */
+struct ParticleVertexIn {
+    float3 position [[attribute(0)]];
+    float  size     [[attribute(1)]];
+    float4 color    [[attribute(2)]];
+};
+
+struct ParticleVertexOut {
+    float4 position [[position]];
+    float  pointSize [[point_size]];
+    float4 color;
+};
+
+struct ParticleUniforms {
+    float4x4 view;
+    float4x4 proj;
+};
+
+vertex ParticleVertexOut aether_particle_vertex(ParticleVertexIn in [[stage_in]],
+                                                 constant ParticleUniforms &U [[buffer(1)]]) {
+    ParticleVertexOut out;
+    float4 clip = U.proj * U.view * float4(in.position, 1.0);
+    out.position = clip;
+    /* Perspective-aware point size in pixels (placeholder scale). */
+    float w = max(abs(clip.w), 1.0);
+    out.pointSize = clamp(in.size * 180.0 / w, 2.0, 48.0);
+    out.color = in.color;
+    return out;
+}
+
+fragment float4 aether_particle_fragment(ParticleVertexOut in [[stage_in]],
+                                          float2 pc [[point_coord]]) {
+    float2 d = pc * 2.0 - 1.0;
+    float r2 = dot(d, d);
+    if (r2 > 1.0) discard_fragment();
+    float soft = 1.0 - r2;
+    float4 c = in.color;
+    c.a *= soft * soft;
+    return c;
+}

@@ -32,6 +32,7 @@ GitHub Actions workflow `.github/workflows/verify.yml` runs the same script on e
 - [x] STEP 1: Core modules
 - [x] STEP 2: Verification (host compile + smoke via `build/scripts/verify_host.sh` / `.github/workflows/verify.yml`)
 - [x] STEP 2b: Metal/EngineBridge frame path — camera matrices, begin_frame_dt, feature ticks, HUD crosshair spread (see `continue/metal-bridge`)
+- [x] STEP 2c: Metal particles — C pool getters + bridge + point-sprite encode from engine state (see `continue/metal-particles`)
 - [ ] STEP 3: Engine foundation
 - [ ] STEP 4: iOS application
 - [ ] STEP 5: 5-game configuration
@@ -60,7 +61,7 @@ AetherEngine now exposes an Xash3D-class renderer feature layer with clean-room 
 - `AetherSky` — six-face sky state
 - `AetherFog` — fog parameters
 - `AetherDecal` — decal pool (blood/bullet-style decals)
-- `AetherParticle` — particle pool/update
+- `AetherParticle` — particle pool/update + burst spawn + render vertex copy
 - `AetherSprite` — sprite state/UVs
 - `AetherMDLAnimation` — sequence/bone animation timing state
 - `AetherShadow` — shadow configuration
