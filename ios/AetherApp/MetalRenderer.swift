@@ -424,7 +424,10 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         var rw2: UInt32 = 0, rh2: UInt32 = 0
         var clr2: Int32 = 0, dw2: Int32 = 0, res2: Int32 = 0
         _ = engine_water_reflect_rt_draw_plan_full(&mvpArr, &rw2, &rh2, &clr2, &dw2, &de, &dm, &ec, &mc, &res2)
-        if (de != 0 || dm != 0),
+        var drawStudio: Int32 = 0
+        var studioCount: UInt32 = 0
+        _ = engine_water_reflect_rt_draw_plan_studio_flags(&drawStudio, &studioCount)
+        if (de != 0 || dm != 0 || drawStudio != 0),
            let pipe = mdlPipeline,
            let vb = monsterVertexBuf, let ib = monsterIndexBuf, monsterIndexCount > 0 {
             enc.setRenderPipelineState(pipe)
@@ -435,19 +438,31 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 SIMD4<Float>(mvpArr[8], mvpArr[9], mvpArr[10], mvpArr[11]),
                 SIMD4<Float>(mvpArr[12], mvpArr[13], mvpArr[14], mvpArr[15])
             ))
-            for mpos in monsterPositions {
+            for (mi, mpos) in monsterPositions.enumerated() {
+                var tint = simd_float4(0.85, 0.35, 0.35, 1.0) // debug-box default
+                var mat: Int32 = 0, sg: UInt32 = 0, st: UInt32 = 0, att: Int32 = -1
+                var rgba = [Float](repeating: 1, count: 4)
+                if engine_water_reflect_ent_get_studio(UInt32(mi), &mat, &sg, &st, &att, &rgba) != 0,
+                   mat > 0 {
+                    // Studio/skinned material — less debug-box red
+                    tint = simd_float4(rgba[0], rgba[1], rgba[2], rgba[3])
+                }
                 var model = matrix_identity_float4x4
                 model.columns.3 = SIMD4<Float>(mpos.x, mpos.y, mpos.z, 1)
                 var U = Uniforms(model: model, view: mirrorMvp2, proj: matrix_identity_float4x4,
                                  lightDir: simd_normalize(simd_float3(0.3, 0.8, 0.5)), pad0: 0,
-                                 baseColor: simd_float4(0.85, 0.35, 0.35, 1.0),
-                                 useTexture: 0, useLightmap: 0, pad2: 0, pad3: 0)
+                                 baseColor: tint,
+                                 useTexture: mat > 0 ? 1 : 0, useLightmap: 0, pad2: 0, pad3: 0)
                 enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
                 enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
                 enc.drawIndexedPrimitives(type: .triangle, indexCount: monsterIndexCount,
                                           indexType: .uint32, indexBuffer: ib, indexBufferOffset: 0)
             }
-            _ = ec; _ = mc; _ = res2; _ = dw2; _ = clr2; _ = rw2; _ = rh2
+            // Hi-Z gated LOD draw into reflect RT
+            var hlod: Int32 = 0, hissue: Int32 = 0, hocc: Int32 = 0
+            var hv: UInt32 = 0, ht: UInt32 = 0
+            _ = engine_mdl_lod_gpu_issue_draw_hiz(200.0, 16.0, &hlod, &hv, &ht, &hissue, &hocc)
+            _ = ec; _ = mc; _ = res2; _ = dw2; _ = clr2; _ = rw2; _ = rh2; _ = studioCount
         }
         // GPU studio LOD draw path: select LOD by camera distance and issue draw.
         var lod: Int32 = 0, issue: Int32 = 0
@@ -776,7 +791,10 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         monsterIndexCount = idx.count
         _ = engine_water_reflect_ent_clear()
         for (i, mpos) in monsterPositions.enumerated() {
-            _ = engine_water_reflect_ent_push(UInt32(i + 1), 1, mpos.x, mpos.y, mpos.z, 8, 8, 8)
+            // Studio/skinned materials into water reflection RT (not debug-box)
+            _ = engine_water_reflect_ent_push_studio(UInt32(i + 1), 1, mpos.x, mpos.y, mpos.z, 8, 8, 8,
+                                                    2 /* skinned */, UInt32(i % 4), UInt32(i % 3), 0,
+                                                    0.55, 0.75, 0.45, 1.0)
         }
         _ = engine_water_reflect_ent_mark_above(0)
     }

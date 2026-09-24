@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <unistd.h>
 
 #include "../../engine/core/AetherCore.h"
 #include "../../engine/core/AetherEngine.h"
@@ -4090,4 +4091,178 @@ int engine_net_server_register_assist(unsigned assister_id, unsigned victim_id) 
 int engine_net_server_get_assists(unsigned player_id) {
     (void)player_id;
     return 0;
+}
+
+/* ---- Batch rt-skins / assist-feed / hiz / auth-tick / spec-hp ---- */
+
+static aether_mdl_hiz_t g_hiz;
+static int g_hiz_init = 0;
+static aether_net_server_t *g_auth_demo_server = NULL;
+
+static void ensure_hiz(void) {
+    if (!g_hiz_init) { aether_mdl_hiz_init(&g_hiz); g_hiz_init = 1; }
+}
+
+int engine_water_reflect_ent_push_studio(unsigned ent_id, int is_monster,
+                                         float ox, float oy, float oz,
+                                         float hx, float hy, float hz,
+                                         int material, unsigned skin_group, unsigned skin_tex,
+                                         int attach_index,
+                                         float tr, float tg, float tb, float ta) {
+    ensure_reflect_ents();
+    f32 o[3] = {ox,oy,oz}, h[3] = {hx,hy,hz};
+    f32 tint[4] = {tr,tg,tb,ta};
+    f32 wh = 0.f;
+    if (g_water_reflect_ready) wh = g_water_reflect.plane_origin[2];
+    return aether_water_reflect_ent_list_push_studio(&g_reflect_ents, ent_id,
+                                                     is_monster ? 1 : 0, o, h, wh,
+                                                     (u8)material, (u8)skin_group, (u8)skin_tex,
+                                                     (i8)attach_index, tint);
+}
+unsigned engine_water_reflect_studio_count(void) {
+    ensure_reflect_ents();
+    return aether_water_reflect_ent_list_studio_count(&g_reflect_ents);
+}
+int engine_water_reflect_ent_get_studio(unsigned index, int *out_mat,
+                                        unsigned *out_sg, unsigned *out_st,
+                                        int *out_attach, float *out_tint4) {
+    ensure_reflect_ents();
+    aether_water_reflect_studio_t st;
+    if (!aether_water_reflect_ent_get_studio(&g_reflect_ents, index, &st)) return 0;
+    if (out_mat) *out_mat = (int)st.material;
+    if (out_sg) *out_sg = st.skin_group;
+    if (out_st) *out_st = st.skin_tex;
+    if (out_attach) *out_attach = st.attach_index;
+    if (out_tint4) { out_tint4[0]=st.tint[0]; out_tint4[1]=st.tint[1]; out_tint4[2]=st.tint[2]; out_tint4[3]=st.tint[3]; }
+    return 1;
+}
+int engine_water_reflect_rt_draw_plan_studio_flags(int *out_draw_studio, unsigned *out_studio_count) {
+    ensure_reflect_ents();
+    ensure_water_rt();
+    if (!g_water_reflect_ready) {
+        aether_water_t *w = bridge_water();
+        f32 eye[3] = {0, 0, 64};
+        aether_water_reflect_compute(w, eye, &g_water_reflect);
+        g_water_reflect_ready = 1;
+    }
+    f32 id[16]; memset(id, 0, sizeof id); id[0]=id[5]=id[10]=id[15]=1.f;
+    aether_water_reflect_rt_draw_t plan;
+    aether_water_reflect_rt_draw_plan_full(&g_water_reflect_rt, &g_water_reflect,
+                                           id, id, &g_reflect_ents, &plan);
+    if (out_draw_studio) *out_draw_studio = plan.draw_studio_skins ? 1 : 0;
+    if (out_studio_count) *out_studio_count = plan.studio_count;
+    return plan.needed ? 1 : 0;
+}
+
+int engine_scoreboard_encode_assist(unsigned char *out, unsigned cap,
+                                    unsigned assister_id, const char *assister_name,
+                                    unsigned victim_id, const char *victim_name) {
+    return (int)aether_scoreboard_encode_assist(out, cap, assister_id, assister_name,
+                                                victim_id, victim_name);
+}
+int engine_scoreboard_apply_assist(unsigned assister_id, const char *assister_name,
+                                   unsigned victim_id, const char *victim_name) {
+    ensure_sb_events();
+    aether_scoreboard_apply_assist(&g_scoreboard, &g_sb_events,
+                                   assister_id, assister_name,
+                                   victim_id, victim_name, (f32)aether_net_time());
+    return 1;
+}
+
+int engine_mdl_hiz_init(void) { ensure_hiz(); return 1; }
+int engine_mdl_hiz_push(float depth, float sx, float sy) {
+    ensure_hiz();
+    return aether_mdl_hiz_push(&g_hiz, depth, sx, sy);
+}
+int engine_mdl_lod_hiz_gate(float distance, float aabb_radius,
+                            float min_pixels, float max_distance,
+                            float sx, float sy, float depth_ndc,
+                            int *out_lod, int *out_issue, int *out_occluded,
+                            float *out_screen_px) {
+    ensure_hiz();
+    ensure_lod_meshes();
+    aether_mdl_hiz_gate_t g;
+    i32 lod = aether_mdl_lod_hiz_gate(&g_lod_table, &g_lod_meshes, &g_hiz,
+                                      distance, aabb_radius, 75.f,
+                                      min_pixels, max_distance,
+                                      sx, sy, depth_ndc, &g);
+    if (out_lod) *out_lod = lod;
+    if (out_issue) *out_issue = g.issue ? 1 : 0;
+    if (out_occluded) *out_occluded = g.occluded ? 1 : 0;
+    if (out_screen_px) *out_screen_px = g.screen_pixels;
+    return lod;
+}
+int engine_mdl_lod_gpu_issue_draw_hiz(float distance, float aabb_radius,
+                                      int *out_lod, unsigned *out_verts,
+                                      unsigned *out_tris, int *out_issue,
+                                      int *out_occluded) {
+    ensure_hiz();
+    ensure_lod_meshes();
+    aether_mdl_lod_gpu_draw_t d;
+    aether_mdl_hiz_gate_t g;
+    i32 lod = aether_mdl_lod_gpu_issue_draw_hiz(&g_lod_table, &g_lod_meshes, &g_hiz,
+                                                distance, aabb_radius, &d, &g);
+    if (out_lod) *out_lod = lod;
+    if (out_verts) *out_verts = d.vert_count;
+    if (out_tris) *out_tris = d.tri_count;
+    if (out_issue) *out_issue = d.issue ? 1 : 0;
+    if (out_occluded) *out_occluded = g.occluded ? 1 : 0;
+    return lod >= 0 ? 1 : 0;
+}
+
+int engine_game_bind_auth_server_demo(void) {
+    if (!g_game_manager) return 0;
+    if (!g_auth_demo_server) {
+        u16 port = (u16)(30100 + (getpid() % 200));
+        g_auth_demo_server = aether_net_server_create(port, 4);
+        if (!g_auth_demo_server) return 0;
+        g_auth_demo_server->clients[0].active = true;
+        g_auth_demo_server->clients[0].player_id = 1;
+        aether_str_copy(g_auth_demo_server->clients[0].name,
+                        sizeof g_auth_demo_server->clients[0].name, "P1");
+        g_auth_demo_server->clients[1].active = true;
+        g_auth_demo_server->clients[1].player_id = 2;
+        aether_str_copy(g_auth_demo_server->clients[1].name,
+                        sizeof g_auth_demo_server->clients[1].name, "P2");
+        g_auth_demo_server->client_count = 2;
+    }
+    aether_game_bind_auth_server(g_game_manager,
+                                 (aether_game_auth_server_t *)g_auth_demo_server);
+    return 1;
+}
+int engine_game_auth_queue_damage(unsigned killer_id, unsigned victim_id,
+                                  float damage, unsigned dmg_type) {
+    if (!g_game_manager) return 0;
+    aether_game_auth_queue_damage(g_game_manager, killer_id, victim_id, damage, dmg_type);
+    return 1;
+}
+int engine_game_tick_auth(float dt, int *out_died, int *out_registered) {
+    if (!g_game_manager) return 0;
+    aether_game_auth_tick_result_t r;
+    u32 k = aether_game_tick_auth(g_game_manager, dt, &r);
+    if (out_died) *out_died = r.died ? 1 : 0;
+    if (out_registered) *out_registered = r.registered_kill ? 1 : 0;
+    return (int)k;
+}
+int engine_game_has_auth_server(void) {
+    return (g_game_manager && aether_game_get_auth_server(g_game_manager)) ? 1 : 0;
+}
+
+int engine_spectator_set_target_hp(int hp) {
+    ensure_spectator();
+    aether_spectator_set_target_hp(&g_spectator, hp);
+    return 1;
+}
+int engine_spectator_set_target_name(const char *name) {
+    ensure_spectator();
+    aether_spectator_set_target_name(&g_spectator, name);
+    return 1;
+}
+int engine_spectator_get_target_hp(void) {
+    ensure_spectator();
+    return (int)aether_spectator_get_target_hp(&g_spectator);
+}
+int engine_spectator_get_target_name(char *out, unsigned cap) {
+    ensure_spectator();
+    return (int)aether_spectator_get_target_name(&g_spectator, out, cap);
 }

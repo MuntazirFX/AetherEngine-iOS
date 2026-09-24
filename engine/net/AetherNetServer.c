@@ -518,15 +518,38 @@ u32 aether_net_server_tick_authority_kill_score(aether_net_server_t *s, f32 dt,
     return snaps + kills + scoreboards;
 }
 
+void aether_net_server_broadcast_assist(aether_net_server_t *s,
+                                        u32 assister_id, const char *assister_name,
+                                        u32 victim_id, const char *victim_name) {
+    if (!s) return;
+    u8 pkt[256];
+    u32 n = aether_scoreboard_encode_assist(pkt, sizeof pkt, assister_id, assister_name,
+                                            victim_id, victim_name);
+    if (!n) return;
+    for (u32 i = 0; i < AETHER_NET_MAX_PLAYERS; ++i) {
+        if (!s->clients[i].active) continue;
+        aether_socket_send(s->sock, &s->clients[i].addr, pkt, n);
+    }
+}
+
 bool aether_net_server_register_assist(aether_net_server_t *s, u32 assister_id, u32 victim_id) {
     if (!s || assister_id == 0) return false;
-    (void)victim_id; /* reserved for future assist feed packet */
+    const char *an = "";
+    const char *vn = "";
+    bool found = false;
     for (u32 i = 0; i < AETHER_NET_MAX_PLAYERS; ++i) {
-        if (!s->clients[i].active || s->clients[i].player_id != assister_id) continue;
-        s->clients[i].assists += 1;
-        return true;
+        if (!s->clients[i].active) continue;
+        if (s->clients[i].player_id == assister_id) {
+            s->clients[i].assists += 1;
+            an = s->clients[i].name;
+            found = true;
+        }
+        if (victim_id && s->clients[i].player_id == victim_id)
+            vn = s->clients[i].name;
     }
-    return false;
+    if (found)
+        aether_net_server_broadcast_assist(s, assister_id, an, victim_id, vn);
+    return found;
 }
 
 i32 aether_net_server_get_assists(const aether_net_server_t *s, u32 player_id) {

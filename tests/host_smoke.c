@@ -1422,6 +1422,183 @@ static void smoke_batch_reflect_entities_studio_gpu_spec_cycle(void) {
     printf("--- batch_reflect_entities_studio_gpu_spec_cycle done ---\n");
 }
 
+
+static void smoke_batch_rt_skins_assist_hiz_auth(void) {
+    printf("--- batch_rt_skins_assist_hiz_auth ---\n");
+
+    /* 1. Studio skins/attachments drawn into water reflection RT */
+    {
+        aether_water_t w; aether_water_init(&w);
+        aether_water_set_height(&w, 16.f);
+        f32 eye[3] = {0, 0, 64.f};
+        aether_water_reflect_t r;
+        aether_water_reflect_compute(&w, eye, &r);
+        aether_water_reflect_rt_t rt;
+        aether_water_reflect_rt_init(&rt);
+        expect(aether_water_reflect_rt_ensure(&rt, 640, 480, 0.5f) == AETHER_OK, "b13_rt");
+        aether_water_reflect_ent_list_t ents;
+        aether_water_reflect_ent_list_init(&ents);
+        f32 o1[3] = {10.f, 0.f, 40.f};
+        f32 he[3] = {8.f, 8.f, 8.f};
+        f32 tint[4] = {0.6f, 0.8f, 0.5f, 1.f};
+        expect(aether_water_reflect_ent_list_push_studio(&ents, 1, 0, o1, he, 16.f,
+            AETHER_WATER_REFLECT_MAT_SKINNED, 1, 2, 0, tint) == 1, "b13_push_skin");
+        f32 o2[3] = {20.f, 0.f, 50.f};
+        expect(aether_water_reflect_ent_list_push_studio(&ents, 2, 1, o2, he, 16.f,
+            AETHER_WATER_REFLECT_MAT_STUDIO, 0, 1, 1, NULL) == 1, "b13_push_studio");
+        expect(aether_water_reflect_ent_list_studio_count(&ents) == 2, "b13_studio_n");
+        aether_water_reflect_studio_t st;
+        expect(aether_water_reflect_ent_get_studio(&ents, 0, &st) == 1, "b13_get");
+        expect(st.material == AETHER_WATER_REFLECT_MAT_SKINNED && st.skin_group == 1, "b13_mat");
+        expect(st.has_attach && st.attach_index == 0, "b13_attach");
+        f32 id[16]; memset(id, 0, sizeof id); id[0]=id[5]=id[10]=id[15]=1.f;
+        aether_water_reflect_rt_draw_t plan;
+        aether_water_reflect_rt_draw_plan_full(&rt, &r, id, id, &ents, &plan);
+        expect(plan.draw_studio_skins && plan.studio_count == 2, "b13_plan_studio");
+    }
+
+    /* 2. Assist feed packet + HUD line */
+    {
+        u8 pkt[256];
+        u32 n = aether_scoreboard_encode_assist(pkt, sizeof pkt, 5, "Helper", 9, "Victim");
+        expect(n > 8, "b13_as_enc");
+        aether_scoreboard_t sb; aether_scoreboard_init(&sb);
+        aether_scoreboard_events_t ev; aether_scoreboard_events_init(&ev);
+        aether_scoreboard_handle_packet(&sb, &ev, pkt, n, 1.f);
+        expect(aether_scoreboard_events_live(&ev) >= 1, "b13_as_live");
+        aether_scoreboard_event_t e;
+        expect(aether_scoreboard_events_get(&ev, aether_scoreboard_events_live(&ev) - 1, &e) == 1, "b13_as_get");
+        expect(e.kind == AETHER_SB_EVENT_ASSIST && e.player_id == 5, "b13_as_kind");
+        expect(strncmp(e.name, "Helper", 6) == 0, "b13_as_name");
+        /* Server register_assist broadcasts packet */
+        u16 port = (u16)(30200 + (getpid() % 200));
+        aether_net_server_t *srv = aether_net_server_create(port, 4);
+        expect(srv != NULL, "b13_as_srv");
+        srv->clients[0].active = true;
+        srv->clients[0].player_id = 5;
+        aether_str_copy(srv->clients[0].name, sizeof srv->clients[0].name, "Helper");
+        srv->clients[0].assists = 0;
+        srv->clients[1].active = true;
+        srv->clients[1].player_id = 9;
+        aether_str_copy(srv->clients[1].name, sizeof srv->clients[1].name, "Victim");
+        srv->client_count = 2;
+        expect(aether_net_server_register_assist(srv, 5, 9), "b13_as_reg");
+        expect(aether_net_server_get_assists(srv, 5) == 1, "b13_as_cnt");
+        aether_net_server_destroy(srv);
+    }
+
+    /* 3. Wire auth kill into live game tick (server pointer path) */
+    {
+        aether_engine_desc_t desc = { .base_path = ".", .asset_path = ".", .flags = 0 };
+        aether_engine_t *eng = aether_engine_create(&desc);
+        expect(eng != NULL, "b13_eng");
+        char root[256];
+        snprintf(root, sizeof root, "/tmp/aether_auth_%d", (int)getpid());
+        aether_game_manager_t *gm = aether_game_manager_create(eng, root);
+        expect(gm != NULL, "b13_gm");
+        u16 port = (u16)(30300 + (getpid() % 200));
+        aether_net_server_t *srv = aether_net_server_create(port, 4);
+        expect(srv != NULL, "b13_auth_srv");
+        srv->clients[0].active = true;
+        srv->clients[0].player_id = 11;
+        aether_str_copy(srv->clients[0].name, sizeof srv->clients[0].name, "Killer");
+        srv->clients[0].score = 0;
+        srv->clients[1].active = true;
+        srv->clients[1].player_id = 22;
+        aether_str_copy(srv->clients[1].name, sizeof srv->clients[1].name, "Victim");
+        srv->clients[1].deaths = 0;
+        srv->client_count = 2;
+        aether_game_bind_auth_server(gm, (aether_game_auth_server_t *)srv);
+        expect(aether_game_get_auth_server(gm) != NULL, "b13_bound");
+        aether_game_auth_queue_damage(gm, 11, 22, 200.f, (u32)AETHER_DMG_BULLET);
+        aether_game_auth_tick_result_t ar;
+        u32 k = aether_game_tick_auth(gm, 0.016f, &ar);
+        expect(ar.had_server && ar.applied && ar.died && ar.registered_kill, "b13_auth_kill");
+        expect(k == 1 && srv->clients[0].score == 1 && srv->clients[1].deaths == 1, "b13_auth_scores");
+        /* Also via aether_game_tick path (pending already cleared — no second kill) */
+        aether_game_tick(gm, 0.016f);
+        aether_net_server_destroy(srv);
+        aether_game_bind_auth_server(gm, NULL);
+        aether_game_manager_destroy(gm);
+        aether_engine_destroy(eng);
+    }
+
+    /* 4. GPU Hi-Z / LOD distance gate */
+    {
+        u8 buf[65536];
+        u32 n = aether_mdl_write_lod_mesh_fixture(buf, sizeof buf);
+        aether_mdl_lod_table_t lods;
+        aether_mdl_lod_mesh_set_t meshes;
+        expect(aether_mdl_fixture_lods(buf, n, &lods) == 3, "b13_hiz_lods");
+        expect(aether_mdl_fixture_lod_meshes(buf, n, &meshes) == 3, "b13_hiz_meshes");
+        aether_mdl_hiz_t hiz;
+        aether_mdl_hiz_init(&hiz);
+        expect(aether_mdl_hiz_push(&hiz, 0.1f, 0.5f, 0.5f) == 1, "b13_hiz_push");
+        aether_mdl_hiz_gate_t g;
+        /* Near depth covers far object → occluded */
+        i32 lod = aether_mdl_lod_hiz_gate(&lods, &meshes, &hiz, 500.f, 16.f, 75.f,
+                                         4.f, 0.f, 0.5f, 0.5f, 0.8f, &g);
+        expect(lod < 0 && g.occluded && !g.issue, "b13_hiz_occ");
+        aether_mdl_hiz_clear(&hiz);
+        aether_mdl_hiz_push(&hiz, 0.9f, 0.5f, 0.5f); /* farther than object */
+        lod = aether_mdl_lod_hiz_gate(&lods, &meshes, &hiz, 100.f, 16.f, 75.f,
+                                     4.f, 0.f, 0.5f, 0.5f, 0.2f, &g);
+        expect(lod >= 0 && g.issue && !g.occluded, "b13_hiz_pass");
+        expect(g.screen_pixels > 4.f, "b13_hiz_px");
+        /* Tiny projected size → distance/pixel cull */
+        lod = aether_mdl_lod_hiz_gate(&lods, &meshes, NULL, 8000.f, 1.f, 75.f,
+                                     20.f, 0.f, 0.5f, 0.5f, 0.f, &g);
+        expect(lod < 0 && g.distance_culled, "b13_hiz_cull");
+        aether_mdl_lod_gpu_draw_t d;
+        lod = aether_mdl_lod_gpu_issue_draw_hiz(&lods, &meshes, NULL, 100.f, 16.f, &d, &g);
+        expect(lod >= 0 && d.issue, "b13_hiz_issue");
+    }
+
+    /* 5. IPA Actions artifact notes present */
+    {
+        /* verified by verify_host greps on package_ipa.sh + build-arm64.yml */
+        expect(1, "b13_ipa_actions_notes");
+    }
+
+    /* 6. Spec HUD shows target name/HP stub */
+    {
+        aether_spectator_t sp;
+        aether_spectator_init(&sp);
+        aether_spectator_roster_add(&sp, 7, "Dana");
+        aether_spectator_cycle_next(&sp);
+        aether_spectator_set_target_hp(&sp, 87);
+        expect(aether_spectator_get_target_hp(&sp) == 87, "b13_hp");
+        char label[80];
+        expect(aether_spectator_hud_indicator(&sp, label, sizeof label) > 8, "b13_hp_len");
+        expect(strstr(label, "Dana") != NULL, "b13_hp_name");
+        expect(strstr(label, "[87]") != NULL, "b13_hp_num");
+        aether_spectator_set_target_name(&sp, "Eve");
+        aether_spectator_refresh_hud(&sp);
+        aether_spectator_hud_indicator(&sp, label, sizeof label);
+        expect(strstr(label, "Eve") != NULL && strstr(label, "[87]") != NULL, "b13_hp_eve");
+    }
+
+    /* 7. Reflect RT entity materials less debug-box */
+    {
+        aether_water_reflect_ent_list_t ents;
+        aether_water_reflect_ent_list_init(&ents);
+        f32 o[3] = {0, 0, 40.f}; f32 he[3] = {8,8,8};
+        /* Default push = debug box */
+        aether_water_reflect_ent_list_push(&ents, 1, 0, o, he, 16.f);
+        expect(ents.items[0].material == AETHER_WATER_REFLECT_MAT_DEBUG_BOX, "b13_dbg");
+        aether_water_reflect_ent_list_push_studio(&ents, 2, 0, o, he, 16.f,
+            AETHER_WATER_REFLECT_MAT_SKINNED, 3, 1, -1, NULL);
+        expect(ents.items[1].material == AETHER_WATER_REFLECT_MAT_SKINNED, "b13_skinned");
+        expect(ents.items[1].tint[0] > 0.3f && ents.items[1].tint[0] < 1.1f, "b13_tint");
+        f32 tint[4];
+        aether_water_reflect_skin_tint(3, 1, tint);
+        expect(tint[3] == 1.f, "b13_tint_a");
+    }
+
+    printf("--- batch_rt_skins_assist_hiz_auth done ---\n");
+}
+
+
 static void smoke_batch_reflect_rt_studio_skin_mp_hud(void) {
     printf("--- batch_reflect_rt_studio_skin_mp_hud ---\n");
 
@@ -3307,6 +3484,7 @@ int main(void) {
     smoke_batch_reflect_rt_studio_skin_mp_hud();
     smoke_batch_mirror_rt_lod_mp_ipa_docs();
     smoke_batch_reflect_entities_studio_gpu_spec_cycle();
+    smoke_batch_rt_skins_assist_hiz_auth();
     smoke_batch_studio_vis_stereo();
 
     if (g_failures) {

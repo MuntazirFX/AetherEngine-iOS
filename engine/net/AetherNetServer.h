@@ -141,8 +141,11 @@ u32 aether_net_server_tick_authority_kill_score(aether_net_server_t *s, f32 dt,
 /* Fan out current scores (scoreboard packet) to all clients. Returns clients reached. */
 u32 aether_net_server_fanout_scores(aether_net_server_t *s);
 
-/* Optional kill-assist stub: +1 assist on assister (no frag). Returns true if slot found. */
+/* Kill-assist: +1 assist on assister (no frag) + broadcast assist feed packet. */
 bool aether_net_server_register_assist(aether_net_server_t *s, u32 assister_id, u32 victim_id);
 i32  aether_net_server_get_assists(const aether_net_server_t *s, u32 player_id);
+void aether_net_server_broadcast_assist(aether_net_server_t *s,
+                                        u32 assister_id, const char *assister_name,
+                                        u32 victim_id, const char *victim_name);
 
 #endif /* AETHER_NET_SERVER_H */

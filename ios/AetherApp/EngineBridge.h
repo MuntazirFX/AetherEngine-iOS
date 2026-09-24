@@ -727,4 +727,46 @@ int  engine_player_apply_damage_auth(float amount, unsigned dmg_type,
 int  engine_net_server_register_assist(unsigned assister_id, unsigned victim_id);
 int  engine_net_server_get_assists(unsigned player_id);
 
+/* ---------- Batch: rt-skins / assist-feed / hiz / auth-tick / spec-hp / IPA Actions ---------- */
+int  engine_water_reflect_ent_push_studio(unsigned ent_id, int is_monster,
+                                          float ox, float oy, float oz,
+                                          float hx, float hy, float hz,
+                                          int material, unsigned skin_group, unsigned skin_tex,
+                                          int attach_index,
+                                          float tr, float tg, float tb, float ta);
+unsigned engine_water_reflect_studio_count(void);
+int  engine_water_reflect_ent_get_studio(unsigned index, int *out_mat,
+                                         unsigned *out_sg, unsigned *out_st,
+                                         int *out_attach, float *out_tint4);
+int  engine_water_reflect_rt_draw_plan_studio_flags(int *out_draw_studio, unsigned *out_studio_count);
+
+int  engine_scoreboard_encode_assist(unsigned char *out, unsigned cap,
+                                     unsigned assister_id, const char *assister_name,
+                                     unsigned victim_id, const char *victim_name);
+int  engine_scoreboard_apply_assist(unsigned assister_id, const char *assister_name,
+                                    unsigned victim_id, const char *victim_name);
+
+int  engine_mdl_hiz_init(void);
+int  engine_mdl_hiz_push(float depth, float sx, float sy);
+int  engine_mdl_lod_hiz_gate(float distance, float aabb_radius,
+                             float min_pixels, float max_distance,
+                             float sx, float sy, float depth_ndc,
+                             int *out_lod, int *out_issue, int *out_occluded,
+                             float *out_screen_px);
+int  engine_mdl_lod_gpu_issue_draw_hiz(float distance, float aabb_radius,
+                                       int *out_lod, unsigned *out_verts,
+                                       unsigned *out_tris, int *out_issue,
+                                       int *out_occluded);
+
+int  engine_game_bind_auth_server_demo(void); /* creates ephemeral server for smoke/demo */
+int  engine_game_auth_queue_damage(unsigned killer_id, unsigned victim_id,
+                                   float damage, unsigned dmg_type);
+int  engine_game_tick_auth(float dt, int *out_died, int *out_registered);
+int  engine_game_has_auth_server(void);
+
+int  engine_spectator_set_target_hp(int hp);
+int  engine_spectator_set_target_name(const char *name);
+int  engine_spectator_get_target_hp(void);
+int  engine_spectator_get_target_name(char *out, unsigned cap);
+
 #endif /* ENGINE_BRIDGE_H */

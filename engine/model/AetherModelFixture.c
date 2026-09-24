@@ -1466,3 +1466,125 @@ i32 aether_mdl_lod_gpu_issue_draw_copy(const aether_mdl_lod_table_t *table,
     out->index_count = tc * 3;
     return lod;
 }
+
+void aether_mdl_hiz_init(aether_mdl_hiz_t *hiz) {
+    if (!hiz) return;
+    memset(hiz, 0, sizeof(*hiz));
+    hiz->near_z = 1.f;
+    hiz->far_z = 4096.f;
+    hiz->enabled = true;
+}
+void aether_mdl_hiz_clear(aether_mdl_hiz_t *hiz) {
+    if (!hiz) return;
+    hiz->count = 0;
+}
+void aether_mdl_hiz_set_range(aether_mdl_hiz_t *hiz, f32 near_z, f32 far_z) {
+    if (!hiz) return;
+    hiz->near_z = near_z > 0.f ? near_z : 1.f;
+    hiz->far_z = far_z > hiz->near_z ? far_z : hiz->near_z + 1.f;
+}
+int aether_mdl_hiz_push(aether_mdl_hiz_t *hiz, f32 depth, f32 sx, f32 sy) {
+    if (!hiz || hiz->count >= AETHER_MDL_HIZ_MAX_SAMPLES) return 0;
+    aether_mdl_hiz_sample_t *s = &hiz->samples[hiz->count++];
+    s->depth = depth < 0.f ? 0.f : (depth > 1.f ? 1.f : depth);
+    s->screen_x = sx;
+    s->screen_y = sy;
+    return 1;
+}
+f32 aether_mdl_hiz_sample(const aether_mdl_hiz_t *hiz, f32 sx, f32 sy) {
+    if (!hiz || hiz->count == 0) return 1.f;
+    f32 best_d = 1e9f;
+    f32 best_z = 1.f;
+    for (u32 i = 0; i < hiz->count; ++i) {
+        f32 dx = hiz->samples[i].screen_x - sx;
+        f32 dy = hiz->samples[i].screen_y - sy;
+        f32 d2 = dx * dx + dy * dy;
+        if (d2 < best_d) { best_d = d2; best_z = hiz->samples[i].depth; }
+    }
+    return best_z;
+}
+
+i32 aether_mdl_lod_hiz_gate(const aether_mdl_lod_table_t *table,
+                            const aether_mdl_lod_mesh_set_t *meshes,
+                            const aether_mdl_hiz_t *hiz,
+                            f32 distance, f32 aabb_radius, f32 fov_y_deg,
+                            f32 min_pixels, f32 max_distance,
+                            f32 screen_x, f32 screen_y, f32 depth_ndc,
+                            aether_mdl_hiz_gate_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!table || !meshes) return -1;
+    if (min_pixels <= 0.f) min_pixels = 4.f;
+    if (fov_y_deg <= 0.f) fov_y_deg = 75.f;
+    if (aabb_radius <= 0.f) aabb_radius = 16.f;
+    f32 dist = distance < 1.f ? 1.f : distance;
+    /* Projected screen pixels ≈ radius / (dist * tan(fov/2)) * 1080 */
+    f32 half = fov_y_deg * 0.5f * 0.01745329252f;
+    f32 tan_h = tanf(half);
+    if (tan_h < 1e-4f) tan_h = 1e-4f;
+    f32 screen_px = (aabb_radius / (dist * tan_h)) * 1080.f;
+    i32 lod = aether_mdl_lod_select(table, dist);
+    bool culled = false;
+    bool occ = false;
+    if (max_distance > 0.f && dist > max_distance) culled = true;
+    if (screen_px < min_pixels) culled = true;
+    /* Hi-Z: if stored depth is significantly nearer than object, occluded. */
+    if (hiz && hiz->enabled && hiz->count > 0) {
+        f32 hz = aether_mdl_hiz_sample(hiz, screen_x, screen_y);
+        f32 obj_z = depth_ndc;
+        if (obj_z <= 0.f) {
+            /* Approximate NDC depth from distance */
+            f32 nz = hiz->near_z, fz = hiz->far_z;
+            obj_z = ((dist - nz) / (fz - nz));
+            if (obj_z < 0.f) obj_z = 0.f;
+            if (obj_z > 1.f) obj_z = 1.f;
+        }
+        if (hz + 0.02f < obj_z) occ = true; /* something nearer covers us */
+    }
+    /* If barely passing pixel gate, bump LOD toward lower detail. */
+    if (!culled && !occ && screen_px < min_pixels * 3.f && lod >= 0) {
+        i32 bump = lod + 1;
+        if (table && bump < (i32)table->count) lod = bump;
+        else if (meshes && bump < (i32)meshes->count) lod = bump;
+    }
+    if (out) {
+        out->occluded = occ;
+        out->distance_culled = culled;
+        out->issue = !culled && !occ && lod >= 0;
+        out->lod = lod;
+        out->screen_pixels = screen_px;
+        out->min_pixels = min_pixels;
+        out->distance = dist;
+    }
+    if (culled || occ) return -1;
+    return lod;
+}
+
+i32 aether_mdl_lod_gpu_issue_draw_hiz(const aether_mdl_lod_table_t *table,
+                                      const aether_mdl_lod_mesh_set_t *meshes,
+                                      const aether_mdl_hiz_t *hiz,
+                                      f32 distance, f32 aabb_radius,
+                                      aether_mdl_lod_gpu_draw_t *out,
+                                      aether_mdl_hiz_gate_t *gate) {
+    aether_mdl_hiz_gate_t g;
+    i32 lod = aether_mdl_lod_hiz_gate(table, meshes, hiz, distance, aabb_radius,
+                                      75.f, 4.f, 0.f, 0.5f, 0.5f, 0.f, &g);
+    if (gate) *gate = g;
+    if (out) memset(out, 0, sizeof(*out));
+    if (lod < 0 || !g.issue) {
+        if (out) { out->issue = false; out->distance = distance; out->lod = -1; out->cpu_select = true; }
+        return -1;
+    }
+    /* Force distance that selects the gated LOD (use table distances mid). */
+    f32 use_dist = distance;
+    if (table && lod < (i32)table->count) {
+        /* Prefer a distance inside the selected LOD band. */
+        use_dist = table->levels[lod].max_distance * 0.5f;
+        if (use_dist < 1.f) use_dist = distance;
+    }
+    i32 issued = aether_mdl_lod_gpu_issue_draw(table, meshes, use_dist, out);
+    if (out && issued >= 0) {
+        out->lod = lod;
+        out->distance = distance;
+    }
+    return issued >= 0 ? lod : -1;
+}

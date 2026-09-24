@@ -37,7 +37,8 @@ void aether_scoreboard_dump(const aether_scoreboard_t *sb);
 typedef enum aether_scoreboard_event_kind {
     AETHER_SB_EVENT_JOIN  = 0,
     AETHER_SB_EVENT_LEAVE = 1,
-    AETHER_SB_EVENT_KILL  = 2
+    AETHER_SB_EVENT_KILL   = 2,
+    AETHER_SB_EVENT_ASSIST = 3
 } aether_scoreboard_event_kind_t;
 
 typedef struct aether_scoreboard_event {
@@ -93,6 +94,15 @@ void aether_scoreboard_apply_kill(aether_scoreboard_t *sb,
                                   aether_scoreboard_events_t *ev,
                                   u32 killer_id, const char *killer_name,
                                   u32 victim_id, const char *victim_name, f32 time);
+
+/* Assist feed: encode / apply / push HUD line (assister + victim). */
+u32  aether_scoreboard_encode_assist(u8 *out, u32 cap,
+                                     u32 assister_id, const char *assister_name,
+                                     u32 victim_id, const char *victim_name);
+void aether_scoreboard_apply_assist(aether_scoreboard_t *sb,
+                                    aether_scoreboard_events_t *ev,
+                                    u32 assister_id, const char *assister_name,
+                                    u32 victim_id, const char *victim_name, f32 time);
 
 /* Update frags/deaths on an entry (creates entry if missing). */
 void aether_scoreboard_set_score(aether_scoreboard_t *sb, u32 player_id,
