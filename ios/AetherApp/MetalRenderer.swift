@@ -1,5 +1,5 @@
 // MetalRenderer.swift
-// Renders BSP mesh + MDL model + entities + particles + sky + water + fog. STEP 18B / metal-fog.
+// Renders BSP/world mesh + entities + particles + sky + water + fog. STEP 2g / bsp-metal.
 // Pushes view/proj + frame dt into EngineBridge each draw.
 // AetherEngine-iOS · Clean-room.
 
@@ -264,12 +264,11 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         uploadSkyDome()
         uploadWaterPlane()
 
-        // Try spawning player at info_player_start; fallback to mesh center
+        // Prefer info_player_start (bridge falls back to mesh center).
+        engine_player_spawn_at_start()
         if engine_player_has_start() {
-            engine_player_spawn_at_start()
             print("[MetalRenderer] Player spawned at info_player_start")
         } else {
-            engine_player_spawn_at_mesh_center()
             print("[MetalRenderer] Player spawned at mesh center (no info_player_start)")
         }
 
@@ -279,7 +278,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         particleSeedOrigin = simd_float3(eye[0], eye[1], eye[2] + 24)
         engine_particles_clear()
         let seeded = engine_particles_spawn_burst(eye[0], eye[1], eye[2] + 24, 96)
-        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0), MDL=\(hasMdl), Monsters=\(monsterPositions.count), Particles=\(seeded), Sky=\(skyVertexCount), Water=\(waterVertexCount))")
+        let synth = engine_bsp_mesh_is_synthetic() != 0
+        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0) synthetic=\(synth) tris=\(engine_bsp_mesh_triangle_count()), MDL=\(hasMdl), Monsters=\(monsterPositions.count), Particles=\(seeded), Sky=\(skyVertexCount), Water=\(waterVertexCount))")
     }
 
     private func uploadBspMesh() {
@@ -488,6 +488,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 engine_renderer_set_camera(vb.baseAddress, pb.baseAddress)
             }
         }
+        // Submit DRAW_WORLD through C backend (MetalCallbacks tracks it); GPU mesh drawn below.
         engine_renderer_draw_world()
 
         // ---- Sky (behind world; no depth write) ----

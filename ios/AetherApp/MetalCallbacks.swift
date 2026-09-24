@@ -19,6 +19,7 @@ public enum AetherMetalCommandState {
     public static var skySubmitCount: UInt64 = 0
     public static var waterSubmitCount: UInt64 = 0
     public static var fogSubmitCount: UInt64 = 0
+    public static var worldSubmitCount: UInt64 = 0
     public static var lastFeatureCmd: Int32 = 0
 }
 
@@ -31,6 +32,7 @@ private let kCmdOffViewportH: Int = 152
 
 private let kCmdBeginFrame: Int32 = 1
 private let kCmdSetViewport: Int32 = 3
+private let kCmdDrawWorld: Int32 = 4
 private let kCmdDrawWater: Int32 = 6
 private let kCmdDrawSky: Int32 = 7
 private let kCmdDrawFog: Int32 = 8
@@ -76,6 +78,10 @@ public func aether_metal_submit_swift(_ user: UnsafeMutableRawPointer?,
     if type == kCmdBeginFrame || type == kCmdSetViewport {
         AetherMetalCommandState.view = loadMat4(from: cmd, offset: kCmdOffView)
         AetherMetalCommandState.proj = loadMat4(from: cmd, offset: kCmdOffProj)
+    }
+    if type == kCmdDrawWorld {
+        AetherMetalCommandState.lastFeatureCmd = type
+        AetherMetalCommandState.worldSubmitCount &+= 1
     }
     if type == kCmdDrawWater {
         AetherMetalCommandState.lastFeatureCmd = type

@@ -23,6 +23,8 @@
 #include "../../engine/render/AetherFog.h"
 #include "../../engine/bsp/AetherBSP.h"
 #include "../../engine/bsp/AetherBSPGeometry.h"
+#include "../../engine/bsp/AetherBSPSynthetic.h"
+#include "../../engine/render/AetherWorld.h"
 #include "../../engine/player/AetherPlayer.h"
 #include "../../engine/player/AetherPlayerHealth.h"
 #include "../../engine/player/AetherPlayerInventory.h"
@@ -50,6 +52,7 @@ static aether_fs_t             *g_fs           = NULL;
 static aether_audio_t          *g_audio        = NULL;
 static aether_renderer_t       *g_renderer     = NULL;
 static aether_mesh_t           *g_active_mesh  = NULL;
+static bool                     g_mesh_is_synthetic = false;
 static aether_collision_t      *g_collision    = NULL;
 static aether_texture_atlas_t  *g_atlas        = NULL;
 static aether_model_mesh_t     *g_mdl_mesh     = NULL;
@@ -362,7 +365,13 @@ void engine_renderer_get_proj(float out16[16]) {
     memcpy(out16, proj.m, sizeof proj.m);
 }
 void engine_renderer_draw_world(void) {
-    if (g_renderer) (void)aether_renderer_draw_world(g_renderer);
+    if (!g_renderer) return;
+    aether_render_features_t *feat = aether_renderer_features(g_renderer);
+    if (feat && g_active_mesh) {
+        aether_world_render_set_surface_count(&feat->world,
+            g_active_mesh->index_count / 3u);
+    }
+    (void)aether_renderer_draw_world(g_renderer);
 }
 void engine_renderer_draw_hud(void) {
     if (g_renderer) (void)aether_renderer_draw_hud(g_renderer);
@@ -656,8 +665,10 @@ int engine_bsp_inspect_vfs_text(const char *vp, char *ob, int cap) {
 }
 
 /* ---------- BSP mesh + collision + atlas + entities + monsters ---------- */
-int engine_bsp_mesh_build(const char *vp) {
-    if (!g_fs || !vp) return 0;
+
+/* Shared: activate a loaded BSP into mesh + entities + monsters. Takes ownership of bsp (frees it). */
+static int bridge_activate_bsp(aether_bsp_t *b, bool synthetic) {
+    if (!b) return 0;
 
     if (g_monsters_init) { aether_monster_registry_reset(&g_monsters); g_monsters_init = false; }
     if (g_entity_mgr) { aether_entity_mgr_destroy(g_entity_mgr); g_entity_mgr = NULL; }
@@ -665,55 +676,45 @@ int engine_bsp_mesh_build(const char *vp) {
     if (g_active_mesh){ aether_mesh_free(g_active_mesh);       g_active_mesh = NULL; }
     if (g_collision)  { aether_collision_free(g_collision);    g_collision = NULL; }
     g_player_start_found = false;
+    g_mesh_is_synthetic = false;
 
-    u32 sz = aether_fs_read_file(g_fs, vp, NULL, 0);
-    if (sz == 0 || sz > 64u*1024u*1024u) return 0;
-    u8 *buf = (u8*)malloc(sz);
-    if (!buf) return 0;
-    u32 got = aether_fs_read_file(g_fs, vp, buf, sz);
-    if (got != sz) { free(buf); return 0; }
-    aether_bsp_t *b = aether_bsp_load_from_memory(buf, sz, vp);
-    free(buf);
-    if (!b) return 0;
-
-    /* Palette */
     if (!g_palette.loaded) {
-        u32 wad_sz = aether_fs_read_file(g_fs, "halflife.wad", NULL, 0);
-        if (wad_sz > 0 && wad_sz < 256u*1024u*1024u) {
-            u8 *wbuf = (u8*)malloc(wad_sz);
-            if (wbuf) {
-                u32 gw = aether_fs_read_file(g_fs, "halflife.wad", wbuf, wad_sz);
-                if (gw == wad_sz) {
-                    aether_wad_t *w = aether_wad_load_from_memory(wbuf, wad_sz, "halflife.wad");
-                    if (w) { (void)aether_palette_from_wad(&g_palette, w); aether_wad_free(w); }
+        if (g_fs) {
+            u32 wad_sz = aether_fs_read_file(g_fs, "halflife.wad", NULL, 0);
+            if (wad_sz > 0 && wad_sz < 256u*1024u*1024u) {
+                u8 *wbuf = (u8*)malloc(wad_sz);
+                if (wbuf) {
+                    u32 gw = aether_fs_read_file(g_fs, "halflife.wad", wbuf, wad_sz);
+                    if (gw == wad_sz) {
+                        aether_wad_t *w = aether_wad_load_from_memory(wbuf, wad_sz, "halflife.wad");
+                        if (w) { (void)aether_palette_from_wad(&g_palette, w); aether_wad_free(w); }
+                    }
+                    free(wbuf);
                 }
-                free(wbuf);
             }
         }
         if (!g_palette.loaded) aether_palette_default(&g_palette);
     }
 
-    /* Atlas */
-    g_atlas = aether_texture_atlas_build(b, &g_palette);
+    if (!synthetic)
+        g_atlas = aether_texture_atlas_build(b, &g_palette);
 
-    /* Mesh */
     aether_mesh_t *m = NULL;
     if (aether_mesh_from_bsp(b, g_atlas, &m) != AETHER_OK || !m) {
         aether_bsp_free(b); return 0;
     }
     g_active_mesh = m;
+    g_mesh_is_synthetic = synthetic;
 
-    /* Collision */
     g_collision = aether_collision_build(b);
 
-    /* Runtime entities from BSP */
     g_entity_mgr = aether_entity_mgr_create();
     if (g_entity_mgr) {
         u32 spawned = aether_entity_spawn_from_bsp(g_entity_mgr, b);
-        aether_log(AETHER_LOG_INFO, "bridge", "spawned %u runtime entities", spawned);
+        aether_log(AETHER_LOG_INFO, "bridge", "spawned %u runtime entities%s",
+                   spawned, synthetic ? " (synthetic)" : "");
     }
 
-    /* Monster registry */
     if (g_entity_mgr) {
         aether_monster_registry_init(&g_monsters, NULL);
         g_monsters_init = true;
@@ -747,10 +748,53 @@ int engine_bsp_mesh_build(const char *vp) {
             }
         }
         aether_log(AETHER_LOG_INFO, "bridge", "spawned %u monsters", monster_count);
+
+        aether_vec3_t ps, pa;
+        if (aether_entity_get_player_start(g_entity_mgr, &ps, &pa) == AETHER_OK)
+            g_player_start_found = true;
+    }
+
+    if (g_renderer) {
+        aether_render_features_t *feat = aether_renderer_features(g_renderer);
+        if (feat)
+            aether_world_render_set_surface_count(&feat->world, m->index_count / 3u);
     }
 
     aether_bsp_free(b);
     return 1;
+}
+
+int engine_bsp_mesh_build(const char *vp) {
+    if (!g_fs || !vp) return 0;
+
+    u32 sz = aether_fs_read_file(g_fs, vp, NULL, 0);
+    if (sz == 0 || sz > 64u*1024u*1024u) return 0;
+    u8 *buf = (u8*)malloc(sz);
+    if (!buf) return 0;
+    u32 got = aether_fs_read_file(g_fs, vp, buf, sz);
+    if (got != sz) { free(buf); return 0; }
+    aether_bsp_t *b = aether_bsp_load_from_memory(buf, sz, vp);
+    free(buf);
+    if (!b) return 0;
+    return bridge_activate_bsp(b, false);
+}
+
+int engine_bsp_mesh_build_synthetic(void) {
+    aether_bsp_t *b = aether_bsp_create_synthetic_room();
+    if (!b) return 0;
+    return bridge_activate_bsp(b, true);
+}
+
+int engine_bsp_mesh_build_or_synthetic(const char *vpath) {
+    if (vpath && engine_bsp_mesh_build(vpath) == 1) return 1;
+    aether_log(AETHER_LOG_WARN, "bridge",
+               "BSP '%s' unavailable — using synthetic demo room",
+               vpath ? vpath : "(null)");
+    return engine_bsp_mesh_build_synthetic();
+}
+
+int engine_bsp_mesh_is_synthetic(void) {
+    return g_mesh_is_synthetic ? 1 : 0;
 }
 
 int  engine_bsp_mesh_vertex_count(void)   { return g_active_mesh ? (int)g_active_mesh->vertex_count : 0; }
@@ -775,6 +819,7 @@ int engine_bsp_mesh_copy_indices(uint32_t *out, int maxi) {
     return n;
 }
 void engine_bsp_mesh_release(void) {
+    g_mesh_is_synthetic = false;
     if (g_monsters_init) { aether_monster_registry_reset(&g_monsters); g_monsters_init = false; }
     if (g_entity_mgr) { aether_entity_mgr_destroy(g_entity_mgr); g_entity_mgr = NULL; }
     if (g_atlas)      { aether_texture_atlas_free(g_atlas); g_atlas = NULL; }
@@ -1273,9 +1318,9 @@ int engine_vgui_activate_item(int index) {
 }
 
 int engine_vgui_new_game(void) {
-    if (!g_game_manager || !g_fs) return 0;
+    if (!g_game_manager) return 0;
     engine_launch_game("valve");
-    return engine_bsp_mesh_build("maps/c0a0.bsp");
+    return engine_bsp_mesh_build_or_synthetic("maps/c0a0.bsp");
 }
 
 /* ---------- Utility ---------- */

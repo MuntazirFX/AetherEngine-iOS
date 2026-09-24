@@ -149,6 +149,13 @@ void engine_bsp_mesh_get_bounds(float out_min[3], float out_max[3], float out_ce
 int  engine_bsp_mesh_copy_vertices(float *out, int max_vertices);
 int  engine_bsp_mesh_copy_indices(uint32_t *out, int max_indices);
 void engine_bsp_mesh_release(void);
+/* Synthetic demo room (no copyrighted .bsp). Builds mesh + spawns entities. */
+int  engine_bsp_mesh_build_synthetic(void);
+/* Try vpath; on failure fall back to synthetic demo room. */
+int  engine_bsp_mesh_build_or_synthetic(const char *vpath);
+/* 1 if the active mesh came from aether_bsp_create_synthetic_room. */
+int  engine_bsp_mesh_is_synthetic(void);
+#define ENGINE_CMD_DRAW_WORLD 4
 
 /* ---------- Texture atlas ---------- */
 int  engine_texture_dump_wad(const char *wad_vpath);
