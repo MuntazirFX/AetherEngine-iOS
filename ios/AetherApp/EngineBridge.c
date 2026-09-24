@@ -19,6 +19,7 @@
 #include "../../engine/render/AetherRenderFeatures.h"
 #include "../../engine/render/AetherParticle.h"
 #include "../../engine/render/AetherSky.h"
+#include "../../engine/render/AetherWater.h"
 #include "../../engine/bsp/AetherBSP.h"
 #include "../../engine/bsp/AetherBSPGeometry.h"
 #include "../../engine/player/AetherPlayer.h"
@@ -468,6 +469,77 @@ int engine_sky_copy_render(float *out_xyz_rgba, int max_vertices) {
 int engine_sky_render_vertex_capacity(void) {
     return (int)aether_sky_render_vertex_count();
 }
+
+
+/* ---------- Water ---------- */
+static aether_water_t *bridge_water(void) {
+    if (!g_renderer) return NULL;
+    aether_render_features_t *f = aether_renderer_features(g_renderer);
+    return f ? &f->water : NULL;
+}
+
+int engine_water_enabled(void) {
+    aether_water_t *w = bridge_water();
+    return (w && w->enabled) ? 1 : 0;
+}
+
+void engine_water_set_enabled(bool enabled) {
+    aether_water_t *w = bridge_water();
+    if (w) aether_water_set_enabled(w, enabled);
+}
+
+float engine_water_wave_time(void) {
+    aether_water_t *w = bridge_water();
+    return w ? w->wave_time : 0.0f;
+}
+
+float engine_water_opacity(void) {
+    aether_water_t *w = bridge_water();
+    return w ? w->opacity : 0.0f;
+}
+
+void engine_water_set_color(float r, float g, float b, float a) {
+    aether_water_t *w = bridge_water();
+    if (!w) return;
+    f32 rgba[4] = { r, g, b, a };
+    (void)aether_water_set_color(w, rgba);
+}
+
+void engine_water_set_size(float size) {
+    aether_water_t *w = bridge_water();
+    if (w) (void)aether_water_set_size(w, size);
+}
+
+void engine_water_set_height(float height) {
+    aether_water_t *w = bridge_water();
+    if (w) (void)aether_water_set_height(w, height);
+}
+
+void engine_water_set_origin(float x, float y) {
+    aether_water_t *w = bridge_water();
+    if (w) (void)aether_water_set_origin(w, x, y);
+}
+
+void engine_water_set_wave(float speed, float amp, float freq) {
+    aether_water_t *w = bridge_water();
+    if (w) (void)aether_water_set_wave(w, speed, amp, freq);
+}
+
+int engine_water_copy_render(float *out_xyz_uv_rgba, int max_vertices) {
+    aether_water_t *w = bridge_water();
+    if (!w || !out_xyz_uv_rgba || max_vertices <= 0) return 0;
+    /* Layout matches aether_water_vertex_t (9 floats). */
+    return (int)aether_water_copy_render(
+        w,
+        (aether_water_vertex_t *)out_xyz_uv_rgba,
+        (u32)max_vertices);
+}
+
+int engine_water_render_vertex_capacity(void) {
+    return (int)aether_water_render_vertex_count();
+}
+
+
 
 
 

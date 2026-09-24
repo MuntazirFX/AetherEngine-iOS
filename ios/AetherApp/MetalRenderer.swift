@@ -1,5 +1,5 @@
 // MetalRenderer.swift
-// Renders BSP mesh + MDL model + entities + particles + sky. STEP 18B / metal-sky.
+// Renders BSP mesh + MDL model + entities + particles + sky + water. STEP 18B / metal-water.
 // Pushes view/proj + frame dt into EngineBridge each draw.
 // AetherEngine-iOS · Clean-room.
 
@@ -62,6 +62,12 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     var skyBuffer: MTLBuffer?
     var skyVertexCount: Int = 0
 
+    // Water plane (driven by AetherWater via EngineBridge)
+    var waterPipeline: MTLRenderPipelineState?
+    var waterDepthState: MTLDepthStencilState?
+    var waterBuffer: MTLBuffer?
+    var waterVertexCount: Int = 0
+
     private var lastTime: CFTimeInterval = CACurrentMediaTime()
 
     init?(mtkView: MTKView) {
@@ -82,6 +88,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         buildMdlPipeline(mtkView: mtkView)
         buildParticlePipeline(mtkView: mtkView)
         buildSkyPipeline(mtkView: mtkView)
+        buildWaterPipeline(mtkView: mtkView)
         buildDepthState()
         buildSampler()
 
@@ -166,6 +173,31 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         catch { print("[MetalRenderer] sky pipeline error: \(error)") }
     }
 
+    private func buildWaterPipeline(mtkView: MTKView) {
+        guard let lib = device.makeDefaultLibrary(),
+              let vfn = lib.makeFunction(name: "aether_water_vertex"),
+              let ffn = lib.makeFunction(name: "aether_water_fragment") else { return }
+        let vd = MTLVertexDescriptor()
+        vd.attributes[0].format = .float3; vd.attributes[0].offset = 0;  vd.attributes[0].bufferIndex = 0
+        vd.attributes[1].format = .float2; vd.attributes[1].offset = 12; vd.attributes[1].bufferIndex = 0
+        vd.attributes[2].format = .float4; vd.attributes[2].offset = 20; vd.attributes[2].bufferIndex = 0
+        vd.layouts[0].stride = 36
+        vd.layouts[0].stepFunction = .perVertex
+        let d = MTLRenderPipelineDescriptor()
+        d.vertexFunction = vfn; d.fragmentFunction = ffn; d.vertexDescriptor = vd
+        d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+        d.colorAttachments[0].isBlendingEnabled = true
+        d.colorAttachments[0].rgbBlendOperation = .add
+        d.colorAttachments[0].alphaBlendOperation = .add
+        d.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        d.colorAttachments[0].sourceAlphaBlendFactor = .one
+        d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        d.depthAttachmentPixelFormat = mtkView.depthStencilPixelFormat
+        do { waterPipeline = try device.makeRenderPipelineState(descriptor: d) }
+        catch { print("[MetalRenderer] water pipeline error: \(error)") }
+    }
+
     private func buildDepthState() {
         let d = MTLDepthStencilDescriptor()
         d.depthCompareFunction = .less; d.isDepthWriteEnabled = true
@@ -176,6 +208,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let skyD = MTLDepthStencilDescriptor()
         skyD.depthCompareFunction = .lessEqual; skyD.isDepthWriteEnabled = false
         skyDepthState = device.makeDepthStencilState(descriptor: skyD)
+        let waterD = MTLDepthStencilDescriptor()
+        waterD.depthCompareFunction = .less; waterD.isDepthWriteEnabled = false
+        waterDepthState = device.makeDepthStencilState(descriptor: waterD)
     }
 
     private func buildSampler() {
@@ -192,6 +227,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         uploadMdlMesh()
         buildMonsterBoxes()
         uploadSkyDome()
+        uploadWaterPlane()
 
         // Try spawning player at info_player_start; fallback to mesh center
         if engine_player_has_start() {
@@ -208,7 +244,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         particleSeedOrigin = simd_float3(eye[0], eye[1], eye[2] + 24)
         engine_particles_clear()
         let seeded = engine_particles_spawn_burst(eye[0], eye[1], eye[2] + 24, 96)
-        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0), MDL=\(hasMdl), Monsters=\(monsterPositions.count), Particles=\(seeded), Sky=\(skyVertexCount))")
+        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0), MDL=\(hasMdl), Monsters=\(monsterPositions.count), Particles=\(seeded), Sky=\(skyVertexCount), Water=\(waterVertexCount))")
     }
 
     private func uploadBspMesh() {
@@ -298,6 +334,33 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         skyBuffer = device.makeBuffer(bytes: packed, length: bytes, options: .storageModeShared)
         _ = engine_sky_set_name("desert")
         print("[MetalRenderer] Sky dome verts=\(skyVertexCount) faces=\(engine_sky_face_count()) r=\(engine_sky_radius())")
+    }
+
+    private func uploadWaterPlane() {
+        guard engine_water_enabled() != 0 else {
+            waterVertexCount = 0
+            return
+        }
+        // Place a demo pool slightly below the player eye / mesh center.
+        var eye = [Float](repeating: 0, count: 3)
+        engine_player_get_eye(&eye)
+        engine_water_set_origin(eye[0], eye[1])
+        engine_water_set_height(eye[2] - 80)
+        engine_water_set_size(384)
+        engine_water_set_wave(1.2, 8.0, 0.04)
+        engine_water_set_color(0.12, 0.42, 0.62, 0.70)
+
+        let cap = Int(engine_water_render_vertex_capacity())
+        guard cap > 0 else { waterVertexCount = 0; return }
+        var packed = [Float](repeating: 0, count: cap * 9)
+        let n = packed.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_water_copy_render(buf.baseAddress, Int32(cap)))
+        }
+        waterVertexCount = Int(n)
+        guard waterVertexCount > 0 else { return }
+        let bytes = waterVertexCount * 36
+        waterBuffer = device.makeBuffer(bytes: packed, length: max(bytes, cap * 36), options: .storageModeShared)
+        print("[MetalRenderer] Water plane verts=\(waterVertexCount) t=\(engine_water_wave_time())")
     }
 
     // Build a 1x1x1 box for each monster at its position
@@ -395,6 +458,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         // ---- Sky (behind world; no depth write) ----
         syncAndDrawSky(encoder: enc, viewMat: viewMat, projMat: projMat, eye: eyeV)
 
+        // ---- Water (animated plane from AetherWater) ----
+        syncAndDrawWater(encoder: enc, viewMat: viewMat, projMat: projMat)
+
         // ---- BSP ----
         if let pipeline = bspPipeline, let vb = vertexBuffer, let ib = indexBuffer, indexCount > 0 {
             enc.setRenderPipelineState(pipeline)
@@ -465,6 +531,54 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
 
+
+    private func syncAndDrawWater(encoder enc: MTLRenderCommandEncoder,
+                                  viewMat: simd_float4x4,
+                                  projMat: simd_float4x4) {
+        guard engine_water_enabled() != 0, let pipeline = waterPipeline else { return }
+
+        let cap = Int(engine_water_render_vertex_capacity())
+        guard cap > 0 else { return }
+        var packed = [Float](repeating: 0, count: cap * 9)
+        let n = packed.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_water_copy_render(buf.baseAddress, Int32(cap)))
+        }
+        waterVertexCount = Int(n)
+        guard waterVertexCount > 0 else { return }
+
+        let bytes = waterVertexCount * 36
+        if waterBuffer == nil || waterBuffer!.length < bytes {
+            waterBuffer = device.makeBuffer(length: max(bytes, cap * 36), options: .storageModeShared)
+        }
+        if let buf = waterBuffer {
+            packed.withUnsafeBytes { raw in
+                if let base = raw.baseAddress {
+                    buf.contents().copyMemory(from: base, byteCount: bytes)
+                }
+            }
+        }
+
+        engine_renderer_draw_feature(Int32(ENGINE_CMD_DRAW_WATER))
+
+        struct WaterUniforms {
+            var view: simd_float4x4
+            var proj: simd_float4x4
+            var time: Float
+            var pad0: Float = 0
+            var pad1: Float = 0
+            var pad2: Float = 0
+        }
+        var WU = WaterUniforms(view: viewMat, proj: projMat, time: engine_water_wave_time())
+        enc.setRenderPipelineState(pipeline)
+        if let wd = waterDepthState { enc.setDepthStencilState(wd) }
+        enc.setCullMode(.none)
+        if let vb = waterBuffer {
+            enc.setVertexBuffer(vb, offset: 0, index: 0)
+        }
+        enc.setVertexBytes(&WU, length: MemoryLayout<WaterUniforms>.stride, index: 1)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: waterVertexCount)
+        if let ds = depthState { enc.setDepthStencilState(ds) }
+    }
 
     private func syncAndDrawSky(encoder enc: MTLRenderCommandEncoder,
                                 viewMat: simd_float4x4,

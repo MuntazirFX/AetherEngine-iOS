@@ -101,6 +101,23 @@ int   engine_sky_render_vertex_capacity(void);
 /* AETHER_CMD_DRAW_SKY = 7 — submit feature draw through backend. */
 #define ENGINE_CMD_DRAW_SKY 7
 
+/* ---------- Water (render-feature animated plane) ---------- */
+int   engine_water_enabled(void);
+void  engine_water_set_enabled(bool enabled);
+float engine_water_wave_time(void);
+float engine_water_opacity(void);
+void  engine_water_set_color(float r, float g, float b, float a);
+void  engine_water_set_size(float size);
+void  engine_water_set_height(float height);
+void  engine_water_set_origin(float x, float y);
+void  engine_water_set_wave(float speed, float amp, float freq);
+/* Copy water verts as flat floats: [x,y,z,u,v,r,g,b,a] * N. Returns N. */
+int   engine_water_copy_render(float *out_xyz_uv_rgba, int max_vertices);
+int   engine_water_render_vertex_capacity(void);
+/* AETHER_CMD_DRAW_WATER = 6 — submit feature draw through backend. */
+#define ENGINE_CMD_DRAW_WATER 6
+
+
 /* ---------- BSP ---------- */
 int  engine_bsp_inspect(const char *bsp_path);
 int  engine_bsp_inspect_vfs(const char *vpath);
