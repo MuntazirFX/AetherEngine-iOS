@@ -18,6 +18,7 @@ typedef struct aether_lightmap {
     u32  style_count;
     bool enabled;
     u8  *rgba;      /* optional RGBA8 atlas (grayscale stub or baked); may be NULL */
+    u8  *base_rgba; /* immutable base atlas for ping-pong style animate (may be NULL) */
     bool stub;      /* true when rgba was generated procedurally */
     u32  face_tiles;/* how many face tiles the stub was laid out for (0 = world-space) */
 } aether_lightmap_t;
@@ -75,10 +76,22 @@ void aether_lightstyles_set(aether_lightstyles_t *ls, u32 index, const char *pat
 void aether_lightstyles_update(aether_lightstyles_t *ls, f32 time);
 f32  aether_lightstyles_value(const aether_lightstyles_t *ls, u32 index);
 
-/* Modulate atlas RGB by style 0 (or style_index) current value — host/Metal stub. */
+/* Modulate atlas RGB by style 0 (or style_index) current value — host/Metal stub.
+ * NOTE: destructive in-place; prefer apply_style_pingpong after capture_base. */
 aether_result_t aether_lightmap_apply_style(aether_lightmap_t *lm,
                                             const aether_lightstyles_t *ls,
                                             u32 style_index);
+
+/* Snapshot current rgba → base_rgba (dual buffer). Safe to call repeatedly. */
+aether_result_t aether_lightmap_capture_base(aether_lightmap_t *lm);
+
+/* Ping-pong: copy base→rgba then modulate by style (seamless loop, no accum). */
+aether_result_t aether_lightmap_apply_style_pingpong(aether_lightmap_t *lm,
+                                                     const aether_lightstyles_t *ls,
+                                                     u32 style_index);
+
+/* True when base_rgba is allocated and matches atlas size. */
+bool aether_lightmap_has_base(const aether_lightmap_t *lm);
 
 #ifdef __cplusplus
 }

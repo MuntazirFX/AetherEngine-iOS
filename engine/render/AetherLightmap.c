@@ -20,6 +20,7 @@ aether_result_t aether_lightmap_init(aether_lightmap_t *lm, u32 w, u32 h, u32 st
 void aether_lightmap_shutdown(aether_lightmap_t *lm) {
     if (!lm) return;
     free(lm->rgba);
+    free(lm->base_rgba);
     memset(lm, 0, sizeof(*lm));
 }
 
@@ -112,12 +113,14 @@ aether_result_t aether_lightmap_generate_stub(aether_lightmap_t *lm, u32 width, 
     }
 
     free(lm->rgba);
+    free(lm->base_rgba); lm->base_rgba = NULL;
     lm->rgba = buf;
     lm->width = width;
     lm->height = height;
     lm->stub = true;
     lm->face_tiles = tiles;
     lm->enabled = true;
+    (void)aether_lightmap_capture_base(lm);
     aether_log(AETHER_LOG_INFO, "lightmap",
                "stub atlas %ux%u tiles=%u (procedural, no assets)",
                width, height, tiles);
@@ -294,12 +297,14 @@ aether_result_t aether_lightmap_bake_from_bsp(aether_lightmap_t *lm,
     }
 
     free(lm->rgba);
+    free(lm->base_rgba); lm->base_rgba = NULL;
     lm->rgba = buf;
     lm->width = W;
     lm->height = H;
     lm->stub = false;
     lm->face_tiles = tiles;
     lm->enabled = true;
+    (void)aether_lightmap_capture_base(lm);
     /* Prefer texinfo-based LUV unpack when present; else face-run tiling. */
     aether_result_t uv;
     if (aether_bsp_texinfo_count(bsp) > 0 && mesh->face_ranges && mesh->face_count > 0)
@@ -445,4 +450,34 @@ aether_result_t aether_lightmap_apply_style(aether_lightmap_t *lm,
         lm->rgba[idx+2] = (u8)((f32)lm->rgba[idx+2] * scale);
     }
     return AETHER_OK;
+}
+
+
+aether_result_t aether_lightmap_capture_base(aether_lightmap_t *lm) {
+    if (!lm || !lm->rgba || lm->width == 0 || lm->height == 0)
+        return AETHER_ERR_INVALID_ARG;
+    u32 bytes = lm->width * lm->height * 4u;
+    u8 *nb = (u8 *)realloc(lm->base_rgba, bytes);
+    if (!nb) return AETHER_ERR_OUT_OF_MEM;
+    lm->base_rgba = nb;
+    memcpy(lm->base_rgba, lm->rgba, bytes);
+    return AETHER_OK;
+}
+
+bool aether_lightmap_has_base(const aether_lightmap_t *lm) {
+    return lm && lm->base_rgba && lm->rgba && lm->width > 0 && lm->height > 0;
+}
+
+aether_result_t aether_lightmap_apply_style_pingpong(aether_lightmap_t *lm,
+                                                     const aether_lightstyles_t *ls,
+                                                     u32 style_index) {
+    if (!lm || !ls || !lm->rgba || lm->width == 0 || lm->height == 0)
+        return AETHER_ERR_INVALID_ARG;
+    if (!lm->base_rgba) {
+        aether_result_t r = aether_lightmap_capture_base(lm);
+        if (r != AETHER_OK) return r;
+    }
+    u32 bytes = lm->width * lm->height * 4u;
+    memcpy(lm->rgba, lm->base_rgba, bytes);
+    return aether_lightmap_apply_style(lm, ls, style_index);
 }

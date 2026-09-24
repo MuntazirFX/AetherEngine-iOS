@@ -426,6 +426,26 @@ int  engine_interact_trace(float eye_x, float eye_y, float eye_z,
                            float yaw_deg, float pitch_deg, float max_dist,
                            float *out_hit_xyz, char *out_classname, int classname_cap);
 
+
+/* ---------- Batch: postfx offscreen / lightmap pingpong / delta+predict ---------- */
+int  engine_postfx_ensure_offscreen(int width, int height);
+int  engine_postfx_has_offscreen(void);
+int  engine_postfx_fill_uniforms(float *out4); /* brightness,gamma,exposure,enabled */
+int  engine_lightmap_capture_base(void);
+int  engine_lightmap_apply_style_pingpong(unsigned style_index);
+int  engine_lightmap_has_base(void);
+int  engine_dynlights_fill_array(float *out, int max_floats);
+int  engine_decals_clip_to_world(float *out_xyz_uv_fade_rgba, int max_verts);
+int  engine_net_delta_encode(const void *baseline_snap, const void *current_snap,
+                             unsigned char *out, int cap);
+int  engine_net_delta_apply(const unsigned char *data, int size);
+int  engine_net_interp_push_demo(unsigned tick, float time, float frac);
+int  engine_net_interp_origin(unsigned player_id, float out[3]);
+int  engine_net_predict_local_step(float forward, float side, float yaw_deg, float dt);
+int  engine_net_predict_reconcile_demo(float blend);
+int  engine_net_predict_get_origin(float out[3]);
+int  engine_mdl_fixture_extract_verts(void); /* write fixture, extract; returns vertex_count */
+
 /* ---------- Utility ---------- */
 const char *engine_base_path(void);
 const char *engine_version(void);

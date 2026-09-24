@@ -127,6 +127,53 @@ u32 aether_decals_copy_quads(const aether_decals_t *d,
 
 #include "../bsp/AetherBSPGeometry.h"
 
+
+typedef struct { f32 u, v; f32 x, y, z; } aether_decal_clip_vert_t;
+
+/* Clip polygon against one half-plane: keep side where ax*u + ay*v + c >= 0. */
+static u32 clip_poly_halfplane(const aether_decal_clip_vert_t *in, u32 nin,
+                               aether_decal_clip_vert_t *out, u32 max_out,
+                               f32 ax, f32 ay, f32 c) {
+    if (nin == 0 || !out || max_out == 0) return 0;
+    u32 w = 0;
+    for (u32 i = 0; i < nin; ++i) {
+        const aether_decal_clip_vert_t *A = &in[i];
+        const aether_decal_clip_vert_t *B = &in[(i + 1) % nin];
+        f32 da = ax * A->u + ay * A->v + c;
+        f32 db = ax * B->u + ay * B->v + c;
+        int ain = da >= -1e-5f;
+        int bin = db >= -1e-5f;
+        if (ain && bin) {
+            if (w < max_out) out[w++] = *B;
+        } else if (ain && !bin) {
+            /* Leaving: emit intersection */
+            f32 t = da / (da - db);
+            if (t < 0.f) t = 0.f;
+            if (t > 1.f) t = 1.f;
+            aether_decal_clip_vert_t I;
+            I.u = A->u + (B->u - A->u) * t;
+            I.v = A->v + (B->v - A->v) * t;
+            I.x = A->x + (B->x - A->x) * t;
+            I.y = A->y + (B->y - A->y) * t;
+            I.z = A->z + (B->z - A->z) * t;
+            if (w < max_out) out[w++] = I;
+        } else if (!ain && bin) {
+            f32 t = da / (da - db);
+            if (t < 0.f) t = 0.f;
+            if (t > 1.f) t = 1.f;
+            aether_decal_clip_vert_t I;
+            I.u = A->u + (B->u - A->u) * t;
+            I.v = A->v + (B->v - A->v) * t;
+            I.x = A->x + (B->x - A->x) * t;
+            I.y = A->y + (B->y - A->y) * t;
+            I.z = A->z + (B->z - A->z) * t;
+            if (w < max_out) out[w++] = I;
+            if (w < max_out) out[w++] = *B;
+        }
+    }
+    return w;
+}
+
 u32 aether_decals_project_onto_mesh(const aether_decals_t *d,
                                     const aether_mesh_t *mesh,
                                     aether_decal_quad_vertex_t *out, u32 max_out) {
@@ -134,6 +181,8 @@ u32 aether_decals_project_onto_mesh(const aether_decals_t *d,
         return 0;
     u32 w = 0;
     u32 tris = mesh->index_count / 3u;
+    aether_decal_clip_vert_t poly[16], tmp[16];
+
     for (u32 di = 0; di < d->count; ++di) {
         const aether_decal_t *dec = &d->items[di];
         if (!dec->active) continue;
@@ -151,8 +200,6 @@ u32 aether_decals_project_onto_mesh(const aether_decals_t *d,
 
         f32 tx, ty, tz, bx, by, bz;
         orthonormal_basis(nx, ny, nz, &tx, &ty, &tz, &bx, &by, &bz);
-
-        /* Plane distance of decal origin along normal — used for face coplanarity. */
         f32 d0 = -(nx * dec->position[0] + ny * dec->position[1] + nz * dec->position[2]);
 
         for (u32 t = 0; t < tris && w + 3 <= max_out; ++t) {
@@ -170,7 +217,6 @@ u32 aether_decals_project_onto_mesh(const aether_decals_t *d,
             f32 ndot = fnx*nx + fny*ny + fnz*nz;
             if (ndot < 0.25f) continue;
 
-            /* Coplanar-ish with decal plane? */
             f32 plane_err = 0.f;
             for (int k = 0; k < 3; ++k) {
                 f32 pd = nx*vs[k]->x + ny*vs[k]->y + nz*vs[k]->z + d0;
@@ -178,34 +224,51 @@ u32 aether_decals_project_onto_mesh(const aether_decals_t *d,
             }
             if (plane_err > 8.f) continue;
 
-            f32 local[3][2];
-            f32 umin = 1e9f, umax = -1e9f, vmin = 1e9f, vmax = -1e9f;
+            /* Build tangent-space triangle */
+            u32 npoly = 3;
             for (int k = 0; k < 3; ++k) {
                 f32 dx = vs[k]->x - dec->position[0];
                 f32 dy = vs[k]->y - dec->position[1];
                 f32 dz = vs[k]->z - dec->position[2];
-                local[k][0] = dx*tx + dy*ty + dz*tz;
-                local[k][1] = dx*bx + dy*by + dz*bz;
-                if (local[k][0] < umin) umin = local[k][0];
-                if (local[k][0] > umax) umax = local[k][0];
-                if (local[k][1] < vmin) vmin = local[k][1];
-                if (local[k][1] > vmax) vmax = local[k][1];
+                poly[k].u = dx*tx + dy*ty + dz*tz;
+                poly[k].v = dx*bx + dy*by + dz*bz;
+                poly[k].x = vs[k]->x;
+                poly[k].y = vs[k]->y;
+                poly[k].z = vs[k]->z;
             }
-            /* Tangent-space AABB overlap with decal square [-hs, hs]^2 */
-            if (umax < -hs || umin > hs || vmax < -hs || vmin > hs) continue;
 
+            /* Sutherland–Hodgman clip against square [-hs,hs]^2 */
+            npoly = clip_poly_halfplane(poly, npoly, tmp, 16, -1.f, 0.f, hs); /* u <= +hs */
+            if (npoly < 3) continue;
+            npoly = clip_poly_halfplane(tmp, npoly, poly, 16,  1.f, 0.f, hs); /* u >= -hs */
+            if (npoly < 3) continue;
+            npoly = clip_poly_halfplane(poly, npoly, tmp, 16,  0.f,-1.f, hs); /* v <= +hs */
+            if (npoly < 3) continue;
+            npoly = clip_poly_halfplane(tmp, npoly, poly, 16,  0.f, 1.f, hs); /* v >= -hs */
+            if (npoly < 3) continue;
+
+            /* Fan triangulate clipped polygon */
             f32 eps = 0.4f;
-            for (int k = 0; k < 3; ++k) {
-                aether_decal_quad_vertex_t *o = &out[w++];
-                o->x = vs[k]->x + nx * eps;
-                o->y = vs[k]->y + ny * eps;
-                o->z = vs[k]->z + nz * eps;
-                o->u = 0.5f + local[k][0] / (hs * 2.f);
-                o->v = 0.5f + local[k][1] / (hs * 2.f);
-                o->fade = fade;
-                o->r = 0.9f; o->g = 0.2f; o->b = 0.15f; o->a = 0.8f * fade;
+            for (u32 k = 1; k + 1 < npoly && w + 3 <= max_out; ++k) {
+                aether_decal_clip_vert_t *cv[3] = { &poly[0], &poly[k], &poly[k+1] };
+                for (int j = 0; j < 3; ++j) {
+                    aether_decal_quad_vertex_t *o = &out[w++];
+                    o->x = cv[j]->x + nx * eps;
+                    o->y = cv[j]->y + ny * eps;
+                    o->z = cv[j]->z + nz * eps;
+                    o->u = 0.5f + cv[j]->u / (hs * 2.f);
+                    o->v = 0.5f + cv[j]->v / (hs * 2.f);
+                    o->fade = fade;
+                    o->r = 0.9f; o->g = 0.2f; o->b = 0.15f; o->a = 0.8f * fade;
+                }
             }
         }
     }
     return w;
+}
+
+u32 aether_decals_clip_to_world(const aether_decals_t *d,
+                                const aether_mesh_t *mesh,
+                                aether_decal_quad_vertex_t *out, u32 max_out) {
+    return aether_decals_project_onto_mesh(d, mesh, out, max_out);
 }

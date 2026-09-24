@@ -60,6 +60,9 @@
 #include "AetherPostFX.h"
 #include "AetherInteract.h"
 #include "AetherModelFixture.h"
+#include "AetherNetDelta.h"
+#include "AetherNetInterp.h"
+#include "AetherNetPredict.h"
 
 #include <unistd.h>
 #include "AetherMath.h"
@@ -1608,6 +1611,162 @@ int main(void) {
             expect(aether_interact_ray_aabb(eye, dir, 100.f, tg.mins, tg.maxs, &t, pt),
                    "b2_interact_aabb");
             expect(t > 0.f && t < 100.f, "b2_interact_dist");
+        }
+    }
+
+
+
+
+    /* ========== batch_postfx_lightmap_mdl_predict ========== */
+    printf("--- batch_postfx_lightmap_mdl_predict ---\n");
+    {
+        /* 1. PostFX offscreen + uniforms (enabled when target set) */
+        {
+            aether_postfx_t fx;
+            aether_postfx_init(&fx);
+            aether_postfx_set_from_cvars(&fx, 0.05f, 1.2f);
+            expect(!aether_postfx_has_offscreen(&fx), "b3_postfx_no_target");
+            expect(aether_postfx_ensure_offscreen(&fx, 1280, 720) == AETHER_OK, "b3_postfx_offscreen");
+            expect(aether_postfx_has_offscreen(&fx) && aether_postfx_target_width(&fx) == 1280,
+                   "b3_postfx_size");
+            aether_postfx_uniforms_t u;
+            aether_postfx_fill_uniforms(&fx, &u);
+            expect(u.enabled > 0.5f && u.gamma == 1.2f && u.brightness == 0.05f, "b3_postfx_uniforms");
+            aether_postfx_vertex_t fv[6];
+            expect(aether_postfx_copy_fullscreen(fv, 6) == 6, "b3_postfx_fs");
+        }
+
+        /* 2. Dual / ping-pong lightmap styles */
+        {
+            aether_lightstyles_t ls;
+            aether_lightstyles_init(&ls);
+            aether_lightmap_t lm;
+            expect(aether_lightmap_init(&lm, 32, 32, 1) == AETHER_OK, "b3_lm_init");
+            expect(aether_lightmap_generate_stub(&lm, 32, 32, 4) == AETHER_OK, "b3_lm_stub");
+            expect(aether_lightmap_has_base(&lm), "b3_lm_base_auto");
+            u8 base0 = lm.base_rgba[0];
+            aether_lightstyles_update(&ls, 0.0f);
+            expect(aether_lightmap_apply_style_pingpong(&lm, &ls, 2) == AETHER_OK, "b3_lm_pp0");
+            u8 a = lm.rgba[0];
+            aether_lightstyles_update(&ls, 2.0f);
+            expect(aether_lightmap_apply_style_pingpong(&lm, &ls, 2) == AETHER_OK, "b3_lm_pp1");
+            u8 b = lm.rgba[0];
+            /* Base untouched; animated values differ across style frames. */
+            expect(lm.base_rgba[0] == base0, "b3_lm_base_stable");
+            expect(a != b || ls.strings[2][0] != 0, "b3_lm_pp_anim");
+            aether_lightmap_shutdown(&lm);
+        }
+
+        /* 3. MDL fixture embeds triangle studio mesh (verts > 0) */
+        {
+            char mdlpath[] = "/tmp/aether_fixture_tri.mdl";
+            u32 mw = aether_mdl_write_fixture_file(mdlpath);
+            expect(mw > 300, "b3_mdl_write");
+            aether_mdl_t *m = aether_mdl_load(mdlpath);
+            expect(m && aether_mdl_is_valid(m), "b3_mdl_load");
+            aether_model_mesh_t *mesh = NULL;
+            expect(aether_mdl_geometry_extract(m, &mesh) == AETHER_OK && mesh, "b3_mdl_extract");
+            expect(mesh->vertex_count >= 3 && mesh->triangle_count >= 1, "b3_mdl_verts");
+            aether_mdl_geometry_free(mesh);
+            aether_mdl_free(m);
+        }
+
+        /* 4. Client-side interpolation between snapshots */
+        {
+            aether_net_interp_t it;
+            aether_net_interp_init(&it);
+            aether_net_snapshot_t s0, s1;
+            aether_net_snapshot_make_demo(&s0, 1, 0.f);
+            aether_net_snapshot_make_demo(&s1, 2, 0.05f);
+            s0.players[0].origin[0] = 0.f;
+            s1.players[0].origin[0] = 100.f;
+            aether_net_interp_push(&it, &s0);
+            aether_net_interp_push(&it, &s1);
+            aether_net_interp_set_fraction(&it, 0.5f);
+            f32 o[3];
+            expect(aether_net_interp_origin(&it, 1, o) == 1, "b3_interp_found");
+            expect(o[0] > 40.f && o[0] < 60.f, "b3_interp_lerp");
+            aether_net_snapshot_t sampled;
+            aether_net_interp_sample(&it, &sampled);
+            expect(sampled.player_count == 2, "b3_interp_sample");
+        }
+
+        /* 5. Delta snapshot encode/apply */
+        {
+            aether_net_snapshot_t base, cur;
+            aether_net_snapshot_make_demo(&base, 10, 1.f);
+            cur = base;
+            cur.tick = 11;
+            cur.players[0].origin[0] = 50.f;
+            cur.players[0].score = 99;
+            u32 ch = aether_net_delta_changed_count(&base, &cur);
+            expect(ch >= 1 && ch < cur.player_count + 1, "b3_delta_changed");
+            u8 pkt[1024];
+            u32 full_sz = aether_net_snapshot_encode(&cur, pkt, sizeof pkt);
+            u32 dsz = aether_net_delta_encode(&base, &cur, pkt, sizeof pkt);
+            expect(dsz > 16 && dsz < full_sz, "b3_delta_smaller");
+            aether_net_snapshot_t applied = base;
+            expect(aether_net_delta_apply(pkt, dsz, &applied) == AETHER_OK, "b3_delta_apply");
+            expect(applied.tick == 11 && applied.players[0].score == 99, "b3_delta_fields");
+            expect(applied.players[0].origin[0] == 50.f, "b3_delta_origin");
+        }
+
+        /* 6. Prediction stub + reconcile */
+        {
+            aether_net_predict_t pr;
+            aether_net_predict_init(&pr, 1);
+            aether_net_predict_cmd_t cmd = { .forward = 1.f, .side = 0.f, .yaw_deg = 0.f, .dt = 0.1f, .seq = 1 };
+            aether_net_predict_apply_cmd(&pr, &cmd);
+            f32 o[3];
+            aether_net_predict_get_origin(&pr, o);
+            expect(o[0] > 1.f, "b3_predict_moved");
+            aether_net_snapshot_t snap;
+            aether_net_snapshot_make_demo(&snap, 5, 0.5f);
+            snap.players[0].origin[0] = 0.f;
+            snap.players[0].origin[1] = 0.f;
+            snap.players[0].origin[2] = 40.f;
+            aether_net_predict_reconcile(&pr, &snap, 1.f);
+            aether_net_predict_get_origin(&pr, o);
+            expect(fabsf(o[0]) < 0.01f && fabsf(o[2] - 40.f) < 0.01f, "b3_predict_reconcile");
+        }
+
+        /* 7. Dyn-light array uniforms */
+        {
+            aether_dyn_lights_t dl;
+            aether_dyn_lights_init(&dl);
+            f32 p[3] = {0, 0, 64}, c[3] = {1, 0.2f, 0.1f};
+            aether_dyn_lights_add(&dl, p, c, 100.f, 1.5f);
+            f32 arr[4 + 16 * 8];
+            u32 nf = aether_dyn_lights_fill_array(&dl, arr, (u32)(sizeof arr / sizeof arr[0]));
+            expect(nf == 4 + 8 && arr[0] == 1.f, "b3_dl_array");
+            expect(arr[4 + 3] == 100.f && arr[4 + 7] == 1.5f, "b3_dl_array_fields");
+            f32 rgb[3];
+            aether_dyn_lights_sample_rgb_ex(&dl, 0, 0, 64, 0.2f, rgb);
+            expect(rgb[0] > 1.f, "b3_dl_sample_ex");
+        }
+
+        /* 8. World-clipped decals (SH clip) */
+        {
+            aether_bsp_t *syn = aether_bsp_create_synthetic_room();
+            aether_mesh_t *mesh = NULL;
+            expect(syn && aether_mesh_from_bsp(syn, NULL, &mesh) == AETHER_OK && mesh, "b3_decal_mesh");
+            aether_decals_t dec;
+            aether_decals_init(&dec);
+            f32 dp[3] = {mesh->bounds_center[0], mesh->bounds_center[1], mesh->bounds_min[2] + 1.f};
+            f32 dn[3] = {0, 0, 1};
+            expect(aether_decals_add(&dec, dp, dn, 64.f, 10.f) == AETHER_OK, "b3_decal_add");
+            aether_decal_quad_vertex_t buf[1024];
+            u32 vn = aether_decals_clip_to_world(&dec, mesh, buf, 1024);
+            expect(vn >= 3 && (vn % 3) == 0, "b3_decal_clip_tris");
+            /* UVs should land roughly in [0,1] after clip */
+            int uv_ok = 1;
+            for (u32 i = 0; i < vn && uv_ok; ++i) {
+                if (buf[i].u < -0.1f || buf[i].u > 1.1f || buf[i].v < -0.1f || buf[i].v > 1.1f)
+                    uv_ok = 0;
+            }
+            expect(uv_ok, "b3_decal_clip_uv");
+            aether_mesh_free(mesh);
+            aether_bsp_free(syn);
         }
     }
 

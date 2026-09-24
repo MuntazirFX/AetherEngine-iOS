@@ -71,6 +71,11 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     var postfxBuffer: MTLBuffer?
     var blobShadowCount: Int = 0
     private var styleTimeAccum: Float = 0
+    /* Offscreen color + depth for PostFX (scene → texture → brightness/gamma). */
+    private var sceneColorTexture: MTLTexture?
+    private var sceneDepthTexture: MTLTexture?
+    private var postfxSampler: MTLSamplerState?
+    private var postfxOffscreenSize: (Int, Int) = (0, 0)
 
     private let maxParticleUpload = 512
     private var particleSeedOrigin = simd_float3(0, 0, 64)
@@ -412,8 +417,16 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     private func uploadMdlMesh() {
-        let vCount = Int(engine_mdl_mesh_vertex_count())
-        let tCount = Int(engine_mdl_mesh_triangle_count())
+        var vCount = Int(engine_mdl_mesh_vertex_count())
+        var tCount = Int(engine_mdl_mesh_triangle_count())
+        if vCount <= 0 || tCount <= 0 {
+            /* Clean-room triangle fixture when no user .mdl is mounted. */
+            let got = Int(engine_mdl_fixture_extract_verts())
+            if got > 0 {
+                vCount = Int(engine_mdl_mesh_vertex_count())
+                tCount = Int(engine_mdl_mesh_triangle_count())
+            }
+        }
         guard vCount > 0, tCount > 0 else { hasMdl = false; return }
 
         var pData = [Float](repeating: 0, count: vCount * 3)
@@ -648,11 +661,23 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         engine_player_tick(dt)
 
         guard let drawable = view.currentDrawable,
-              let rpd      = view.currentRenderPassDescriptor,
               let cmd      = queue.makeCommandBuffer() else { return }
 
-        rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.45, green: 0.65, blue: 0.95, alpha: 1.0)
+        let dw = max(Int(view.drawableSize.width), 1)
+        let dh = max(Int(view.drawableSize.height), 1)
+        ensureOffscreenTargets(width: dw, height: dh, pixelFormat: view.colorPixelFormat)
+        _ = engine_postfx_ensure_offscreen(Int32(dw), Int32(dh))
+
+        guard let sceneColor = sceneColorTexture, let sceneDepth = sceneDepthTexture else { return }
+        let rpd = MTLRenderPassDescriptor()
+        rpd.colorAttachments[0].texture = sceneColor
         rpd.colorAttachments[0].loadAction = .clear
+        rpd.colorAttachments[0].storeAction = .store
+        rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.45, green: 0.65, blue: 0.95, alpha: 1.0)
+        rpd.depthAttachment.texture = sceneDepth
+        rpd.depthAttachment.loadAction = .clear
+        rpd.depthAttachment.storeAction = .dontCare
+        rpd.depthAttachment.clearDepth = 1.0
 
         engine_renderer_begin_frame_dt(dt)
 
@@ -793,10 +818,24 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         syncAndDrawBlobShadows(encoder: enc, viewMat: viewMat, projMat: projMat, eye: eyeV)
         styleTimeAccum += dt
         _ = engine_lightstyles_update(styleTimeAccum)
+        _ = engine_lightmap_apply_style_pingpong(0)
         _ = engine_postfx_set_from_settings()
-        syncAndDrawPostFXHook(encoder: enc)
 
         enc.endEncoding()
+
+        // Pass 2: PostFX samples offscreen color → drawable (brightness/gamma).
+        guard let rpd2 = view.currentRenderPassDescriptor else {
+            engine_renderer_draw_hud(); engine_renderer_end_frame()
+            cmd.present(drawable); cmd.commit(); return
+        }
+        rpd2.colorAttachments[0].loadAction = .dontCare
+        guard let enc2 = cmd.makeRenderCommandEncoder(descriptor: rpd2) else {
+            engine_renderer_draw_hud(); engine_renderer_end_frame()
+            cmd.present(drawable); cmd.commit(); return
+        }
+        syncAndDrawPostFX(encoder: enc2, sceneTex: sceneColorTexture)
+        enc2.endEncoding()
+
         engine_renderer_draw_hud()
         engine_renderer_end_frame()
         cmd.present(drawable)
@@ -1065,10 +1104,35 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         blobShadowCount = total
     }
 
-    private func syncAndDrawPostFXHook(encoder enc: MTLRenderCommandEncoder) {
-        // Hook only: upload fullscreen verts + brightness/gamma uniforms.
-        // Full scene texture blit needs an offscreen target; this validates the pass path.
-        guard let pipeline = postfxPipeline else { return }
+    private func ensureOffscreenTargets(width: Int, height: Int, pixelFormat: MTLPixelFormat) {
+        if postfxOffscreenSize == (width, height), sceneColorTexture != nil, sceneDepthTexture != nil {
+            return
+        }
+        let colorDesc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: pixelFormat, width: width, height: height, mipmapped: false)
+        colorDesc.usage = [.renderTarget, .shaderRead]
+        colorDesc.storageMode = .private
+        sceneColorTexture = device.makeTexture(descriptor: colorDesc)
+
+        let depthDesc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .depth32Float, width: width, height: height, mipmapped: false)
+        depthDesc.usage = [.renderTarget]
+        depthDesc.storageMode = .private
+        sceneDepthTexture = device.makeTexture(descriptor: depthDesc)
+        postfxOffscreenSize = (width, height)
+
+        if postfxSampler == nil {
+            let sd = MTLSamplerDescriptor()
+            sd.minFilter = .linear
+            sd.magFilter = .linear
+            sd.sAddressMode = .clampToEdge
+            sd.tAddressMode = .clampToEdge
+            postfxSampler = device.makeSamplerState(descriptor: sd)
+        }
+    }
+
+    private func syncAndDrawPostFX(encoder enc: MTLRenderCommandEncoder, sceneTex: MTLTexture?) {
+        guard let pipeline = postfxPipeline, let sceneTex = sceneTex else { return }
         var packed = [Float](repeating: 0, count: 6 * 5)
         let n = packed.withUnsafeMutableBufferPointer { buf -> Int32 in
             Int32(engine_postfx_copy_fullscreen(buf.baseAddress, 6))
@@ -1094,12 +1158,14 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         var PU = PostFXUniforms(brightness: engine_postfx_brightness(),
                                 gamma: engine_postfx_gamma(),
                                 exposure: 1.0,
-                                enabled: 0.0) // disabled until offscreen target exists
-        // Keep pipeline warm / uniforms readable; skip actual draw when enabled==0
-        _ = pipeline
-        _ = PU
-        _ = postfxBuffer
-        _ = enc
+                                enabled: 1.0)
+        enc.setRenderPipelineState(pipeline)
+        enc.setCullMode(.none)
+        if let vb = postfxBuffer { enc.setVertexBuffer(vb, offset: 0, index: 0) }
+        enc.setFragmentBytes(&PU, length: MemoryLayout<PostFXUniforms>.stride, index: 1)
+        enc.setFragmentTexture(sceneTex, index: 0)
+        if let samp = postfxSampler { enc.setFragmentSamplerState(samp, index: 0) }
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: Int(n))
     }
 
 

@@ -71,6 +71,16 @@ typedef struct aether_dyn_light_ubo {
 /* Fill UBO for GPU — up to AETHER_DYN_LIGHT_UBO_MAX active lights. Returns count packed. */
 u32 aether_dyn_lights_fill_ubo(const aether_dyn_lights_t *dl, aether_dyn_light_ubo_t *ubo);
 
+/* Flat float array uniforms for Metal fragment (count + pad3 + lights[N]*8).
+ * Layout: [count,0,0,0, x,y,z,r, R,G,B,I, ...]. Returns floats written. */
+u32 aether_dyn_lights_fill_array(const aether_dyn_lights_t *dl,
+                                 f32 *out, u32 max_floats);
+
+/* Sample with optional ambient floor (improves thin fragment path host-side). */
+void aether_dyn_lights_sample_rgb_ex(const aether_dyn_lights_t *dl,
+                                     f32 x, f32 y, f32 z,
+                                     f32 ambient, f32 out_rgb[3]);
+
 #ifdef __cplusplus
 }
 #endif

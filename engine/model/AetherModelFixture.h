@@ -11,8 +11,8 @@
 extern "C" {
 #endif
 
-/* Write a minimal valid MDL v10 (IDST) with 1 bone, 1 bodypart, 1 trivial
- * triangle mesh stub in raw buffer. Returns bytes written (0 on failure). */
+/* Write a minimal valid MDL v10 (IDST) with 1 bone, 1 bodypart, 1 studio
+ * triangle mesh (3 verts) extractable for Metal draw. Returns bytes written. */
 u32 aether_mdl_write_fixture(u8 *out, u32 cap);
 
 /* Write fixture to filepath. Returns bytes written. */

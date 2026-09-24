@@ -151,4 +151,17 @@ grep -q "engine_interact_trace" ios/AetherApp/EngineBridge.h || fail "missing br
 ok "batch GPU lights / decal clip / netplay API symbols present"
 
 
+grep -q "aether_postfx_ensure_offscreen" engine/render/AetherPostFX.h || fail "missing postfx_ensure_offscreen"
+grep -q "aether_postfx_fill_uniforms" engine/render/AetherPostFX.h || fail "missing postfx_fill_uniforms"
+grep -q "aether_lightmap_apply_style_pingpong" engine/render/AetherLightmap.h || fail "missing lightmap pingpong"
+grep -q "aether_net_delta_encode" engine/net/AetherNetDelta.h || fail "missing net_delta_encode"
+grep -q "aether_net_interp_origin" engine/net/AetherNetInterp.h || fail "missing net_interp_origin"
+grep -q "aether_net_predict_reconcile" engine/net/AetherNetPredict.h || fail "missing net_predict_reconcile"
+grep -q "aether_dyn_lights_fill_array" engine/render/AetherDynLight.h || fail "missing dyn_lights_fill_array"
+grep -q "aether_decals_clip_to_world" engine/render/AetherDecal.h || fail "missing decals_clip_to_world"
+grep -q "engine_postfx_ensure_offscreen" ios/AetherApp/EngineBridge.h || fail "missing bridge postfx_ensure_offscreen"
+grep -q "engine_net_predict_local_step" ios/AetherApp/EngineBridge.h || fail "missing bridge predict"
+ok "batch postfx/lightmap/mdl/predict API symbols present"
+
+
 info "All host verification checks passed."
