@@ -215,3 +215,46 @@ u32 aether_mdl_skin_mesh(const aether_mdl_skin_state_t *sk,
     }
     return vert_count;
 }
+
+
+aether_result_t aether_mdl_sequence_load_from_data(aether_mdl_sequence_t *seq,
+                                                   const u8 *data, u32 size) {
+    if (!seq || !data || size < 56) return AETHER_ERR_INVALID_ARG;
+    memset(seq, 0, sizeof(*seq));
+    for (u32 off = 0; off + 32 < size; ++off) {
+        i32 mag = (i32)((u32)data[off] | ((u32)data[off+1]<<8) |
+                        ((u32)data[off+2]<<16) | ((u32)data[off+3]<<24));
+        if (mag != (i32)0xAE7E5E02) continue;
+        const u8 *s = data + off;
+        u32 frames = (u32)((u32)s[4] | ((u32)s[5]<<8) | ((u32)s[6]<<16) | ((u32)s[7]<<24));
+        u32 bones  = (u32)((u32)s[8] | ((u32)s[9]<<8) | ((u32)s[10]<<16)| ((u32)s[11]<<24));
+        f32 fps;
+        {
+            u32 u = (u32)s[12]|((u32)s[13]<<8)|((u32)s[14]<<16)|((u32)s[15]<<24);
+            memcpy(&fps, &u, 4);
+        }
+        i32 loop = (i32)((u32)s[16]|((u32)s[17]<<8)|((u32)s[18]<<16)|((u32)s[19]<<24));
+        if (frames < 2 || frames > AETHER_MDL_MAX_SEQ_FRAMES) return AETHER_ERR_INVALID_ARG;
+        if (bones == 0 || bones > AETHER_MDL_MAX_BONES) return AETHER_ERR_INVALID_ARG;
+        u32 key_bytes = frames * bones * 24u;
+        if (off + 32 + key_bytes > size) return AETHER_ERR_INVALID_ARG;
+        seq->frame_count = frames;
+        seq->bone_count = bones;
+        seq->fps = fps > 0.f ? fps : 12.f;
+        seq->loop = loop != 0;
+        const u8 *keys = s + 32;
+        for (u32 f = 0; f < frames; ++f) {
+            for (u32 b = 0; b < bones; ++b) {
+                const u8 *k = keys + (f * bones + b) * 24u;
+                aether_mdl_seq_bone_key_t *dst = &seq->keys[f][b];
+                for (int i = 0; i < 6; ++i) {
+                    u32 u = (u32)k[i*4]|((u32)k[i*4+1]<<8)|((u32)k[i*4+2]<<16)|((u32)k[i*4+3]<<24);
+                    f32 v; memcpy(&v, &u, 4);
+                    if (i < 3) dst->pos[i] = v; else dst->angles_deg[i-3] = v;
+                }
+            }
+        }
+        return AETHER_OK;
+    }
+    return AETHER_ERR_NOT_FOUND;
+}

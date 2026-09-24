@@ -121,3 +121,14 @@ u32 aether_lightmap_fill_face_style_weights(const struct aether_mesh *mesh,
 }
 #endif
 #endif /* AETHER_LIGHTMAP_H */
+
+/* Multi-style blend: pack 4 GPU weights per face from styles[0..3] × lightstyle values.
+ * out_weights length >= max_faces*4. Unused style (255) → 0. Returns faces written. */
+u32 aether_lightmap_fill_face_style_blend(const struct aether_mesh *mesh,
+                                          const aether_lightstyles_t *ls,
+                                          f32 *out_weights4, u32 max_faces);
+
+/* Blended scalar per face = sum(active style scales) / max(1, active_count). */
+u32 aether_lightmap_fill_face_style_blend_scalar(const struct aether_mesh *mesh,
+                                                 const aether_lightstyles_t *ls,
+                                                 f32 *out_weights, u32 max_faces);

@@ -174,3 +174,101 @@ void aether_dyn_lights_sample_rgb_ex(const aether_dyn_lights_t *dl,
     /* Soft quadratic falloff polish already in sample; clamp HDR-ish. */
     for (int i = 0; i < 3; ++i) if (out_rgb[i] > 2.f) out_rgb[i] = 2.f;
 }
+
+
+#include "../bsp/AetherBSPVis.h"
+#include "../bsp/AetherBSP.h"
+#include <stdlib.h>
+
+u32 aether_dyn_lights_cull_pvs(const aether_dyn_lights_t *dl,
+                               const struct aether_bsp *bsp,
+                               i32 view_leaf,
+                               aether_dyn_light_ubo_t *ubo) {
+    if (!ubo) return 0;
+    memset(ubo, 0, sizeof(*ubo));
+    if (!dl || !bsp || view_leaf < 0)
+        return aether_dyn_lights_fill_ubo(dl, ubo);
+
+    u32 leaf_count = aether_bsp_leaf_count(bsp);
+    u32 face_count = aether_bsp_face_count(bsp);
+    if (leaf_count == 0)
+        return aether_dyn_lights_fill_ubo(dl, ubo);
+
+    u8 *face_bits = NULL;
+    if (face_count > 0) {
+        face_bits = (u8 *)calloc(face_count, 1);
+        if (face_bits) {
+            (void)aether_bsp_vis_mark_faces(bsp, view_leaf, AETHER_BSP_VIS_USE_PVS,
+                                           face_bits, face_count);
+        }
+    }
+
+    u8 *leaf_vis = (u8 *)calloc(leaf_count, 1);
+    if (!leaf_vis) {
+        free(face_bits);
+        return aether_dyn_lights_fill_ubo(dl, ubo);
+    }
+
+    u32 mark_count = aether_bsp_lump_size(bsp, AETHER_BSP_LUMP_MARKSURFACES) / sizeof(u16);
+    const u8 *mark_raw = aether_bsp_lump_data(bsp, AETHER_BSP_LUMP_MARKSURFACES);
+
+    for (u32 li = 0; li < leaf_count; ++li) {
+        if (!aether_bsp_leaf_is_drawable(bsp, (i32)li)) continue;
+        const aether_bsp_leaf_t *leaf = aether_bsp_leaf_at(bsp, li);
+        if (!leaf) continue;
+        if (!face_bits || !mark_raw || leaf->num_marksurfaces == 0 || mark_count == 0) {
+            leaf_vis[li] = 1; /* no mark data → visible stub */
+            continue;
+        }
+        int any = 0;
+        for (u32 m = 0; m < leaf->num_marksurfaces; ++m) {
+            u32 off = (u32)leaf->first_marksurface + m;
+            if (off >= mark_count) break;
+            const u8 *p = mark_raw + off * 2u;
+            u16 face = (u16)((u32)p[0] | ((u32)p[1] << 8));
+            if (face < face_count && face_bits[face]) { any = 1; break; }
+        }
+        leaf_vis[li] = (u8)(any ? 1 : 0);
+    }
+    if ((u32)view_leaf < leaf_count) leaf_vis[view_leaf] = 1;
+
+    u32 packed = 0;
+    for (u32 i = 0; i < dl->count && packed < AETHER_DYN_LIGHT_UBO_MAX; ++i) {
+        const aether_dyn_light_t *L = &dl->items[i];
+        if (!L->active) continue;
+        i32 leaf = aether_bsp_find_leaf(bsp, L->position[0], L->position[1], L->position[2]);
+        if (leaf < 0 || (u32)leaf >= leaf_count || !leaf_vis[leaf]) continue;
+        aether_dyn_light_vertex_t *o = &ubo->lights[packed++];
+        o->x = L->position[0]; o->y = L->position[1]; o->z = L->position[2];
+        o->radius = L->radius;
+        o->r = L->color[0]; o->g = L->color[1]; o->b = L->color[2];
+        o->intensity = L->intensity;
+    }
+    ubo->count = packed;
+    free(face_bits);
+    free(leaf_vis);
+    return packed;
+}
+
+u32 aether_dyn_lights_fill_array_pvs(const aether_dyn_lights_t *dl,
+                                     const struct aether_bsp *bsp,
+                                     i32 view_leaf,
+                                     f32 *out, u32 max_floats) {
+    if (!out || max_floats < 4) return 0;
+    aether_dyn_light_ubo_t ubo;
+    u32 n = aether_dyn_lights_cull_pvs(dl, bsp, view_leaf, &ubo);
+    u32 need = 4u + n * 8u;
+    if (need > max_floats) {
+        n = (max_floats - 4u) / 8u;
+        need = 4u + n * 8u;
+    }
+    out[0] = (f32)n; out[1] = 0; out[2] = 0; out[3] = 0;
+    for (u32 i = 0; i < n; ++i) {
+        f32 *d = out + 4u + i * 8u;
+        d[0] = ubo.lights[i].x; d[1] = ubo.lights[i].y; d[2] = ubo.lights[i].z;
+        d[3] = ubo.lights[i].radius;
+        d[4] = ubo.lights[i].r; d[5] = ubo.lights[i].g; d[6] = ubo.lights[i].b;
+        d[7] = ubo.lights[i].intensity;
+    }
+    return need;
+}

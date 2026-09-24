@@ -56,3 +56,14 @@ u32 aether_weapon_view_copy_stub(const aether_weapon_view_t *v,
 }
 #endif
 #endif /* AETHER_WEAPON_VIEW_H */
+
+/* Map MDL fixture mesh into view-space gun verts (pos scaled/offset). Returns vert count. */
+struct aether_model_mesh;
+u32 aether_weapon_view_copy_mdl(const aether_weapon_view_t *v,
+                                const struct aether_model_mesh *mesh,
+                                aether_viewmodel_vertex_t *out, u32 max_verts);
+
+/* Convenience: write studio/seq fixture, extract geometry, copy to viewmodel verts.
+ * Returns vertex count written (0 on failure). */
+u32 aether_weapon_view_copy_mdl_fixture(const aether_weapon_view_t *v,
+                                        aether_viewmodel_vertex_t *out, u32 max_verts);

@@ -528,3 +528,43 @@ u32 aether_lightmap_fill_face_style_weights(const struct aether_mesh *mesh,
     }
     return n;
 }
+
+u32 aether_lightmap_fill_face_style_blend(const struct aether_mesh *mesh,
+                                          const aether_lightstyles_t *ls,
+                                          f32 *out_weights4, u32 max_faces) {
+    if (!mesh || !ls || !out_weights4 || !mesh->face_ranges || mesh->face_count == 0) return 0;
+    u32 n = mesh->face_count;
+    if (n > max_faces) n = max_faces;
+    for (u32 i = 0; i < n; ++i) {
+        for (u32 s = 0; s < 4; ++s) {
+            u8 sty = mesh->face_ranges[i].styles[s];
+            if (sty == 255) {
+                out_weights4[i * 4u + s] = 0.f;
+            } else {
+                f32 v = aether_lightstyles_value(ls, sty);
+                out_weights4[i * 4u + s] = aether_lightstyles_gpu_scale(v);
+            }
+        }
+    }
+    return n;
+}
+
+u32 aether_lightmap_fill_face_style_blend_scalar(const struct aether_mesh *mesh,
+                                                 const aether_lightstyles_t *ls,
+                                                 f32 *out_weights, u32 max_faces) {
+    if (!mesh || !ls || !out_weights || !mesh->face_ranges || mesh->face_count == 0) return 0;
+    u32 n = mesh->face_count;
+    if (n > max_faces) n = max_faces;
+    for (u32 i = 0; i < n; ++i) {
+        f32 sum = 0.f;
+        u32 active = 0;
+        for (u32 s = 0; s < 4; ++s) {
+            u8 sty = mesh->face_ranges[i].styles[s];
+            if (sty == 255) continue;
+            sum += aether_lightstyles_gpu_scale(aether_lightstyles_value(ls, sty));
+            active++;
+        }
+        out_weights[i] = active ? (sum / (f32)active) : aether_lightstyles_gpu_scale(1.f);
+    }
+    return n;
+}

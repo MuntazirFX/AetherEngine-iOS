@@ -116,3 +116,57 @@ u32 aether_particles_copy_render(const aether_particles_t *p,
     }
     return written;
 }
+
+u32 aether_particles_spawn_muzzle(aether_particles_t *p,
+                                  const f32 origin[3], const f32 forward[3],
+                                  u32 count) {
+    if (!p || !origin || !forward || count == 0) return 0;
+    if (count > 64) count = 64;
+    f32 fx = forward[0], fy = forward[1], fz = forward[2];
+    f32 len = sqrtf(fx*fx + fy*fy + fz*fz);
+    if (len < 1e-5f) { fx = 1.f; fy = 0.f; fz = 0.f; }
+    else { fx /= len; fy /= len; fz /= len; }
+    u32 spawned = 0;
+    static const f32 col[4] = {1.f, 0.85f, 0.35f, 1.f};
+    for (u32 i = 0; i < count; ++i) {
+        f32 jitter = ((f32)(i % 5) - 2.f) * 8.f;
+        f32 pos[3] = {
+            origin[0] + fx * 4.f,
+            origin[1] + fy * 4.f,
+            origin[2] + fz * 4.f
+        };
+        f32 vel[3] = {
+            fx * (120.f + jitter) + ((f32)(i % 3) - 1.f) * 20.f,
+            fy * (120.f + jitter) + ((f32)((i+1) % 3) - 1.f) * 20.f,
+            fz * (120.f + jitter) + 30.f
+        };
+        f32 size = 4.f + (f32)(i % 4);
+        f32 life = 0.12f + (f32)(i % 5) * 0.03f;
+        if (aether_particles_spawn(p, pos, vel, size, life, col) == AETHER_OK)
+            spawned++;
+    }
+    return spawned;
+}
+
+u32 aether_particles_spawn_trail(aether_particles_t *p,
+                                 const f32 from[3], const f32 to[3],
+                                 u32 count) {
+    if (!p || !from || !to || count == 0) return 0;
+    if (count > 64) count = 64;
+    u32 spawned = 0;
+    static const f32 col[4] = {1.f, 0.7f, 0.2f, 0.9f};
+    for (u32 i = 0; i < count; ++i) {
+        f32 t = (count == 1) ? 0.f : (f32)i / (f32)(count - 1);
+        f32 pos[3] = {
+            from[0] + (to[0] - from[0]) * t,
+            from[1] + (to[1] - from[1]) * t,
+            from[2] + (to[2] - from[2]) * t
+        };
+        f32 vel[3] = {0.f, 0.f, 10.f + (f32)(i % 3) * 5.f};
+        f32 size = 2.5f + (1.f - t) * 2.f;
+        f32 life = 0.2f + (1.f - t) * 0.25f;
+        if (aether_particles_spawn(p, pos, vel, size, life, col) == AETHER_OK)
+            spawned++;
+    }
+    return spawned;
+}

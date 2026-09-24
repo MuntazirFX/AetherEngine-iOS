@@ -45,3 +45,11 @@ u32 aether_particles_copy_render(const aether_particles_t *p,
                                  aether_particle_vertex_t *out,
                                  u32 max_out);
 #endif
+
+/* Weapon-linked stubs: muzzle flash burst + tracer trail between two points. */
+u32 aether_particles_spawn_muzzle(aether_particles_t *p,
+                                  const f32 origin[3], const f32 forward[3],
+                                  u32 count);
+u32 aether_particles_spawn_trail(aether_particles_t *p,
+                                 const f32 from[3], const f32 to[3],
+                                 u32 count);
