@@ -1,4 +1,7 @@
 #include "AetherDecal.h"
+#include <stdlib.h>
+#include <math.h>
+#include <string.h>
 #include <math.h>
 #include <string.h>
 
@@ -271,4 +274,67 @@ u32 aether_decals_clip_to_world(const aether_decals_t *d,
                                 const aether_mesh_t *mesh,
                                 aether_decal_quad_vertex_t *out, u32 max_out) {
     return aether_decals_project_onto_mesh(d, mesh, out, max_out);
+}
+
+aether_result_t aether_decal_atlas_init(aether_decal_atlas_t *a, u32 w, u32 h) {
+    if (!a || w == 0 || h == 0) return AETHER_ERR_INVALID_ARG;
+    memset(a, 0, sizeof(*a));
+    a->width = w; a->height = h;
+    a->rgba = (u8 *)calloc((size_t)w * h * 4u, 1);
+    return a->rgba ? AETHER_OK : AETHER_ERR_OUT_OF_MEM;
+}
+void aether_decal_atlas_shutdown(aether_decal_atlas_t *a) {
+    if (!a) return;
+    free(a->rgba);
+    memset(a, 0, sizeof(*a));
+}
+aether_result_t aether_decal_atlas_generate_stub(aether_decal_atlas_t *a) {
+    if (!a) return AETHER_ERR_INVALID_ARG;
+    if (!a->rgba) {
+        if (aether_decal_atlas_init(a, AETHER_DECAL_ATLAS_W, AETHER_DECAL_ATLAS_H) != AETHER_OK)
+            return AETHER_ERR_OUT_OF_MEM;
+    }
+    u32 w = a->width, h = a->height;
+    f32 cx = (f32)(w - 1) * 0.5f, cy = (f32)(h - 1) * 0.5f;
+    f32 R = (cx < cy ? cx : cy) * 0.92f;
+    for (u32 y = 0; y < h; ++y) {
+        for (u32 x = 0; x < w; ++x) {
+            f32 dx = (f32)x - cx, dy = (f32)y - cy;
+            f32 d = sqrtf(dx*dx + dy*dy) / (R > 1.f ? R : 1.f);
+            f32 a01 = 1.f - d; if (a01 < 0.f) a01 = 0.f;
+            a01 = a01 * a01;
+            /* scorched brown/black rim */
+            f32 shade = 0.15f + 0.55f * a01;
+            u32 i = (y * w + x) * 4u;
+            a->rgba[i+0] = (u8)(shade * 40.f);
+            a->rgba[i+1] = (u8)(shade * 28.f);
+            a->rgba[i+2] = (u8)(shade * 18.f);
+            a->rgba[i+3] = (u8)(a01 * 255.f);
+        }
+    }
+    return AETHER_OK;
+}
+u32 aether_decal_atlas_copy_rgba(const aether_decal_atlas_t *a, u8 *out, u32 max_bytes) {
+    if (!a || !a->rgba || !out) return 0;
+    u32 n = a->width * a->height * 4u;
+    if (n > max_bytes) return 0;
+    memcpy(out, a->rgba, n);
+    return n;
+}
+void aether_decal_atlas_sample(const aether_decal_atlas_t *a, f32 u, f32 v, f32 rgb[3]) {
+    if (!rgb) return;
+    rgb[0]=rgb[1]=rgb[2]=0.f;
+    if (!a || !a->rgba || a->width == 0 || a->height == 0) return;
+    if (u < 0.f) u = 0.f;
+    if (u > 1.f) u = 1.f;
+    if (v < 0.f) v = 0.f;
+    if (v > 1.f) v = 1.f;
+    u32 x = (u32)(u * (f32)(a->width - 1) + 0.5f);
+    u32 y = (u32)(v * (f32)(a->height - 1) + 0.5f);
+    if (x >= a->width) x = a->width - 1;
+    if (y >= a->height) y = a->height - 1;
+    u32 i = (y * a->width + x) * 4u;
+    rgb[0] = a->rgba[i+0] / 255.f;
+    rgb[1] = a->rgba[i+1] / 255.f;
+    rgb[2] = a->rgba[i+2] / 255.f;
 }

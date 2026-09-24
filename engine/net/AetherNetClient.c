@@ -3,6 +3,10 @@
  */
 #include "AetherNetClient.h"
 #include "AetherNetSnapshot.h"
+#include "AetherNetCmd.h"
+#include "AetherNetInterp.h"
+#include "AetherNetPredict.h"
+#include "AetherNetDelta.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,6 +28,8 @@ struct aether_net_client {
     aether_net_snapshot_t last_snap;
     bool                has_snap;
     u32                 snap_count;
+    u32                 delta_count;
+    aether_net_cmd_history_t cmd_hist;
 };
 
 aether_net_client_t *aether_net_client_create(void) {
@@ -35,6 +41,7 @@ aether_net_client_t *aether_net_client_create(void) {
     c->state = AETHER_NET_STATE_DISCONNECTED;
     c->player_id = 0xFFFFFFFFu;
     aether_str_copy(c->player_name, AETHER_NET_MAX_NAME, "player");
+    aether_net_cmd_history_init(&c->cmd_hist);
     aether_log(AETHER_LOG_INFO, "net-client", "client created");
     return c;
 }
@@ -143,6 +150,15 @@ static void handle_packet(aether_net_client_t *c, const u8 *data, u32 size) {
             }
             break;
         }
+        case AETHER_MSG_SERVER_DELTA: {
+            if (c->has_snap) {
+                if (aether_net_delta_apply(data, size, &c->last_snap) == AETHER_OK) {
+                    c->delta_count++;
+                    c->snap_count++;
+                }
+            }
+            break;
+        }
         case AETHER_MSG_PING:
             /* Respond with pong */
             break;
@@ -197,26 +213,87 @@ void aether_net_client_tick(aether_net_client_t *c, f32 dt) {
     (void)dt;
 }
 
+aether_result_t aether_net_client_send_input(aether_net_client_t *c, const aether_net_cmd_t *cmd) {
+    if (!c || !cmd || c->state != AETHER_NET_STATE_ACTIVE) return AETHER_ERR_NOT_READY;
+    aether_net_cmd_t local = *cmd;
+    if (local.seq == 0) local.seq = ++c->outgoing_seq;
+    else c->outgoing_seq = local.seq;
+    u8 pkt[128];
+    u32 n = aether_net_cmd_encode(&local, pkt, sizeof pkt);
+    if (!n) return AETHER_ERR_INVALID_ARG;
+    i32 sent = aether_socket_send(c->sock, &c->server, pkt, n);
+    if (sent > 0) {
+        c->stats.packets_sent++;
+        c->stats.bytes_sent += (u32)sent;
+        aether_net_cmd_history_push(&c->cmd_hist, &local, (f32)aether_net_time());
+    }
+    return sent > 0 ? AETHER_OK : AETHER_ERR_IO;
+}
+
 aether_result_t aether_net_client_send_cmd(aether_net_client_t *c,
                                             aether_vec3_t move, f32 yaw, f32 pitch,
                                             u32 buttons) {
-    if (!c || c->state != AETHER_NET_STATE_ACTIVE) return AETHER_ERR_NOT_READY;
-
-    aether_netbuf_t b;
-    aether_netbuf_init_write(&b);
-    aether_netbuf_write_u32(&b, AETHER_NET_PROTOCOL_ID);
-    aether_netbuf_write_u16(&b, AETHER_NET_PROTOCOL_VER);
-    aether_netbuf_write_u8 (&b, AETHER_MSG_CLIENT_CMD);
-    aether_netbuf_write_u32(&b, c->outgoing_seq++);
-    aether_netbuf_write_vec3(&b, move);
-    aether_netbuf_write_f32(&b, yaw);
-    aether_netbuf_write_f32(&b, pitch);
-    aether_netbuf_write_u32(&b, buttons);
-
-    i32 n = aether_socket_send(c->sock, &c->server, b.data, aether_netbuf_size(&b));
-    if (n > 0) { c->stats.packets_sent++; c->stats.bytes_sent += (u32)n; }
-    return n > 0 ? AETHER_OK : AETHER_ERR_IO;
+    aether_net_cmd_t cmd;
+    aether_net_cmd_from_move(&cmd, move.x, move.y, move.z, yaw, pitch, buttons, 1.f/60.f, 0);
+    return aether_net_client_send_input(c, &cmd);
 }
+
+int aether_net_client_live_tick(aether_net_client_t *c, f32 dt,
+                                f32 forward, f32 side, f32 yaw_deg, u32 buttons,
+                                aether_net_interp_t *interp,
+                                aether_net_predict_t *predict,
+                                f32 out_origin[3]) {
+    if (!c) return 0;
+    u32 before = c->snap_count;
+    aether_net_client_tick(c, dt);
+    if (c->state == AETHER_NET_STATE_ACTIVE) {
+        aether_net_cmd_t cmd;
+        aether_net_cmd_from_move(&cmd, forward, side, 0.f, yaw_deg, 0.f, buttons, dt, 0);
+        aether_net_client_send_input(c, &cmd);
+        if (predict) {
+            aether_net_predict_cmd_t pc = {
+                .forward = forward, .side = side, .yaw_deg = yaw_deg,
+                .dt = dt, .seq = c->outgoing_seq
+            };
+            aether_net_predict_apply_cmd(predict, &pc);
+        }
+    }
+    int got = (c->snap_count > before && c->has_snap) ? 1 : 0;
+    if (got && interp) {
+        aether_net_interp_push(interp, &c->last_snap);
+        aether_net_interp_set_fraction(interp, 0.5f);
+    }
+    if (got && predict && c->has_snap) {
+        aether_net_predict_reconcile(predict, &c->last_snap, 0.35f);
+    }
+    if (out_origin) {
+        if (predict) aether_net_predict_get_origin(predict, out_origin);
+        else if (interp && interp->has_curr) {
+            u32 id = c->player_id;
+            if (!aether_net_interp_origin(interp, id, out_origin) && c->has_snap &&
+                c->last_snap.player_count > 0) {
+                out_origin[0] = c->last_snap.players[0].origin[0];
+                out_origin[1] = c->last_snap.players[0].origin[1];
+                out_origin[2] = c->last_snap.players[0].origin[2];
+            }
+        } else {
+            out_origin[0]=out_origin[1]=out_origin[2]=0.f;
+        }
+    }
+    return got;
+}
+
+aether_result_t aether_net_client_ingest_delta_packet(aether_net_client_t *c,
+                                                      const u8 *data, u32 size) {
+    if (!c || !data || size < 8) return AETHER_ERR_INVALID_ARG;
+    handle_packet(c, data, size);
+    return (c->delta_count > 0 || c->has_snap) ? AETHER_OK : AETHER_ERR_INVALID_ARG;
+}
+
+u32 aether_net_client_delta_count(const aether_net_client_t *c) {
+    return c ? c->delta_count : 0;
+}
+
 
 aether_result_t aether_net_client_send_chat(aether_net_client_t *c, const char *text) {
     if (!c || !text || c->state != AETHER_NET_STATE_ACTIVE) return AETHER_ERR_NOT_READY;

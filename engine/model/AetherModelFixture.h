@@ -34,6 +34,16 @@ typedef struct aether_sprite_file_info {
 aether_result_t aether_sprite_parse_header(const u8 *data, u32 size,
                                            aether_sprite_file_info_t *out);
 
+
+/* Textured + 2-bone fixture (clean-room checker texture + dual-bone hierarchy).
+ * Returns bytes written. Geometry extract still yields the triangle mesh. */
+u32 aether_mdl_write_textured_fixture(u8 *out, u32 cap);
+u32 aether_mdl_write_textured_fixture_file(const char *filepath);
+
+/* Extract embedded texture RGBA8 stub from textured fixture (8x8 checker).
+ * Returns bytes written (w*h*4) or 0. */
+u32 aether_mdl_fixture_texture_rgba(u8 *out, u32 cap, u32 *out_w, u32 *out_h);
+
 #ifdef __cplusplus
 }
 #endif

@@ -212,3 +212,143 @@ aether_result_t aether_sprite_parse_header(const u8 *data, u32 size,
     if (out->version != 2 || out->width <= 0 || out->height <= 0) return AETHER_ERR_INVALID_ARG;
     return AETHER_OK;
 }
+
+
+/* Textured + 2-bone fixture with proper layout (bones before bodypart). */
+u32 aether_mdl_write_textured_fixture(u8 *out, u32 cap) {
+    if (!out) return 0;
+    const u32 HDR = 244, BONE = 112, BODY = 76, MODEL = 104, MESH = 20;
+    const u32 NVERTS = 3;
+    const u32 VERT_BYTES = NVERTS * 12;
+    const u32 NORM_BYTES = NVERTS * 12;
+    const u32 TRI_BYTES = 3 * 2;
+    const u32 TEX_W = 8, TEX_H = 8;
+    const u32 TEX_BYTES = TEX_W * TEX_H * 4u;
+    const u32 NBONES = 2;
+
+    const u32 bone_off  = HDR;
+    const u32 body_off  = bone_off + BONE * NBONES;
+    const u32 model_off = body_off + BODY;
+    const u32 mesh_off  = model_off + MODEL;
+    const u32 vert_off  = mesh_off + MESH;
+    const u32 norm_off  = vert_off + VERT_BYTES;
+    const u32 tri_off   = norm_off + NORM_BYTES;
+    const u32 tex_off   = tri_off + TRI_BYTES + 16;
+    const u32 total     = tex_off + TEX_BYTES + 16;
+    if (cap < total) return 0;
+    memset(out, 0, total);
+
+    wr_i32(out + 0, AETHER_MDL_ID);
+    wr_i32(out + 4, AETHER_MDL_VERSION);
+    wr_name(out + 8, 64, "aether_tex_fixture");
+    wr_i32(out + 72, (i32)total);
+    wr_f32(out + 76, 0.f); wr_f32(out + 80, 0.f); wr_f32(out + 84, 0.f);
+    wr_f32(out + 88, -8.f); wr_f32(out + 92, -8.f); wr_f32(out + 96, 0.f);
+    wr_f32(out + 100, 8.f); wr_f32(out + 104, 8.f); wr_f32(out + 108, 16.f);
+    wr_f32(out + 112, -8.f); wr_f32(out + 116, -8.f); wr_f32(out + 120, 0.f);
+    wr_f32(out + 124, 8.f); wr_f32(out + 128, 8.f); wr_f32(out + 132, 16.f);
+    wr_i32(out + 136, 0);
+    wr_i32(out + 140, (i32)NBONES);
+    wr_i32(out + 144, (i32)bone_off);
+    wr_i32(out + 148, 0); wr_i32(out + 152, 0);
+    wr_i32(out + 156, 0); wr_i32(out + 160, 0);
+    wr_i32(out + 164, 0); wr_i32(out + 168, 0);
+    wr_i32(out + 172, 0); wr_i32(out + 176, 0);
+    wr_i32(out + 180, 1); wr_i32(out + 184, 0); wr_i32(out + 188, 0); /* textures=1 */
+    wr_i32(out + 192, 0); wr_i32(out + 196, 0); wr_i32(out + 200, 0);
+    wr_i32(out + 204, 1);
+    wr_i32(out + 208, (i32)body_off);
+    wr_i32(out + 212, 0); wr_i32(out + 216, 0);
+
+    u8 *b0 = out + bone_off;
+    wr_name(b0, 32, "root");
+    wr_i32(b0 + 32, -1);
+    u8 *b1 = out + bone_off + BONE;
+    wr_name(b1, 32, "child");
+    wr_i32(b1 + 32, 0);
+
+    u8 *bp = out + body_off;
+    wr_name(bp, 64, "body");
+    wr_i32(bp + 64, 1);
+    wr_i32(bp + 68, 0);
+    wr_i32(bp + 72, (i32)model_off);
+
+    u8 *md = out + model_off;
+    wr_name(md, 64, "fixture_tex_tri");
+    wr_i32(md + 64, 0);
+    wr_f32(md + 68, 16.f);
+    wr_i32(md + 72, 1);
+    wr_i32(md + 76, (i32)mesh_off);
+    wr_i32(md + 80, (i32)NVERTS);
+    wr_i32(md + 84, (i32)vert_off);
+    wr_i32(md + 88, (i32)NVERTS);
+    wr_i32(md + 92, (i32)norm_off);
+    wr_i32(md + 96, 0);
+    wr_i32(md + 100, 0);
+
+    u8 *ms = out + mesh_off;
+    wr_i32(ms + 0, 1);
+    wr_i32(ms + 4, (i32)tri_off);
+    wr_i32(ms + 8, 0);
+    wr_i32(ms + 12, (i32)NVERTS);
+    wr_i32(ms + 16, 0);
+
+    f32 verts[9] = { -16.f,-16.f,0.f, 16.f,-16.f,0.f, 0.f,16.f,0.f };
+    f32 norms[9] = { 0,0,1, 0,0,1, 0,0,1 };
+    for (u32 i = 0; i < 9; ++i) {
+        wr_f32(out + vert_off + i * 4, verts[i]);
+        wr_f32(out + norm_off + i * 4, norms[i]);
+    }
+    wr_u16(out + tri_off + 0, 0);
+    wr_u16(out + tri_off + 2, 1);
+    wr_u16(out + tri_off + 4, 2);
+
+    u8 *tex = out + tex_off;
+    for (u32 y = 0; y < TEX_H; ++y) {
+        for (u32 x = 0; x < TEX_W; ++x) {
+            u32 i = (y * TEX_W + x) * 4u;
+            int on = ((x / 2) ^ (y / 2)) & 1;
+            tex[i+0] = on ? 220 : 40;
+            tex[i+1] = on ? 180 : 60;
+            tex[i+2] = on ? 40 : 160;
+            tex[i+3] = 255;
+        }
+    }
+    u8 *meta = tex + TEX_BYTES;
+    wr_i32(meta + 0, (i32)0xAE7E0001);
+    wr_i32(meta + 4, (i32)TEX_W);
+    wr_i32(meta + 8, (i32)TEX_H);
+    wr_i32(meta + 12, (i32)tex_off);
+    return total;
+}
+
+u32 aether_mdl_write_textured_fixture_file(const char *filepath) {
+    if (!filepath) return 0;
+    u8 buf[4096];
+    u32 n = aether_mdl_write_textured_fixture(buf, sizeof buf);
+    if (!n) return 0;
+    FILE *f = fopen(filepath, "wb");
+    if (!f) return 0;
+    size_t w = fwrite(buf, 1, n, f);
+    fclose(f);
+    return (u32)w;
+}
+
+u32 aether_mdl_fixture_texture_rgba(u8 *out, u32 cap, u32 *out_w, u32 *out_h) {
+    const u32 TEX_W = 8, TEX_H = 8;
+    const u32 TEX_BYTES = TEX_W * TEX_H * 4u;
+    if (out_w) *out_w = TEX_W;
+    if (out_h) *out_h = TEX_H;
+    if (!out || cap < TEX_BYTES) return 0;
+    for (u32 y = 0; y < TEX_H; ++y) {
+        for (u32 x = 0; x < TEX_W; ++x) {
+            u32 i = (y * TEX_W + x) * 4u;
+            int on = ((x / 2) ^ (y / 2)) & 1;
+            out[i+0] = on ? 220 : 40;
+            out[i+1] = on ? 180 : 60;
+            out[i+2] = on ? 40 : 160;
+            out[i+3] = 255;
+        }
+    }
+    return TEX_BYTES;
+}

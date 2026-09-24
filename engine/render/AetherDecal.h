@@ -67,6 +67,24 @@ u32 aether_decals_clip_to_world(const aether_decals_t *d,
                                 const struct aether_mesh *mesh,
                                 aether_decal_quad_vertex_t *out, u32 max_out);
 
+
+/* Procedural decal atlas (RGBA8) for Metal sample — clean-room, no HL sprites. */
+#define AETHER_DECAL_ATLAS_W 64
+#define AETHER_DECAL_ATLAS_H 64
+
+typedef struct aether_decal_atlas {
+    u32 width, height;
+    u8 *rgba; /* owned */
+} aether_decal_atlas_t;
+
+aether_result_t aether_decal_atlas_init(aether_decal_atlas_t *a, u32 w, u32 h);
+void aether_decal_atlas_shutdown(aether_decal_atlas_t *a);
+/* Paint soft circular / scorched blob into atlas (procedural). */
+aether_result_t aether_decal_atlas_generate_stub(aether_decal_atlas_t *a);
+u32 aether_decal_atlas_copy_rgba(const aether_decal_atlas_t *a, u8 *out, u32 max_bytes);
+/* Sample atlas at UV into rgb (CPU path for smoke). */
+void aether_decal_atlas_sample(const aether_decal_atlas_t *a, f32 u, f32 v, f32 rgb[3]);
+
 #ifdef __cplusplus
 }
 #endif

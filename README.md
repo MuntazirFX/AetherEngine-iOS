@@ -160,10 +160,35 @@ interp/delta/prediction stubs, dyn-light array uniforms, and world-clipped decal
 
 ### Known gaps after postfx/lightmap/mdl/predict batch
 - PostFX is brightness/gamma only (no bloom/DOF chain yet)
-- Lightstyle ping-pong still CPU-modulates atlas (GPU style weights next)
-- MDL fixture is a single flat triangle (no bones/seq skinning on GPU)
-- Delta/predict/interp are host-verified stubs — not yet driving live multiplayer movement
+- *(addressed in gpu-lightstyles/skin/mp batch: GPU style weights, skinning stub, live cmd+delta)*
 - Decal clip is tangent-square SH (not full mesh silhouette / CSG)
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+
+
+## GPU lightstyles / Skin / MP cmds batch (`continue/batch-gpu-lightstyles-skin-mp`)
+
+One PR advances GPU lightstyle weights, MDL bone/skinning + textured fixture, live UDP
+cmd→authority→snapshot with delta/predict/interp, bloom PostFX chain, and decal atlas — still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | GPU lightstyle weights | **done** | `aether_lightstyles_fill_gpu_weights` + Metal helper; base LM stays on GPU, CPU rewrite optional |
+| 2 | MDL bone/skinning + textured fixture | **done** | `aether_mdl_skin_*` stub matrices + dual-bone textured clean-room fixture |
+| 3 | Delta/predict/interp live tick | **done** | `aether_net_client_live_tick` pushes snaps→interp, predict+reconcile |
+| 4 | Input cmd stream | **done** | `AetherNetCmd` encode/decode + `send_input` (move/look/buttons) |
+| 5 | Bloom PostFX chain | **done** | bright/blur/combine uniforms + Metal fragments on offscreen path |
+| 6 | Decal atlas Metal sample | **done** | procedural RGBA atlas + `aether_decal_atlas_fragment` |
+| 7 | Server authority + snapshot loop | **done** | apply cmds, `tick_authority` broadcast at snapshot rate |
+| 8 | Lag compensation stub | **done** | per-slot cmd history + `lagcomp_cmd` lookup |
+| 9 | Host smoke | **done** | skinning matrices, bloom uniforms, UDP cmd+delta roundtrip |
+| 10 | README + gaps | **done** | This table |
+
+### Known gaps after GPU lightstyles / skin / mp batch
+- Style weights are global buffer (per-face style index not yet in BSP mesh attrs)
+- MDL skinning is dual-bone sway stub (no real sequence/anim frame blending)
+- Bloom Metal passes declared; iOS encode still thin (uniforms + shaders ready)
+- Lag-comp is cmd-history lookup only (no rewind world / hit validation)
 - IPA still requires macOS + Xcode via workflow_dispatch
 
 

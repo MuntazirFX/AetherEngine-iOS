@@ -63,6 +63,8 @@
 #include "../../engine/net/AetherNetDelta.h"
 #include "../../engine/net/AetherNetInterp.h"
 #include "../../engine/net/AetherNetPredict.h"
+#include "../../engine/net/AetherNetCmd.h"
+#include "../../engine/render/AetherMDLAnimation.h"
 #include "../../engine/console/AetherCVar.h"
 #include "../../engine/game/AetherManifest.h"
 
@@ -2514,4 +2516,126 @@ int engine_mdl_fixture_extract_verts(void) {
     char path[] = "/tmp/aether_fixture_bridge.mdl";
     if (aether_mdl_write_fixture_file(path) == 0) return 0;
     return engine_mdl_load_fixture_file(path);
+}
+
+/* ---------- Batch: GPU lightstyles / skin / mp cmds / bloom / decal atlas ---------- */
+static aether_mdl_skin_state_t g_skin;
+static int g_skin_init = 0;
+static aether_decal_atlas_t g_decal_atlas;
+static int g_decal_atlas_init = 0;
+
+static void ensure_skin(void) {
+    if (!g_skin_init) { aether_mdl_skin_identity(&g_skin, 2); g_skin_init = 1; }
+}
+static void ensure_decal_atlas(void) {
+    if (!g_decal_atlas_init) {
+        aether_decal_atlas_init(&g_decal_atlas, AETHER_DECAL_ATLAS_W, AETHER_DECAL_ATLAS_H);
+        aether_decal_atlas_generate_stub(&g_decal_atlas);
+        g_decal_atlas_init = 1;
+    }
+}
+
+int engine_lightstyles_fill_gpu_weights(float *out_weights64, unsigned *out_count) {
+    ensure_lightstyles();
+    aether_lightstyle_gpu_t gpu;
+    aether_lightstyles_fill_gpu_weights(&g_lightstyles, &gpu);
+    if (out_count) *out_count = gpu.count;
+    if (out_weights64) {
+        for (u32 i = 0; i < 64; ++i) out_weights64[i] = gpu.weights[i];
+    }
+    return (int)gpu.count;
+}
+
+int engine_mdl_skin_build_stub(unsigned bone_count, float time, float sway_deg) {
+    ensure_skin();
+    aether_mdl_skin_build_stub(&g_skin, bone_count ? bone_count : 2, time, sway_deg);
+    return (int)g_skin.bone_count;
+}
+int engine_mdl_skin_fill_ubo(float *out, int max_floats) {
+    ensure_skin();
+    if (!out || max_floats < 16) return 0;
+    return (int)aether_mdl_skin_fill_ubo(&g_skin, out, (u32)max_floats);
+}
+int engine_mdl_skin_transform_point(unsigned bone, float weight,
+                                    const float in3[3], float out3[3]) {
+    ensure_skin();
+    if (!in3 || !out3) return 0;
+    aether_mdl_skin_transform_point(&g_skin, bone, weight, in3, out3);
+    return 1;
+}
+int engine_mdl_write_textured_fixture(const char *filepath) {
+    return (int)aether_mdl_write_textured_fixture_file(filepath);
+}
+int engine_mdl_fixture_texture_rgba(unsigned char *out, int cap, int *out_w, int *out_h) {
+    u32 w = 0, h = 0;
+    u32 n = aether_mdl_fixture_texture_rgba(out, (u32)(cap > 0 ? cap : 0), &w, &h);
+    if (out_w) *out_w = (int)w;
+    if (out_h) *out_h = (int)h;
+    return (int)n;
+}
+
+int engine_postfx_set_bloom_chain(float threshold, float intensity, float blur_radius) {
+    ensure_postfx();
+    aether_postfx_set_bloom_chain(&g_postfx, threshold, intensity, blur_radius);
+    return 1;
+}
+int engine_postfx_fill_uniforms_ex(float *out8) {
+    ensure_postfx();
+    if (!out8) return 0;
+    aether_postfx_fill_uniforms_ex(&g_postfx, out8);
+    return 8;
+}
+int engine_postfx_fill_bloom(float *out4) {
+    ensure_postfx();
+    if (!out4) return 0;
+    aether_postfx_bloom_t b;
+    aether_postfx_fill_bloom(&g_postfx, &b);
+    out4[0] = b.threshold; out4[1] = b.intensity; out4[2] = b.blur_radius; out4[3] = b.enabled;
+    return 4;
+}
+
+int engine_decal_atlas_generate(void) {
+    ensure_decal_atlas();
+    return aether_decal_atlas_generate_stub(&g_decal_atlas) == AETHER_OK ? 1 : 0;
+}
+int engine_decal_atlas_copy_rgba(unsigned char *out, int max_bytes) {
+    ensure_decal_atlas();
+    if (!out || max_bytes <= 0) return 0;
+    return (int)aether_decal_atlas_copy_rgba(&g_decal_atlas, out, (u32)max_bytes);
+}
+int engine_decal_atlas_sample(float u, float v, float out_rgb[3]) {
+    ensure_decal_atlas();
+    if (!out_rgb) return 0;
+    aether_decal_atlas_sample(&g_decal_atlas, u, v, out_rgb);
+    return 1;
+}
+
+int engine_net_client_send_input(float forward, float side, float yaw_deg,
+                                 float pitch_deg, unsigned buttons, float dt) {
+    if (!g_net_client) return 0;
+    aether_net_cmd_t cmd;
+    aether_net_cmd_from_move(&cmd, forward, side, 0.f, yaw_deg, pitch_deg, buttons, dt, 0);
+    return aether_net_client_send_input(g_net_client, &cmd) == AETHER_OK ? 1 : 0;
+}
+int engine_net_client_live_tick(float dt, float forward, float side, float yaw_deg,
+                                unsigned buttons, float out_origin[3]) {
+    ensure_net_interp();
+    ensure_net_predict();
+    if (!g_net_client) return 0;
+    return aether_net_client_live_tick(g_net_client, dt, forward, side, yaw_deg, buttons,
+                                       &g_net_interp, &g_net_predict, out_origin);
+}
+int engine_net_server_tick_authority(float dt) {
+    if (!g_net_server) return 0;
+    return (int)aether_net_server_tick_authority(g_net_server, dt);
+}
+int engine_net_server_build_snapshot_players(void) {
+    if (!g_net_server) return 0;
+    aether_net_snapshot_t snap;
+    return (int)aether_net_server_build_snapshot(g_net_server, &snap);
+}
+int engine_net_lagcomp_cmd_seq(unsigned player_id, float lag_ms) {
+    if (!g_net_server) return -1;
+    const aether_net_cmd_t *c = aether_net_server_lagcomp_cmd(g_net_server, player_id, lag_ms);
+    return c ? (int)c->seq : -1;
 }

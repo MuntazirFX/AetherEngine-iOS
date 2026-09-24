@@ -531,3 +531,110 @@ fragment float4 aether_postfx_fragment(PostFXOut in [[stage_in]],
     rgb = pow(rgb, float3(1.0 / g));
     return float4(clamp(rgb, 0.0, 1.0), c.a);
 }
+
+/* ============ GPU lightstyle weights (base LM × style scale) ============ */
+struct LightstyleWeights {
+    float weights[64];
+    uint  count;
+    float time;
+    float pad0;
+    float pad1;
+};
+/* Sample helper used by world fragment when style buffer bound. */
+inline float3 aether_apply_style_weight(float3 lm_rgb, constant LightstyleWeights &LS, uint style_index) {
+    float w = 1.0;
+    if (LS.count > 0 && style_index < 64u) w = LS.weights[style_index];
+    return lm_rgb * w;
+}
+
+/* ============ Bloom PostFX chain ============ */
+struct BloomUniforms {
+    float threshold;
+    float intensity;
+    float blur_radius;
+    float enabled;
+};
+fragment float4 aether_bloom_bright_fragment(PostFXOut in [[stage_in]],
+                                             constant BloomUniforms &B [[buffer(1)]],
+                                             texture2d<float> scene [[texture(0)]],
+                                             sampler samp [[sampler(0)]]) {
+    float4 c = scene.sample(samp, in.uv);
+    if (B.enabled < 0.5) return float4(0.0);
+    float lum = dot(c.rgb, float3(0.2126, 0.7152, 0.0722));
+    float m = smoothstep(B.threshold, B.threshold + 0.15, lum);
+    return float4(c.rgb * m, 1.0);
+}
+fragment float4 aether_bloom_blur_fragment(PostFXOut in [[stage_in]],
+                                           constant BloomUniforms &B [[buffer(1)]],
+                                           texture2d<float> src [[texture(0)]],
+                                           sampler samp [[sampler(0)]]) {
+    float2 texel = float2(B.blur_radius, B.blur_radius) / float2(src.get_width(), src.get_height());
+    float3 acc = float3(0.0);
+    float wsum = 0.0;
+    for (int i = -2; i <= 2; ++i) {
+        for (int j = -2; j <= 2; ++j) {
+            float w = 1.0 - 0.15 * float(abs(i) + abs(j));
+            acc += src.sample(samp, in.uv + float2(float(i), float(j)) * texel).rgb * w;
+            wsum += w;
+        }
+    }
+    return float4(acc / max(wsum, 1e-3), 1.0);
+}
+fragment float4 aether_bloom_combine_fragment(PostFXOut in [[stage_in]],
+                                              constant PostFXUniforms &P [[buffer(1)]],
+                                              constant BloomUniforms &B [[buffer(2)]],
+                                              texture2d<float> scene [[texture(0)]],
+                                              texture2d<float> bloom [[texture(1)]],
+                                              sampler samp [[sampler(0)]]) {
+    float4 c = scene.sample(samp, in.uv);
+    float3 rgb = c.rgb;
+    if (P.enabled > 0.5) {
+        rgb = rgb * max(P.exposure, 0.01) + P.brightness;
+        rgb = max(rgb, float3(0.0));
+        float g = max(P.gamma, 0.2);
+        rgb = pow(rgb, float3(1.0 / g));
+    }
+    if (B.enabled > 0.5) {
+        float3 b = bloom.sample(samp, in.uv).rgb;
+        rgb += b * B.intensity;
+    }
+    return float4(clamp(rgb, 0.0, 1.0), c.a);
+}
+
+/* ============ Decal atlas sample ============ */
+fragment float4 aether_decal_atlas_fragment(DecalQuadOut in [[stage_in]],
+                                            texture2d<float> atlas [[texture(0)]],
+                                            sampler samp [[sampler(0)]]) {
+    float4 t = atlas.sample(samp, in.uv);
+    float a = t.a * in.color.a;
+    if (a < 0.02) discard_fragment();
+    return float4(t.rgb * in.color.rgb, a);
+}
+
+/* ============ MDL skinning stub (single/dual bone matrix) ============ */
+struct SkinUniforms {
+    float4x4 bone0;
+    float4x4 bone1;
+    float    bone_count;
+    float    pad0, pad1, pad2;
+};
+vertex MdlVertexOut aether_mdl_skinned_vertex(MdlVertexIn in [[stage_in]],
+                                               constant Uniforms &U [[buffer(1)]],
+                                               constant SkinUniforms &S [[buffer(2)]]) {
+    float3 p = float3(in.position.x, in.position.z, in.position.y);
+    float3 n = float3(in.normal.x,   in.normal.z,   in.normal.y);
+    float4 lp = float4(p, 1.0);
+    float4 skinned = lp;
+    if (S.bone_count >= 1.0) {
+        skinned = S.bone0 * lp;
+        if (S.bone_count >= 2.0) {
+            float4 s1 = S.bone1 * lp;
+            skinned = mix(skinned, s1, 0.35);
+        }
+    }
+    MdlVertexOut out;
+    float4 world = U.model * skinned;
+    out.position = U.proj * U.view * world;
+    out.normal = normalize((U.model * float4(n, 0.0)).xyz);
+    return out;
+}

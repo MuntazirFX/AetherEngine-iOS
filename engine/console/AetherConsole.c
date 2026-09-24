@@ -6,7 +6,14 @@
 struct aether_console { aether_cvar_registry_t*cvars; aether_cmd_registry_t*cmds; aether_console_sink_fn sink; void*user; };
 static void log_sink(aether_log_level_t l,const char*t,const char*m,void*u){(void)l;(void)t;aether_console_t*c=u;if(c&&c->sink)c->sink(m,c->user);}
 aether_console_t*aether_console_create(void){aether_console_t*c=calloc(1,sizeof*c);if(!c)return NULL;c->cvars=aether_cvar_create();c->cmds=aether_cmd_create();if(!c->cvars||!c->cmds){aether_console_destroy(c);return NULL;}aether_cmd_set_cvars(c->cmds,c->cvars);aether_console_register_defaults(c);return c;}
-void aether_console_destroy(aether_console_t*c){if(!c)return;aether_cvar_destroy(c->cvars);aether_cmd_destroy(c->cmds);free(c);}
+void aether_console_destroy(aether_console_t*c){
+    if(!c)return;
+    /* Detach global log sink if it still points at this console (avoids UAF). */
+    aether_log_set(NULL, NULL);
+    aether_cvar_destroy(c->cvars);
+    aether_cmd_destroy(c->cmds);
+    free(c);
+}
 aether_cvar_registry_t*aether_console_cvars(aether_console_t*c){return c?c->cvars:NULL;}
 aether_cmd_registry_t*aether_console_commands(aether_console_t*c){return c?c->cmds:NULL;}
 void aether_console_set_sink(aether_console_t*c,aether_console_sink_fn fn,void*u){if(!c)return;c->sink=fn;c->user=u;aether_log_set(fn?log_sink:NULL,c);}

@@ -93,6 +93,21 @@ aether_result_t aether_lightmap_apply_style_pingpong(aether_lightmap_t *lm,
 /* True when base_rgba is allocated and matches atlas size. */
 bool aether_lightmap_has_base(const aether_lightmap_t *lm);
 
+/* GPU lightstyle weights: shader samples base LM × style weight (no CPU rewrite). */
+typedef struct aether_lightstyle_gpu {
+    f32 weights[AETHER_MAX_LIGHTSTYLES]; /* current 0..1 values */
+    u32 count;
+    f32 time;
+    f32 pad;
+} aether_lightstyle_gpu_t;
+
+/* Pack current style values for Metal constant buffer. Returns float count written. */
+u32 aether_lightstyles_fill_gpu_weights(const aether_lightstyles_t *ls,
+                                        aether_lightstyle_gpu_t *out);
+
+/* Soft scale used by CPU path and GPU: 0.25 + 0.75*v */
+f32 aether_lightstyles_gpu_scale(f32 value);
+
 #ifdef __cplusplus
 }
 #endif
