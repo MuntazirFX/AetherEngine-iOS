@@ -33,7 +33,9 @@ void  engine_player_get_position(float out_xyz[3]);
 void  engine_player_set_position(float x, float y, float z);
 void  engine_player_set_angles(float yaw, float pitch);
 float engine_player_get_yaw(void);
-float engine_player_get_pitch(void);
+float engine_player_get_pitch(void); /* includes view punch */
+float engine_player_view_punch_pitch(void);
+float engine_player_fall_velocity(void);
 int   engine_player_on_ground(void);
 float engine_player_get_step_height(void);
 void  engine_player_set_step_height(float height);
