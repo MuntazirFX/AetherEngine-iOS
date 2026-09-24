@@ -25,6 +25,7 @@ typedef struct aether_player {
     f32           gravity;       /* downward accel */
     bool          on_ground;
     bool          crouching;
+    bool          in_water;      /* feet in CONTENTS_WATER */
     i32           hull_index;    /* 1 or 2 */
     f32           step_height;   /* max auto-step (Quake 18); 0 disables */
 } aether_player_t;

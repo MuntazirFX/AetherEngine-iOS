@@ -27,6 +27,11 @@ typedef struct aether_collision aether_collision_t;
 aether_collision_t *aether_collision_build(const aether_bsp_t *bsp);
 void                aether_collision_free (aether_collision_t *c);
 
+/* Leaf contents at point (EMPTY/SOLID/WATER/…). hull_index: 1=stand, 2=crouch. */
+i32 aether_collision_point_contents(const aether_collision_t *c,
+                                    aether_vec3_t point,
+                                    i32 hull_index);
+
 /* Test if a point is inside solid geometry.
  * hull_index: 1 = standing, 2 = crouching. */
 bool aether_collision_point_in_solid(const aether_collision_t *c,

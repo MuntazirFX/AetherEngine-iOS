@@ -246,7 +246,7 @@ int main(void) {
         expect(aether_bsp_vertex_count(bsp) == 8u, "bsp_synthetic_verts");
         expect(aether_bsp_face_count(bsp) == 6u, "bsp_synthetic_faces");
         expect(aether_bsp_edge_count(bsp) == 12u, "bsp_synthetic_edges");
-        expect(aether_bsp_plane_count(bsp) == 30u, "bsp_synthetic_planes"); /* render 7 + clip + ledge + crouch/alcove */
+        expect(aether_bsp_plane_count(bsp) == 38u, "bsp_synthetic_planes"); /* render 7 + clip + ledge + alcove + water */
         expect(aether_bsp_node_count(bsp) == 1u, "bsp_synthetic_nodes");
         expect(aether_bsp_leaf_count(bsp) == 3u, "bsp_synthetic_leaves"); /* solid + west + east */
 
@@ -334,10 +334,10 @@ int main(void) {
         /* Clipnodes / collision: floor, wall, 16u ledge + step-up (feeds player move). */
         {
             u32 clip_sz = aether_bsp_lump_size(bsp, AETHER_BSP_LUMP_CLIPNODES);
-            expect(clip_sz >= 54u * 8u, "bsp_synthetic_clipnodes_lump"); /* 54 × sizeof(clipnode)=8 */
+            expect(clip_sz >= 72u * 8u, "bsp_synthetic_clipnodes_lump"); /* 72 × sizeof(clipnode)=8 */
             aether_collision_t *col = aether_collision_build(bsp);
             expect(col != NULL, "collision_build");
-            expect(aether_collision_clipnode_count(col) == 54u, "collision_clipnode_count");
+            expect(aether_collision_clipnode_count(col) == 72u, "collision_clipnode_count");
             expect(aether_collision_hull_root(col, 1) == 6, "collision_hull1_root");
             expect(aether_collision_hull_root(col, 2) == 12, "collision_hull2_root");
 
@@ -524,10 +524,106 @@ int main(void) {
             expect(peak_z < 57.f, "player_jump_peak_under_stand_ceiling");
             expect(peak_z > 20.f, "player_jump_got_airborne");
 
+            /* --- Water contents / swim / buoyancy (+Y pool) --- */
+            expect(aether_collision_point_contents(col, (aether_vec3_t){0, 170, 20}, 1)
+                       == AETHER_CONTENTS_WATER,
+                   "water_pool_center_contents");
+            /* z=50: above water surface (48) but under stand ceiling (56). */
+            expect(aether_collision_point_contents(col, (aether_vec3_t){0, 170, 50}, 1)
+                       == AETHER_CONTENTS_EMPTY,
+                   "water_above_surface_empty");
+            expect(aether_collision_point_contents(col, (aether_vec3_t){0, 0, 40}, 1)
+                       == AETHER_CONTENTS_EMPTY,
+                   "dry_room_center_empty");
+            expect(!aether_collision_point_in_solid(col, (aether_vec3_t){0, 170, 20}, 1),
+                   "water_is_not_solid");
+            /* Walls/floor still solid after water clip insert. */
+            expect(aether_collision_point_in_solid(col, (aether_vec3_t){0, 0, -1}, 1),
+                   "water_floor_still_solid");
+            expect(aether_collision_point_in_solid(col, (aether_vec3_t){250, 0, 40}, 1),
+                   "water_wall_still_solid");
+
+            /* Mid-pool buoyancy: float up instead of falling like dry air. */
+            aether_player_set_position(&ply, (aether_vec3_t){0, 170, 20});
+            ply.on_ground = false;
+            ply.crouching = false;
+            ply.hull_index = 1;
+            ply.velocity = (aether_vec3_t){0, 0, 0};
+            ply.in_water = false;
+            float z0 = ply.position.z;
+            int saw_water = 0;
+            for (int i = 0; i < 90; ++i) {
+                aether_input_begin_frame(in);
+                aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                aether_input_end_frame(in);
+                if (ply.in_water) saw_water = 1;
+            }
+            expect(saw_water, "player_detects_water");
+            expect(ply.position.z > z0 + 2.f, "player_buoyancy_rises");
+            expect(ply.position.z < 56.f, "player_buoyancy_under_surface");
+
+            /* Swim-up with jump held. */
+            aether_player_set_position(&ply, (aether_vec3_t){0, 170, 10});
+            ply.on_ground = false;
+            ply.velocity = (aether_vec3_t){0, 0, 0};
+            float swim_peak = ply.position.z;
+            for (int i = 0; i < 90; ++i) {
+                aether_input_begin_frame(in);
+                aether_input_set_action(in, AETHER_ACTION_JUMP, true);
+                aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                aether_input_end_frame(in);
+                if (ply.position.z > swim_peak) swim_peak = ply.position.z;
+            }
+            expect(ply.in_water || swim_peak > 30.f, "player_swim_up_progress");
+            expect(swim_peak > 25.f, "player_swim_up_peak");
+
+            /* Exit water toward -Y, then dry walk on floor outside pool. */
+            aether_player_set_position(&ply, (aether_vec3_t){0, 170, 0});
+            ply.on_ground = true;
+            ply.velocity = (aether_vec3_t){0, 0, 0};
+            ply.yaw = -1.5707963f; /* face -Y */
+            ply.step_height = AETHER_DEFAULT_STEP_HEIGHT;
+            for (int i = 0; i < 120; ++i) {
+                aether_input_begin_frame(in);
+                aether_input_set_move(in, 0.f, 1.f);
+                aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                aether_input_end_frame(in);
+            }
+            expect(!ply.in_water, "player_exits_water");
+            expect(ply.position.y < 130.f, "player_walked_out_of_pool");
+
+            /* Dry walk: spawn outside pool (y=80), confirm no water + floor. */
+            aether_player_set_position(&ply, (aether_vec3_t){0, 80, 5});
+            ply.on_ground = false;
+            ply.velocity = (aether_vec3_t){0, 0, 0};
+            ply.crouching = false;
+            ply.hull_index = 1;
+            ply.in_water = true; /* force clear via update */
+            for (int i = 0; i < 90; ++i) {
+                aether_input_begin_frame(in);
+                aether_input_set_action(in, AETHER_ACTION_JUMP, false);
+                aether_input_set_action(in, AETHER_ACTION_DUCK, false);
+                aether_input_set_move(in, 0.f, 0.f);
+                aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                aether_input_end_frame(in);
+            }
+            expect(!ply.in_water, "player_dry_outside_pool");
+            expect(ply.on_ground, "player_dry_lands");
+            expect(ply.position.z < 3.f, "player_dry_walk_on_floor");
+
+            /* Regression: step-up / crouch still work after water changes. */
+            expect(!aether_collision_point_in_solid(col, (aether_vec3_t){100, 0, 16}, 1),
+                   "water_ledge_top_still_empty");
+            expect(aether_collision_point_in_solid(col, (aether_vec3_t){-180, 0, 0}, 1),
+                   "water_alcove_stand_still_blocked");
+            expect(!aether_collision_point_in_solid(col, (aether_vec3_t){-180, 0, 0}, 2),
+                   "water_alcove_crouch_still_fits");
+
             aether_input_destroy(in);
             aether_collision_free(col);
-            printf("  collision: floor z=%.3f, ledge climb x=%.1f z=%.1f, jump ceil~%.1f, alcove duck ok\n",
-                   landed.z, climbed.x, climbed.z, jumped.z);
+            printf("  collision: floor z=%.3f, ledge climb x=%.1f z=%.1f, jump ceil~%.1f, "
+                   "water swim peak~%.1f, alcove duck ok\n",
+                   landed.z, climbed.x, climbed.z, jumped.z, swim_peak);
         }
 
         /* Lightmap stub: procedural atlas + mesh LUV (feeds Metal sample). */

@@ -63,11 +63,12 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
         {-256.f,  256.f, 128.f},
     };
 
-    /* Render planes 0..6; clip planes 7..29 (Quake n*p - dist, front = +).
+    /* Render planes 0..6; clip planes 7..37 (Quake n*p - dist, front = +).
      * Ledge: world box x[80..256] y[+/-256] z[0..16] (16u step <= STEPSIZE 18).
      * Low alcove (-X): physical ceiling z=48 so standing (72u) blocked, crouch (36u) fits.
+     * +Y water pool: physical x[-80..80] y[120..220] z[0..48] → CONTENTS_WATER.
      * Standing/crouch hull Z are distinct (room_ceil - hull height), not shared. */
-    aether_bsp_plane_t planes[30];
+    aether_bsp_plane_t planes[38];
     memset(planes, 0, sizeof planes);
     planes[0].normal[2] =  1.f; planes[0].dist =    0.f; planes[0].type = 2; /* floor +Z */
     planes[1].normal[2] = -1.f; planes[1].dist = -128.f; planes[1].type = 2; /* ceiling -Z */
@@ -104,6 +105,15 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     planes[27].normal[2] = 1.f; planes[27].dist =    0.f; planes[27].type = 2; /* standing solid bottom */
     planes[28].normal[2] = 1.f; planes[28].dist =   12.f; planes[28].type = 2; /* crouch solid bottom = 48-36 */
     planes[29].normal[0] = 1.f; planes[29].dist =  -96.f; planes[29].type = 0; /* point alcove +X */
+    /* +Y water pool planes (surface z=48 reuses plane 26). */
+    planes[30].normal[0] = 1.f; planes[30].dist =  -80.f; planes[30].type = 0; /* point water -X */
+    planes[31].normal[0] = 1.f; planes[31].dist =   80.f; planes[31].type = 0; /* point water +X */
+    planes[32].normal[1] = 1.f; planes[32].dist =  120.f; planes[32].type = 1; /* point water -Y */
+    planes[33].normal[1] = 1.f; planes[33].dist =  220.f; planes[33].type = 1; /* point water +Y */
+    planes[34].normal[0] = 1.f; planes[34].dist =  -64.f; planes[34].type = 0; /* hull water -X */
+    planes[35].normal[0] = 1.f; planes[35].dist =   64.f; planes[35].type = 0; /* hull water +X */
+    planes[36].normal[1] = 1.f; planes[36].dist =  136.f; planes[36].type = 1; /* hull water -Y */
+    planes[37].normal[1] = 1.f; planes[37].dist =  204.f; planes[37].type = 1; /* hull water +Y */
 
     aether_bsp_edge_t edges[12] = {
         {0, 1}, {1, 2}, {2, 3}, {3, 0}, /* 0..3 floor ring */
@@ -188,14 +198,14 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     leaves[2].num_marksurfaces = 4;
 
     /* Clipnodes: Quake/GoldSrc layout -- children[0]=front(+), children[1]=back(-);
-     * negative child = contents (EMPTY=-1, SOLID=-2).
-     * 3 room AABB x 6 + 3 ledge solids x 6 + 3 alcove solids x 6 = 54 nodes.
-     * Room -> ledge -> low-ceiling alcove -> EMPTY. */
+     * negative child = contents (EMPTY=-1, SOLID=-2, WATER=-3).
+     * 3 room + 3 water + 3 ledge + 3 alcove = 12 boxes × 6 = 72 nodes.
+     * Room -> water pool -> ledge -> low-ceiling alcove -> EMPTY. */
     #pragma pack(push, 1)
     typedef struct { i32 plane; i16 children[2]; } synth_clipnode_t;
     #pragma pack(pop)
-    enum { SYNTH_CN_EMPTY = -1, SYNTH_CN_SOLID = -2 };
-    synth_clipnode_t clipnodes[54];
+    enum { SYNTH_CN_EMPTY = -1, SYNTH_CN_SOLID = -2, SYNTH_CN_WATER = -3 };
+    synth_clipnode_t clipnodes[72];
     memset(clipnodes, 0, sizeof clipnodes);
     /* Room AABB: interior leaf = `interior` (next obstacle root or EMPTY). */
     #define SYNTH_BOX_HULL(base, pL, pR, pY0, pY1, pZ0, pZ1, interior) do { \
@@ -215,11 +225,25 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
         clipnodes[(base)+4].plane = (pZ0); clipnodes[(base)+4].children[0] = (i16)((base)+5); clipnodes[(base)+4].children[1] = (i16)(outside); \
         clipnodes[(base)+5].plane = (pZ1); clipnodes[(base)+5].children[0] = (i16)(outside);   clipnodes[(base)+5].children[1] = SYNTH_CN_SOLID; \
     } while (0)
-    /* Room hulls -> ledge (18/24/30) -> alcove (36/42/48) -> EMPTY.
-     * Standing Z ceiling plane 18 (56); crouch uses distinct plane 22 (92). */
-    SYNTH_BOX_HULL(0,  7,  8,  9, 10, 11, 12, 18); /* hull 0 / point */
-    SYNTH_BOX_HULL(6, 13, 14, 15, 16, 17, 18, 24); /* hull 1 standing */
-    SYNTH_BOX_HULL(12,13, 14, 15, 16, 17, 22, 30); /* hull 2 crouch (shorter Z) */
+    /* Water volume AABB; inside leaf = WATER, outside chains onward. */
+    #define SYNTH_WATER_BOX_NEXT(base, pL, pR, pY0, pY1, pZ0, pZ1, outside) do { \
+        clipnodes[(base)+0].plane = (pL);  clipnodes[(base)+0].children[0] = (i16)((base)+1); clipnodes[(base)+0].children[1] = (i16)(outside); \
+        clipnodes[(base)+1].plane = (pR);  clipnodes[(base)+1].children[0] = (i16)(outside);   clipnodes[(base)+1].children[1] = (i16)((base)+2); \
+        clipnodes[(base)+2].plane = (pY0); clipnodes[(base)+2].children[0] = (i16)((base)+3); clipnodes[(base)+2].children[1] = (i16)(outside); \
+        clipnodes[(base)+3].plane = (pY1); clipnodes[(base)+3].children[0] = (i16)(outside);   clipnodes[(base)+3].children[1] = (i16)((base)+4); \
+        clipnodes[(base)+4].plane = (pZ0); clipnodes[(base)+4].children[0] = (i16)((base)+5); clipnodes[(base)+4].children[1] = (i16)(outside); \
+        clipnodes[(base)+5].plane = (pZ1); clipnodes[(base)+5].children[0] = (i16)(outside);   clipnodes[(base)+5].children[1] = SYNTH_CN_WATER; \
+    } while (0)
+    /* Room -> water (54/60/66) -> ledge (18/24/30) -> alcove (36/42/48) -> EMPTY.
+     * Standing Z ceiling plane 18 (56); crouch uses distinct plane 22 (92).
+     * Water surface z=48 (plane 26); floor z=0 (planes 11/17). */
+    SYNTH_BOX_HULL(0,  7,  8,  9, 10, 11, 12, 54); /* hull 0 / point */
+    SYNTH_BOX_HULL(6, 13, 14, 15, 16, 17, 18, 60); /* hull 1 standing */
+    SYNTH_BOX_HULL(12,13, 14, 15, 16, 17, 22, 66); /* hull 2 crouch (shorter Z) */
+    /* Water pools (not solid) -> matching ledge */
+    SYNTH_WATER_BOX_NEXT(54, 30, 31, 32, 33, 11, 26, 18); /* point water */
+    SYNTH_WATER_BOX_NEXT(60, 34, 35, 36, 37, 17, 26, 24); /* standing water */
+    SYNTH_WATER_BOX_NEXT(66, 34, 35, 36, 37, 17, 26, 30); /* crouch water */
     /* Point ledge -> point alcove */
     SYNTH_SOLID_BOX_NEXT(18, 21,  8,  9, 10, 11, 19, 36);
     /* Standing/crouch ledge -> matching alcove */
@@ -233,6 +257,7 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     SYNTH_SOLID_BOX_NEXT(48, 13, 23, 24, 25, 28, 22, SYNTH_CN_EMPTY);
     #undef SYNTH_BOX_HULL
     #undef SYNTH_SOLID_BOX_NEXT
+    #undef SYNTH_WATER_BOX_NEXT
 
     aether_bsp_model_t model;
     memset(&model, 0, sizeof model);

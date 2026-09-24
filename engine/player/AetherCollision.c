@@ -82,23 +82,23 @@ void aether_collision_free(aether_collision_t *c) {
     if (c) free(c);
 }
 
-/* ---------- Point-in-solid test ---------- */
-bool aether_collision_point_in_solid(const aether_collision_t *c,
-                                     aether_vec3_t point,
-                                     i32 hull_index) {
-    if (!c || !c->clipnodes_raw) return false;
+/* ---------- Point contents / solid ---------- */
+i32 aether_collision_point_contents(const aether_collision_t *c,
+                                    aether_vec3_t point,
+                                    i32 hull_index) {
+    if (!c || !c->clipnodes_raw) return AETHER_CONTENTS_EMPTY;
     if (hull_index < 1 || hull_index > 2) hull_index = 1;
 
     i32 idx = c->hull_root[hull_index];
-    if (idx < 0) return false;  /* no hull */
+    if (idx < 0) return AETHER_CONTENTS_EMPTY;  /* no hull */
 
     int safety = 0;
     while (idx >= 0) {
-        if (++safety > 4096) return false; /* protect against loops */
+        if (++safety > 4096) return AETHER_CONTENTS_EMPTY;
         const aether_clipnode_t *cn = clipnode_at(c, (u32)idx);
-        if (!cn) return false;
+        if (!cn) return AETHER_CONTENTS_EMPTY;
         const aether_bsp_plane_t *pl = plane_at(c, (u32)cn->plane);
-        if (!pl) return false;
+        if (!pl) return AETHER_CONTENTS_EMPTY;
 
         f32 d = pl->normal[0]*point.x
               + pl->normal[1]*point.y
@@ -108,8 +108,14 @@ bool aether_collision_point_in_solid(const aether_collision_t *c,
         /* Quake/GoldSrc: children[0]=front (d>=0), children[1]=back (d<0). */
         idx = (d < 0.0f) ? cn->children[1] : cn->children[0];
     }
-    /* Reached a leaf. Negative idx is contents (EMPTY=-1, SOLID=-2, …). */
-    return (idx == AETHER_CONTENTS_SOLID);
+    /* Reached a leaf. Negative idx is contents (EMPTY=-1, SOLID=-2, WATER=-3, …). */
+    return idx;
+}
+
+bool aether_collision_point_in_solid(const aether_collision_t *c,
+                                     aether_vec3_t point,
+                                     i32 hull_index) {
+    return aether_collision_point_contents(c, point, hull_index) == AETHER_CONTENTS_SOLID;
 }
 
 /* Binary-search the farthest non-solid point along one axis from `base`. */

@@ -41,11 +41,14 @@ int   engine_player_is_crouching(void);
 void  engine_player_set_crouching(bool crouching);
 int   engine_player_hull_index(void);
 float engine_player_eye_height(void);
+int   engine_player_in_water(void);
 
 /* ---------- Collision (clipnode hull) ---------- */
 int  engine_collision_ready(void);
 int  engine_collision_clipnode_count(void);
 int  engine_collision_hull_root(int hull_index);
+/* Leaf contents: -1 empty, -2 solid, -3 water (see AETHER_CONTENTS_*). */
+int  engine_collision_point_contents(float x, float y, float z, int hull_index);
 /* 1 if point is solid for hull 1 (standing) or 2 (crouch). */
 int  engine_collision_point_in_solid(float x, float y, float z, int hull_index);
 /* Axis move-and-slide + optional step-up (max_step<=0 disables).

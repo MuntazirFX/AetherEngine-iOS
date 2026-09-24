@@ -1,4 +1,4 @@
-/* AetherPlayer.c — Player movement with gravity + collision. STEP 14.
+/* AetherPlayer.c — Player movement with gravity + collision + swim.
  * AetherEngine-iOS · Clean-room.
  */
 #include "AetherPlayer.h"
@@ -17,6 +17,11 @@
 #define GROUND_FRICTION     10.0f
 #define AIR_ACCEL           10.0f
 #define STOP_SPEED          100.0f
+#define WATER_SPEED_SCALE   0.55f
+#define WATER_FRICTION      4.0f
+#define WATER_GRAVITY_SCALE 0.25f
+#define WATER_BUOYANCY      220.0f    /* upward accel while submerged */
+#define SWIM_VERT_SPEED     180.0f
 
 void aether_player_init(aether_player_t *p) {
     if (!p) return;
@@ -32,6 +37,7 @@ void aether_player_init(aether_player_t *p) {
     p->gravity     = GRAVITY;
     p->on_ground   = false;
     p->crouching   = false;
+    p->in_water    = false;
     p->hull_index  = 1;
     p->step_height = AETHER_DEFAULT_STEP_HEIGHT;
 }
@@ -100,10 +106,44 @@ void aether_player_update(aether_player_t *p,
     f32 wl = aether_vec3_len(wish);
     if (wl > 1.0f) wish = aether_vec3_scale(wish, 1.0f / wl);
 
-    f32 speed = p->move_speed * (p->crouching ? CROUCH_SPEED_SCALE : 1.0f);
+    /* 3b. Water contents at feet --- */
+    bool in_water = false;
+    if (collision) {
+        i32 contents = aether_collision_point_contents(collision, p->position, p->hull_index);
+        in_water = (contents == AETHER_CONTENTS_WATER);
+    }
+    p->in_water = in_water;
 
-    /* 4. Ground / air acceleration --- */
-    if (p->on_ground) {
+    f32 speed = p->move_speed * (p->crouching ? CROUCH_SPEED_SCALE : 1.0f);
+    if (in_water) speed *= WATER_SPEED_SCALE;
+
+    /* 4. Ground / air / swim acceleration --- */
+    if (in_water) {
+        /* Water friction + swim toward wish (incl. vertical via jump/duck). */
+        f32 f = WATER_FRICTION * dt;
+        if (f > 1.0f) f = 1.0f;
+        p->velocity.x *= (1.0f - f);
+        p->velocity.y *= (1.0f - f);
+        p->velocity.z *= (1.0f - f * 0.5f);
+
+        f32 accel = speed * 5.0f;
+        p->velocity.x += wish.x * accel * dt;
+        p->velocity.y += wish.y * accel * dt;
+
+        if (in->actions[AETHER_ACTION_JUMP])
+            p->velocity.z += SWIM_VERT_SPEED * 4.0f * dt;
+        if (in->actions[AETHER_ACTION_DUCK])
+            p->velocity.z -= SWIM_VERT_SPEED * 4.0f * dt;
+
+        f32 hs = sqrtf(p->velocity.x*p->velocity.x + p->velocity.y*p->velocity.y);
+        if (hs > speed) {
+            f32 k = speed / hs;
+            p->velocity.x *= k;
+            p->velocity.y *= k;
+        }
+        if (p->velocity.z > SWIM_VERT_SPEED) p->velocity.z = SWIM_VERT_SPEED;
+        if (p->velocity.z < -SWIM_VERT_SPEED) p->velocity.z = -SWIM_VERT_SPEED;
+    } else if (p->on_ground) {
         /* Friction when not moving */
         if (wl < 0.01f) {
             f32 f = GROUND_FRICTION * dt;
@@ -136,14 +176,19 @@ void aether_player_update(aether_player_t *p,
         }
     }
 
-    /* 5. Jump --- */
-    if (p->on_ground && in->actions[AETHER_ACTION_JUMP]) {
+    /* 5. Jump (dry land only — water uses swim-up above) --- */
+    if (!in_water && p->on_ground && in->actions[AETHER_ACTION_JUMP]) {
         p->velocity.z = p->jump_speed;
         p->on_ground = false;
     }
 
-    /* 6. Gravity --- */
-    p->velocity.z -= p->gravity * dt;
+    /* 6. Gravity / buoyancy --- */
+    if (in_water) {
+        p->velocity.z -= p->gravity * WATER_GRAVITY_SCALE * dt;
+        p->velocity.z += WATER_BUOYANCY * dt; /* net slight float when idle */
+    } else {
+        p->velocity.z -= p->gravity * dt;
+    }
     if (p->velocity.z < -2000.0f) p->velocity.z = -2000.0f;
 
     /* 7. Integrate + collision --- */
@@ -154,12 +199,19 @@ void aether_player_update(aether_player_t *p,
 
     aether_vec3_t final = target;
     bool on_ground = false;
+    f32 step = in_water ? 0.0f : p->step_height; /* no auto-step while swimming */
     if (collision) {
         final = aether_collision_move(collision, p->position, target,
-                                      p->hull_index, p->step_height, &on_ground);
+                                      p->hull_index, step, &on_ground);
     }
     p->position = final;
     p->on_ground = on_ground;
+
+    /* Re-sample water after move (may have exited/entered). */
+    if (collision) {
+        i32 contents = aether_collision_point_contents(collision, p->position, p->hull_index);
+        p->in_water = (contents == AETHER_CONTENTS_WATER);
+    }
 
     /* If blocked along an axis, kill velocity along it (basic) */
     if (fabsf(final.x - target.x) > 1e-3f) p->velocity.x = 0.0f;
