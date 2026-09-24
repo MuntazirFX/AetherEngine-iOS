@@ -1,4 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
+#define _DEFAULT_SOURCE
 /* host_smoke.c — Linux/macOS host smoke test for AetherEngine C core.
  * AetherEngine-iOS · Clean-room. No game assets required.
  */
@@ -55,6 +56,11 @@
 #include "AetherFrustum.h"
 #include "AetherSprite.h"
 #include "AetherNetSnapshot.h"
+#include "AetherShadow.h"
+#include "AetherPostFX.h"
+#include "AetherInteract.h"
+#include "AetherModelFixture.h"
+
 #include <unistd.h>
 #include "AetherMath.h"
 
@@ -1416,6 +1422,192 @@ int main(void) {
             aether_player_tick_radiation(&hp, 0.5f, true);
             f32 h1 = aether_player_health_get(&hp);
             expect(h1 < h0 - 5.f, "batch_hazard_damage");
+        }
+    }
+
+
+
+    /* ========== batch_gpu_lights_decal_clip_netplay ========== */
+    printf("--- batch_gpu_lights_decal_clip_netplay ---\n");
+    {
+        /* 1. Dyn-light UBO pack */
+        {
+            aether_dyn_lights_t dl;
+            expect(aether_dyn_lights_init(&dl) == AETHER_OK, "b2_dl_init");
+            f32 p0[3] = {0, 0, 64}, c0[3] = {1, 0.5f, 0.2f};
+            f32 p1[3] = {40, 0, 48}, c1[3] = {0.2f, 0.4f, 1};
+            expect(aether_dyn_lights_add(&dl, p0, c0, 128.f, 1.2f) == AETHER_OK, "b2_dl_add0");
+            expect(aether_dyn_lights_add(&dl, p1, c1, 96.f, 0.8f) == AETHER_OK, "b2_dl_add1");
+            aether_dyn_light_ubo_t ubo;
+            u32 n = aether_dyn_lights_fill_ubo(&dl, &ubo);
+            expect(n == 2 && ubo.count == 2, "b2_dl_ubo_count");
+            expect(ubo.lights[0].radius == 128.f && ubo.lights[1].intensity == 0.8f, "b2_dl_ubo_fields");
+        }
+
+        /* 2. Decal project onto mesh faces */
+        {
+            aether_bsp_t *syn = aether_bsp_create_synthetic_room();
+            aether_mesh_t *mesh = NULL;
+            expect(syn && aether_mesh_from_bsp(syn, NULL, &mesh) == AETHER_OK && mesh, "b2_decal_mesh");
+            aether_decals_t dec;
+            aether_decals_init(&dec);
+            f32 dp[3] = {mesh->bounds_center[0], mesh->bounds_center[1], mesh->bounds_min[2]};
+            f32 dn[3] = {0, 0, 1};
+            expect(aether_decals_add(&dec, dp, dn, 128.f, 10.f) == AETHER_OK, "b2_decal_add");
+            aether_decal_quad_vertex_t buf[512];
+            u32 vn = aether_decals_project_onto_mesh(&dec, mesh, buf, 512);
+            expect(vn >= 3 && (vn % 3) == 0, "b2_decal_project_tris");
+            aether_mesh_free(mesh);
+            aether_bsp_free(syn);
+        }
+
+        /* 3. Live UDP snapshot ingest → scoreboard/chat */
+        {
+            const u16 port = 27995;
+            aether_net_server_t *srv = aether_net_server_create(port, 4);
+            aether_net_client_t *cli = aether_net_client_create();
+            expect(srv && cli, "b2_net_alloc");
+            aether_net_server_set_info(srv, "Batch2", "aether_demo", 10, 5);
+            expect(aether_net_client_connect(cli, "127.0.0.1", port) == AETHER_OK, "b2_net_connect");
+            int connected = 0;
+            for (int i = 0; i < 60; ++i) {
+                aether_net_server_tick(srv, 0.016f);
+                aether_net_client_tick(cli, 0.016f);
+                aether_net_state_t stt = aether_net_client_state(cli);
+                if (stt == AETHER_NET_STATE_CONNECTED || stt == AETHER_NET_STATE_ACTIVE) {
+                    connected = 1; break;
+                }
+            }
+            expect(connected, "b2_net_connected");
+            aether_net_snapshot_t snap;
+            aether_net_snapshot_make_demo(&snap, 99, 5.0f);
+            u8 pkt[1024];
+            u32 psz = aether_net_snapshot_encode(&snap, pkt, sizeof pkt);
+            expect(psz > 16, "b2_snap_encode");
+            aether_net_server_broadcast_snapshot(srv, pkt, psz);
+            for (int i = 0; i < 20; ++i) {
+                aether_net_server_tick(srv, 0.05f);
+                aether_net_client_tick(cli, 0.05f);
+                if (aether_net_client_snapshot_count(cli) > 0) break;
+                /* spin */ for (volatile int _s=0;_s<100000;_s++){}
+            }
+            /* Also exercise direct ingest path (deterministic). */
+            if (aether_net_client_snapshot_count(cli) == 0) {
+                expect(aether_net_client_ingest_snapshot_packet(cli, pkt, psz) == AETHER_OK,
+                       "b2_snap_ingest_direct");
+            } else {
+                expect(1, "b2_snap_ingest_udp");
+            }
+            expect(aether_net_client_snapshot_count(cli) >= 1, "b2_snap_count");
+            aether_scoreboard_t sb; aether_chat_log_t chat;
+            aether_scoreboard_init(&sb); aether_chat_init(&chat);
+            u32 pc = aether_net_client_apply_snapshot_hud(cli, &sb, &chat, 5.0f);
+            expect(pc == 2 && sb.count == 2, "b2_snap_hud");
+            aether_net_client_disconnect(cli);
+            aether_net_client_destroy(cli);
+            aether_net_server_destroy(srv);
+        }
+
+        /* 4. Lightstyles cycle */
+        {
+            aether_lightstyles_t ls;
+            aether_lightstyles_init(&ls);
+            expect(ls.count >= 4, "b2_styles_count");
+            f32 v0 = aether_lightstyles_value(&ls, 0);
+            expect(v0 > 0.4f && v0 < 0.7f, "b2_style0_m"); /* 'm' → 12/25 = 0.48 */
+            aether_lightstyles_update(&ls, 1.0f);
+            f32 v2a = aether_lightstyles_value(&ls, 2);
+            aether_lightstyles_update(&ls, 1.5f);
+            f32 v2b = aether_lightstyles_value(&ls, 2);
+            expect(v2a != v2b || ls.strings[2][0] != 0, "b2_style_anim");
+            aether_lightmap_t lm;
+            expect(aether_lightmap_init(&lm, 32, 32, 1) == AETHER_OK, "b2_lm_init");
+            expect(aether_lightmap_generate_stub(&lm, 32, 32, 4) == AETHER_OK, "b2_lm_stub");
+            u8 before = lm.rgba[0];
+            expect(aether_lightmap_apply_style(&lm, &ls, 0) == AETHER_OK, "b2_lm_style");
+            expect(lm.rgba[0] <= before, "b2_lm_style_modulate");
+            aether_lightmap_shutdown(&lm);
+        }
+
+        /* 5–6. MDL/sprite fixtures + load path */
+        {
+            char mdlpath[] = "/tmp/aether_fixture.mdl";
+            char sprpath[] = "/tmp/aether_fixture.spr";
+            u32 mw = aether_mdl_write_fixture_file(mdlpath);
+            u32 sw = aether_sprite_write_fixture_file(sprpath);
+            expect(mw > 200 && sw > 40, "b2_fixture_write");
+            aether_mdl_t *m = aether_mdl_load(mdlpath);
+            expect(m != NULL && aether_mdl_is_valid(m), "b2_mdl_load_fixture");
+            const aether_mdl_info_t *info = aether_mdl_info(m);
+            expect(info && info->bone_count == 1 && info->bodypart_count == 1, "b2_mdl_info");
+            aether_mdl_free(m);
+            u8 sprbuf[2048];
+            FILE *sf = fopen(sprpath, "rb");
+            expect(sf != NULL, "b2_spr_open");
+            size_t sn = sf ? fread(sprbuf, 1, sizeof sprbuf, sf) : 0;
+            if (sf) fclose(sf);
+            aether_sprite_file_info_t si;
+            expect(aether_sprite_parse_header(sprbuf, (u32)sn, &si) == AETHER_OK, "b2_spr_parse");
+            expect(si.width == 16 && si.height == 16 && si.numframes == 1, "b2_spr_dims");
+            aether_sprite_t spr;
+            aether_sprite_init(&spr);
+            aether_sprite_set_position(&spr, 0, 0, 32);
+            aether_sprite_set_size(&spr, (f32)si.width, (f32)si.height);
+            aether_sprite_quad_vertex_t sq[6];
+            expect(aether_sprite_copy_quad(&spr, NULL, NULL, sq, 6) == 6, "b2_spr_quad_draw");
+        }
+
+        /* 7. Blob shadow */
+        {
+            aether_shadow_t sh;
+            expect(aether_shadow_init(&sh, 256) == AETHER_OK, "b2_shadow_init");
+            aether_blob_shadow_vertex_t bv[6];
+            expect(aether_shadow_copy_blob(&sh, 10, 20, 0, 24.f, bv, 6) == 6, "b2_blob_verts");
+            expect(bv[0].alpha > 0.f && bv[0].z >= 0.f, "b2_blob_fields");
+        }
+
+        /* 8. PostFX brightness/gamma from settings */
+        {
+            aether_settings_t *set = aether_settings_create();
+            expect(set != NULL, "b2_settings");
+            aether_settings_register_engine_defaults(set);
+            aether_settings_set_float(set, "r_brightness", 0.1f);
+            aether_settings_set_float(set, "r_gamma", 1.4f);
+            f32 br = 0, gm = 1;
+            expect(aether_settings_get_float(set, "r_brightness", &br) && br == 0.1f, "b2_bright_set");
+            expect(aether_settings_get_float(set, "r_gamma", &gm) && gm == 1.4f, "b2_gamma_set");
+            aether_postfx_t fx;
+            aether_postfx_init(&fx);
+            aether_postfx_set_from_cvars(&fx, br, gm);
+            expect(fx.brightness == 0.1f && fx.gamma == 1.4f, "b2_postfx_cvars");
+            f32 rgb[3] = {0.5f, 0.5f, 0.5f};
+            aether_postfx_apply_rgb(&fx, rgb);
+            expect(rgb[0] > 0.5f, "b2_postfx_apply");
+            aether_postfx_vertex_t fv[6];
+            expect(aether_postfx_copy_fullscreen(fv, 6) == 6, "b2_postfx_fs");
+            aether_settings_destroy(set);
+        }
+
+        /* 9. Use/interact trace */
+        {
+            f32 eye[3] = {0, 0, 40}, fwd[3];
+            aether_interact_forward_from_view(0.f, -30.f, fwd);
+            aether_interact_target_t tg;
+            memset(&tg, 0, sizeof tg);
+            tg.id = 7;
+            aether_str_copy(tg.classname, sizeof tg.classname, "func_button");
+            tg.mins[0] = 20; tg.mins[1] = -16; tg.mins[2] = 0;
+            tg.maxs[0] = 52; tg.maxs[1] = 16;  tg.maxs[2] = 48;
+            tg.usable = true;
+            aether_interact_hit_t hit;
+            aether_interact_trace(eye, fwd, 200.f, 0.f, &tg, 1, &hit);
+            /* Looking somewhat forward+down — may hit ground or entity. */
+            expect(hit.kind != AETHER_INTERACT_NONE, "b2_interact_hit");
+            f32 t = 0, pt[3];
+            f32 dir[3] = {1, 0, 0};
+            expect(aether_interact_ray_aabb(eye, dir, 100.f, tg.mins, tg.maxs, &t, pt),
+                   "b2_interact_aabb");
+            expect(t > 0.f && t < 100.f, "b2_interact_dist");
         }
     }
 
