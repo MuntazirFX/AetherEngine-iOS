@@ -64,6 +64,7 @@
 #include "../../engine/net/AetherNetInterp.h"
 #include "../../engine/net/AetherNetPredict.h"
 #include "../../engine/net/AetherNetCmd.h"
+#include "../../engine/net/AetherLagComp.h"
 #include "../../engine/render/AetherMDLAnimation.h"
 #include "../../engine/console/AetherCVar.h"
 #include "../../engine/game/AetherManifest.h"
@@ -2642,6 +2643,7 @@ int engine_net_lagcomp_cmd_seq(unsigned player_id, float lag_ms) {
 
 /* ---------- Batch: seq skin / per-face styles / spatial / HUD / predict+clip ---------- */
 #include "../../engine/client/hud/AetherHUDLayout.h"
+#include "../../engine/game/weapons/AetherWeapon.h"
 #include "../../engine/game/weapons/AetherWeaponView.h"
 #include "../../engine/game/monsters/AetherMonsterAI.h"
 
@@ -2766,4 +2768,118 @@ int engine_monster_ai_tick_frame(float dt) {
 int engine_postfx_bloom_encode_needed(void) {
     ensure_postfx();
     return aether_postfx_bloom_encode_needed(&g_postfx) ? 1 : 0;
+}
+
+
+/* ---------- Batch: studio / multi-style / stereo / lagcomp / pvs-lights ---------- */
+static aether_lagcomp_history_t g_lagcomp;
+static int g_lagcomp_init = 0;
+static aether_mdl_sequence_t g_studio_seq;
+static int g_studio_seq_loaded = 0;
+
+int engine_mdl_write_studio_fixture(const char *filepath) {
+    if (!filepath) return 0;
+    return (int)aether_mdl_write_studio_fixture_file(filepath);
+}
+
+int engine_mdl_sequence_load_studio(float frame) {
+    u8 buf[16384];
+    u32 n = aether_mdl_write_studio_fixture(buf, sizeof buf);
+    if (!n) return 0;
+    if (aether_mdl_sequence_load_from_data(&g_studio_seq, buf, n) != AETHER_OK) return 0;
+    g_studio_seq_loaded = 1;
+    aether_mdl_skin_build_from_sequence(&g_skin, &g_studio_seq, frame);
+    return (int)g_studio_seq.frame_count;
+}
+
+int engine_lightmap_fill_face_style_blend(float *out_weights4, unsigned max_faces) {
+    if (!g_active_mesh || !out_weights4) return 0;
+    if (!g_lightstyles_init) { aether_lightstyles_init(&g_lightstyles); g_lightstyles_init = 1; }
+    return (int)aether_lightmap_fill_face_style_blend(g_active_mesh, &g_lightstyles,
+                                                      out_weights4, max_faces);
+}
+
+int engine_audio_play_beep_stereo_at(float freq, float dur, float vol,
+                                     float sx, float sy, float sz) {
+    if (!g_audio) return 0;
+    return aether_audio_play_beep_stereo_at(g_audio, freq, dur, vol, sx, sy, sz) == AETHER_OK ? 1 : 0;
+}
+
+int engine_audio_spatial_stereo_gains(float pan, float *out_l, float *out_r) {
+    aether_audio_spatial_stereo_gains(pan, out_l, out_r);
+    return 1;
+}
+
+int engine_weapon_view_copy_mdl_fixture(float *out_xyz_uv_rgba, int max_verts) {
+    if (!out_xyz_uv_rgba || max_verts < 3) return 0;
+    aether_weapon_view_t v;
+    aether_weapon_view_init(&v, AETHER_WPN_GLOCK);
+    aether_viewmodel_vertex_t tmp[64];
+    int cap = max_verts < 64 ? max_verts : 64;
+    u32 n = aether_weapon_view_copy_mdl_fixture(&v, tmp, (u32)cap);
+    for (u32 i = 0; i < n; ++i) {
+        float *d = out_xyz_uv_rgba + i * 9;
+        d[0]=tmp[i].x; d[1]=tmp[i].y; d[2]=tmp[i].z;
+        d[3]=tmp[i].u; d[4]=tmp[i].v;
+        d[5]=tmp[i].r; d[6]=tmp[i].g; d[7]=tmp[i].b; d[8]=tmp[i].a;
+    }
+    return (int)n;
+}
+
+int engine_lagcomp_push_demo(float time, int id, float *mins3, float *maxs3) {
+    if (!mins3 || !maxs3) return 0;
+    if (!g_lagcomp_init) { aether_lagcomp_init(&g_lagcomp); g_lagcomp_init = 1; }
+    aether_lagcomp_begin_frame(&g_lagcomp, time);
+    return aether_lagcomp_push_aabb(&g_lagcomp, id, AETHER_LAGCOMP_PLAYER, mins3, maxs3) ? 1 : 0;
+}
+
+int engine_lagcomp_query(float time, int id, float *out_mins3, float *out_maxs3) {
+    if (!g_lagcomp_init || !out_mins3 || !out_maxs3) return 0;
+    aether_lagcomp_aabb_t a;
+    if (!aether_lagcomp_query(&g_lagcomp, time, id, &a)) return 0;
+    out_mins3[0]=a.mins[0]; out_mins3[1]=a.mins[1]; out_mins3[2]=a.mins[2];
+    out_maxs3[0]=a.maxs[0]; out_maxs3[1]=a.maxs[1]; out_maxs3[2]=a.maxs[2];
+    return 1;
+}
+
+int engine_dynlights_fill_ubo_pvs(float view_x, float view_y, float view_z,
+                                  float *out_array, int max_floats) {
+    if (!out_array || max_floats < 4) return 0;
+    if (!g_dynlights_init) { aether_dyn_lights_init(&g_dynlights); g_dynlights_init = 1; }
+    if (!g_active_bsp) return (int)aether_dyn_lights_fill_array(&g_dynlights, out_array, (u32)max_floats);
+    i32 leaf = aether_bsp_find_leaf(g_active_bsp, view_x, view_y, view_z);
+    return (int)aether_dyn_lights_fill_array_pvs(&g_dynlights, g_active_bsp, leaf,
+                                                 out_array, (u32)max_floats);
+}
+
+int engine_mdl_hitbox_trace_fixture(float ox, float oy, float oz,
+                                    float dx, float dy, float dz, float max_dist,
+                                    int *out_index, float *out_t) {
+    u8 buf[16384];
+    u32 n = aether_mdl_write_studio_fixture(buf, sizeof buf);
+    aether_mdl_hitbox_t boxes[8];
+    u32 hc = aether_mdl_fixture_hitboxes(buf, n, boxes, 8);
+    if (hc == 0) return 0;
+    f32 origin[3] = {ox,oy,oz}, dir[3] = {dx,dy,dz}, pt[3], t = 0;
+    i32 idx = -1;
+    if (!aether_mdl_hitbox_trace(boxes, hc, origin, dir, max_dist, &idx, &t, pt)) return 0;
+    if (out_index) *out_index = (int)idx;
+    if (out_t) *out_t = t;
+    return 1;
+}
+
+int engine_particles_spawn_muzzle(float ox, float oy, float oz,
+                                  float fx, float fy, float fz, unsigned count) {
+    aether_particles_t *p = bridge_particles();
+    if (!p) return 0;
+    f32 o[3] = {ox,oy,oz}, f[3] = {fx,fy,fz};
+    return (int)aether_particles_spawn_muzzle(p, o, f, count);
+}
+
+int engine_particles_spawn_trail(float x0, float y0, float z0,
+                                 float x1, float y1, float z1, unsigned count) {
+    aether_particles_t *p = bridge_particles();
+    if (!p) return 0;
+    f32 a[3] = {x0,y0,z0}, b[3] = {x1,y1,z1};
+    return (int)aether_particles_spawn_trail(p, a, b, count);
 }

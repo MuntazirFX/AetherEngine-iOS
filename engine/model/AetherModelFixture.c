@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 static void wr_i32(u8 *p, i32 v) {
     u32 u = (u32)v;
@@ -392,4 +393,160 @@ u32 aether_mdl_fixture_seq_frame_count(const u8 *data, u32 size) {
         }
     }
     return 0;
+}
+
+/* Studio fixture magic: sequence descriptor + packed bone keys + hitboxes. */
+#define AETHER_STUDIO_MAGIC  ((i32)0xAE7E5E02)
+#define AETHER_HITBOX_MAGIC  ((i32)0xAE7E4842)
+
+u32 aether_mdl_write_studio_fixture(u8 *out, u32 cap) {
+    u32 n = aether_mdl_write_textured_fixture(out, cap);
+    if (!n || !out) return 0;
+    const u32 frames = 4, bones = 2, hitboxes = 2;
+    const u32 key_bytes = frames * bones * 24u; /* 6 f32 */
+    const u32 seq_hdr = 32;
+    const u32 hb_hdr = 16;
+    const u32 hb_bytes = hitboxes * 32u;
+    const u32 need = n + seq_hdr + key_bytes + hb_hdr + hb_bytes + 16;
+    if (cap < need) return 0;
+
+    wr_i32(out + 164, 1); /* numseq */
+    wr_i32(out + 168, (i32)n); /* seqindex → our trailer */
+    wr_i32(out + 156, (i32)hitboxes);
+    wr_i32(out + 160, (i32)(n + seq_hdr + key_bytes)); /* hitboxindex */
+
+    u8 *seq = out + n;
+    wr_i32(seq + 0, AETHER_STUDIO_MAGIC);
+    wr_i32(seq + 4, (i32)frames);
+    wr_i32(seq + 8, (i32)bones);
+    wr_f32(seq + 12, 12.f); /* fps */
+    wr_i32(seq + 16, 1);    /* loop */
+    wr_i32(seq + 20, (i32)key_bytes);
+    wr_i32(seq + 24, 0);
+    wr_i32(seq + 28, 0);
+
+    u8 *keys = seq + seq_hdr;
+    for (u32 f = 0; f < frames; ++f) {
+        f32 t = (f32)f / (f32)(frames - 1);
+        f32 swing = sinf(t * 3.14159265f * 2.f) * 30.f;
+        for (u32 b = 0; b < bones; ++b) {
+            u8 *k = keys + (f * bones + b) * 24u;
+            wr_f32(k + 0, 0.f);
+            wr_f32(k + 4, 0.f);
+            wr_f32(k + 8, (b == 0) ? 0.f : (10.f + 3.f * sinf(t * 6.2831853f)));
+            wr_f32(k + 12, 0.f);
+            wr_f32(k + 16, (b == 0) ? swing : (-swing * 0.6f));
+            wr_f32(k + 20, 0.f);
+        }
+    }
+
+    u8 *hb = keys + key_bytes;
+    wr_i32(hb + 0, AETHER_HITBOX_MAGIC);
+    wr_i32(hb + 4, (i32)hitboxes);
+    wr_i32(hb + 8, 0);
+    wr_i32(hb + 12, 0);
+    /* Hitbox 0: torso on bone 0 */
+    wr_i32(hb + 16 + 0, 0);  /* bone */
+    wr_i32(hb + 16 + 4, 1);  /* group generic */
+    wr_f32(hb + 16 + 8, -12.f); wr_f32(hb + 16 + 12, -8.f); wr_f32(hb + 16 + 16, 0.f);
+    wr_f32(hb + 16 + 20, 12.f); wr_f32(hb + 16 + 24, 8.f); wr_f32(hb + 16 + 28, 24.f);
+    /* Hitbox 1: head-ish on bone 1 */
+    wr_i32(hb + 16 + 32 + 0, 1);
+    wr_i32(hb + 16 + 32 + 4, 2); /* head group */
+    wr_f32(hb + 16 + 32 + 8, -6.f); wr_f32(hb + 16 + 32 + 12, -6.f); wr_f32(hb + 16 + 32 + 16, 20.f);
+    wr_f32(hb + 16 + 32 + 20, 6.f); wr_f32(hb + 16 + 32 + 24, 6.f); wr_f32(hb + 16 + 32 + 28, 32.f);
+
+    return need;
+}
+
+u32 aether_mdl_write_studio_fixture_file(const char *filepath) {
+    if (!filepath) return 0;
+    u8 buf[16384];
+    u32 n = aether_mdl_write_studio_fixture(buf, sizeof buf);
+    if (!n) return 0;
+    FILE *f = fopen(filepath, "wb");
+    if (!f) return 0;
+    size_t w = fwrite(buf, 1, n, f);
+    fclose(f);
+    return (u32)w;
+}
+
+static i32 rd_i32_le(const u8 *p) {
+    return (i32)((u32)p[0] | ((u32)p[1]<<8) | ((u32)p[2]<<16) | ((u32)p[3]<<24));
+}
+static f32 rd_f32_le(const u8 *p) {
+    i32 i = rd_i32_le(p);
+    f32 f; memcpy(&f, &i, 4);
+    return f;
+}
+
+u32 aether_mdl_fixture_hitboxes(const u8 *data, u32 size,
+                                aether_mdl_hitbox_t *out, u32 max_out) {
+    if (!data || size < 48 || !out || max_out == 0) return 0;
+    /* Scan for hitbox magic */
+    for (u32 off = 0; off + 16 < size; ++off) {
+        if (rd_i32_le(data + off) != AETHER_HITBOX_MAGIC) continue;
+        i32 count = rd_i32_le(data + off + 4);
+        if (count <= 0 || count > (i32)AETHER_MDL_FIXTURE_MAX_HITBOXES) return 0;
+        u32 need = (u32)count * 32u;
+        if (off + 16 + need > size) return 0;
+        u32 n = (u32)count;
+        if (n > max_out) n = max_out;
+        for (u32 i = 0; i < n; ++i) {
+            const u8 *h = data + off + 16 + i * 32u;
+            out[i].bone = rd_i32_le(h + 0);
+            out[i].group = rd_i32_le(h + 4);
+            out[i].mins[0] = rd_f32_le(h + 8);
+            out[i].mins[1] = rd_f32_le(h + 12);
+            out[i].mins[2] = rd_f32_le(h + 16);
+            out[i].maxs[0] = rd_f32_le(h + 20);
+            out[i].maxs[1] = rd_f32_le(h + 24);
+            out[i].maxs[2] = rd_f32_le(h + 28);
+        }
+        return n;
+    }
+    return 0;
+}
+
+bool aether_mdl_hitbox_trace(const aether_mdl_hitbox_t *boxes, u32 count,
+                             const f32 origin[3], const f32 dir[3], f32 max_dist,
+                             i32 *out_index, f32 *out_t, f32 out_point[3]) {
+    if (!boxes || !origin || !dir || count == 0 || max_dist <= 0.f) return false;
+    f32 best_t = max_dist + 1.f;
+    i32 best = -1;
+    f32 best_pt[3] = {0,0,0};
+    for (u32 i = 0; i < count; ++i) {
+        /* Slab test */
+        f32 tmin = 0.f, tmax = max_dist;
+        int ok = 1;
+        for (int a = 0; a < 3; ++a) {
+            f32 o = origin[a], d = dir[a];
+            f32 mn = boxes[i].mins[a], mx = boxes[i].maxs[a];
+            if (fabsf(d) < 1e-8f) {
+                if (o < mn || o > mx) { ok = 0; break; }
+                continue;
+            }
+            f32 inv = 1.f / d;
+            f32 t0 = (mn - o) * inv;
+            f32 t1 = (mx - o) * inv;
+            if (t0 > t1) { f32 tmp = t0; t0 = t1; t1 = tmp; }
+            if (t0 > tmin) tmin = t0;
+            if (t1 < tmax) tmax = t1;
+            if (tmin > tmax) { ok = 0; break; }
+        }
+        if (!ok) continue;
+        if (tmin < 0.f) tmin = 0.f;
+        if (tmin < best_t) {
+            best_t = tmin;
+            best = (i32)i;
+            best_pt[0] = origin[0] + dir[0] * tmin;
+            best_pt[1] = origin[1] + dir[1] * tmin;
+            best_pt[2] = origin[2] + dir[2] * tmin;
+        }
+    }
+    if (best < 0) return false;
+    if (out_index) *out_index = best;
+    if (out_t) *out_t = best_t;
+    if (out_point) { out_point[0]=best_pt[0]; out_point[1]=best_pt[1]; out_point[2]=best_pt[2]; }
+    return true;
 }

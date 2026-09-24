@@ -147,7 +147,9 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
         faces[i].texinfo = (u16)(i % 2); /* alternate two texinfos */
         /* Alternate primary style 0 (full) and 2 (flicker) for per-face GPU weights. */
         faces[i].styles[0] = (u8)((i % 2) == 0 ? 0 : 2);
-        faces[i].styles[1] = faces[i].styles[2] = faces[i].styles[3] = 255;
+        /* Secondary style for multi-style GPU blend smoke (style 3 flicker). */
+        faces[i].styles[1] = (u8)((i % 2) == 0 ? 3 : 255);
+        faces[i].styles[2] = faces[i].styles[3] = 255;
         faces[i].light_offset = (i32)(i * 3); /* 1 RGB sample per face */
     }
 

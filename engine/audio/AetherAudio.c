@@ -364,14 +364,9 @@ void aether_audio_spatial_atten(const aether_audio_t *a,
 aether_result_t aether_audio_play_beep_at(aether_audio_t *a, f32 freq_hz,
                                           f32 duration_sec, f32 volume,
                                           f32 src_x, f32 src_y, f32 src_z) {
-    if (!a) return AETHER_ERR_INVALID_ARG;
-    aether_audio_spatial_t sp;
-    aether_audio_spatial_atten(a, src_x, src_y, src_z, 64.f, 1024.f, &sp);
-    f32 v = volume * sp.gain;
-    if (v < 0.001f) return AETHER_OK; /* culled */
-    /* Encode pan into volume slightly for mono beep (host hears gain only). */
-    (void)sp.pan;
-    return aether_audio_play_beep(a, freq_hz, duration_sec, v);
+    /* Prefer stereo spatial mix (L/R pan); falls through to stereo submit. */
+    return aether_audio_play_beep_stereo_at(a, freq_hz, duration_sec, volume,
+                                            src_x, src_y, src_z);
 }
 
 aether_result_t aether_audio_play_wav_at(aether_audio_t *a,
@@ -385,4 +380,69 @@ aether_result_t aether_audio_play_wav_at(aether_audio_t *a,
     if (v < 0.001f) return AETHER_OK;
     (void)sp.pan;
     return aether_audio_play_wav_data(a, wav_data, wav_size, v);
+}
+
+
+void aether_audio_spatial_stereo_gains(f32 pan, f32 *out_left, f32 *out_right) {
+    if (pan < -1.f) pan = -1.f;
+    if (pan > 1.f) pan = 1.f;
+    /* Equal-power: L = cos((pan+1)*pi/4), R = sin((pan+1)*pi/4) */
+    f32 a = (pan + 1.f) * 0.78539816339f; /* * pi/4 */
+    f32 l = cosf(a);
+    f32 r = sinf(a);
+    if (out_left) *out_left = l;
+    if (out_right) *out_right = r;
+}
+
+aether_result_t aether_audio_play_beep_stereo(aether_audio_t *a, f32 freq_hz,
+                                              f32 duration_sec, f32 volume,
+                                              f32 gain_l, f32 gain_r) {
+    if (!a) return AETHER_ERR_INVALID_ARG;
+    if (a->state != AETHER_AUDIO_STATE_READY) return AETHER_ERR_NOT_READY;
+    if (freq_hz < 20.f) freq_hz = 20.f;
+    if (freq_hz > 8000.f) freq_hz = 8000.f;
+    if (duration_sec <= 0.f) duration_sec = 0.05f;
+    if (duration_sec > 2.f) duration_sec = 2.f;
+    if (volume < 0.f) volume = 0.f;
+    if (volume > 1.f) volume = 1.f;
+    if (gain_l < 0.f) gain_l = 0.f;
+    if (gain_r < 0.f) gain_r = 0.f;
+    const u32 rate = 22050;
+    u32 frames = (u32)(rate * duration_sec + 0.5f);
+    if (frames < 1) frames = 1;
+    i16 *pcm = (i16 *)malloc(sizeof(i16) * frames * 2u);
+    if (!pcm) return AETHER_ERR_OUT_OF_MEM;
+    for (u32 i = 0; i < frames; ++i) {
+        f32 t = (f32)i / (f32)rate;
+        f32 env = 1.f;
+        if (i < 64) env = (f32)i / 64.f;
+        if (i + 64 > frames) env = (f32)(frames - i) / 64.f;
+        f32 s = sinf(6.2831853f * freq_hz * t) * volume * env;
+        pcm[i*2+0] = (i16)(s * gain_l * 32767.f);
+        pcm[i*2+1] = (i16)(s * gain_r * 32767.f);
+    }
+    aether_audio_buffer_t buf = {
+        .samples = pcm,
+        .frame_count = frames,
+        .sample_rate = rate,
+        .channels = 2,
+        .volume = 1.f,
+    };
+    aether_result_t r = aether_audio_submit_buffer(a, &buf);
+    (void)aether_audio_play_effect(a, "procedural:beep_stereo", volume, false);
+    free(pcm);
+    return r;
+}
+
+aether_result_t aether_audio_play_beep_stereo_at(aether_audio_t *a, f32 freq_hz,
+                                                 f32 duration_sec, f32 volume,
+                                                 f32 src_x, f32 src_y, f32 src_z) {
+    if (!a) return AETHER_ERR_INVALID_ARG;
+    aether_audio_spatial_t sp;
+    aether_audio_spatial_atten(a, src_x, src_y, src_z, 64.f, 1024.f, &sp);
+    f32 v = volume * sp.gain;
+    if (v < 0.001f) return AETHER_OK;
+    f32 gl, gr;
+    aether_audio_spatial_stereo_gains(sp.pan, &gl, &gr);
+    return aether_audio_play_beep_stereo(a, freq_hz, duration_sec, v, gl, gr);
 }

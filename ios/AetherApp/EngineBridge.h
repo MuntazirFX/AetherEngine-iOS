@@ -495,3 +495,23 @@ int  engine_postfx_bloom_encode_needed(void);
 }
 #endif
 #endif /* ENGINE_BRIDGE_H */
+
+/* ---------- Batch: studio anim / multi-style / stereo / lagcomp / pvs-lights ---------- */
+int  engine_mdl_write_studio_fixture(const char *filepath);
+int  engine_mdl_sequence_load_studio(float frame); /* load fixture→seq→skin at frame */
+int  engine_lightmap_fill_face_style_blend(float *out_weights4, unsigned max_faces);
+int  engine_audio_play_beep_stereo_at(float freq, float dur, float vol,
+                                      float sx, float sy, float sz);
+int  engine_audio_spatial_stereo_gains(float pan, float *out_l, float *out_r);
+int  engine_weapon_view_copy_mdl_fixture(float *out_xyz_uv_rgba, int max_verts);
+int  engine_lagcomp_push_demo(float time, int id, float *mins3, float *maxs3);
+int  engine_lagcomp_query(float time, int id, float *out_mins3, float *out_maxs3);
+int  engine_dynlights_fill_ubo_pvs(float view_x, float view_y, float view_z,
+                                   float *out_array, int max_floats);
+int  engine_mdl_hitbox_trace_fixture(float ox, float oy, float oz,
+                                     float dx, float dy, float dz, float max_dist,
+                                     int *out_index, float *out_t);
+int  engine_particles_spawn_muzzle(float ox, float oy, float oz,
+                                   float fx, float fy, float fz, unsigned count);
+int  engine_particles_spawn_trail(float x0, float y0, float z0,
+                                  float x1, float y1, float z1, unsigned count);

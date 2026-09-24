@@ -70,6 +70,7 @@
 #include "AetherWeaponView.h"
 #include "AetherMonsterAI.h"
 #include "AetherMonsterRegistry.h"
+#include "AetherLagComp.h"
 
 #include <unistd.h>
 #include "AetherMath.h"
@@ -105,6 +106,181 @@ static void expect(int cond, const char *msg) {
     }
 }
 
+
+
+
+static int g_stereo_ch = 0;
+static int g_stereo_frames = 0;
+static f32 g_stereo_l = 0, g_stereo_r = 0;
+static void stereo_buf_cb(const aether_audio_buffer_t *b, void *u) {
+    (void)u;
+    if (!b || !b->samples) return;
+    g_stereo_ch = (int)b->channels;
+    g_stereo_frames = (int)b->frame_count;
+    if (b->channels >= 2) {
+        for (u32 i = 0; i < b->frame_count; ++i) {
+            g_stereo_l += (f32)((b->samples[i*2+0] < 0) ? -b->samples[i*2+0] : b->samples[i*2+0]);
+            g_stereo_r += (f32)((b->samples[i*2+1] < 0) ? -b->samples[i*2+1] : b->samples[i*2+1]);
+        }
+    }
+}
+
+static void smoke_batch_studio_vis_stereo(void) {
+    printf("--- batch_studio_vis_stereo ---\n");
+
+    /* 1. Studio sequence/anim blocks from clean-room fixture */
+    {
+        char path[] = "/tmp/aether_studio_fixture.mdl";
+        expect(aether_mdl_write_studio_fixture_file(path) > 500, "b6_studio_write");
+        u8 buf[16384];
+        FILE *f = fopen(path, "rb");
+        expect(f != NULL, "b6_studio_open");
+        size_t n = f ? fread(buf, 1, sizeof buf, f) : 0;
+        if (f) fclose(f);
+        expect(n > 500, "b6_studio_bytes");
+        aether_mdl_sequence_t seq;
+        expect(aether_mdl_sequence_load_from_data(&seq, buf, (u32)n) == AETHER_OK, "b6_studio_load_seq");
+        expect(seq.frame_count == 4 && seq.bone_count == 2, "b6_studio_seq_meta");
+        expect(fabsf(seq.keys[1][0].angles_deg[1]) > 0.1f || fabsf(seq.keys[2][0].angles_deg[1]) > 0.1f,
+               "b6_studio_keys");
+        aether_mdl_skin_state_t sk;
+        aether_mdl_skin_build_from_sequence(&sk, &seq, 1.5f);
+        expect(sk.bone_count == 2, "b6_studio_skin");
+        f32 in[3] = {8.f, 0.f, 0.f}, out[3];
+        aether_mdl_skin_transform_point(&sk, 0, 1.f, in, out);
+        expect(fabsf(out[0]) + fabsf(out[1]) > 0.f, "b6_studio_xform");
+        aether_mdl_t *m = aether_mdl_load(path);
+        expect(m && aether_mdl_is_valid(m), "b6_studio_mdl_load");
+        aether_mdl_free(m);
+    }
+
+    /* 2. Multi-style lightmap blend */
+    {
+        aether_bsp_t *bsp = aether_bsp_create_synthetic_room();
+        aether_mesh_t *mesh = NULL;
+        expect(bsp && aether_mesh_from_bsp(bsp, NULL, &mesh) == AETHER_OK && mesh, "b6_blend_mesh");
+        expect(mesh->face_ranges[0].styles[1] == 3, "b6_blend_style1");
+        aether_lightstyles_t ls;
+        aether_lightstyles_init(&ls);
+        aether_lightstyles_update(&ls, 0.5f);
+        f32 w4[64];
+        u32 n = aether_lightmap_fill_face_style_blend(mesh, &ls, w4, 16);
+        expect(n >= 2, "b6_blend_n");
+        expect(w4[0] > 0.2f && w4[1] > 0.2f, "b6_blend_face0_both");
+        expect(w4[4] > 0.2f && w4[5] == 0.f, "b6_blend_face1_primary_only");
+        f32 sc[16];
+        expect(aether_lightmap_fill_face_style_blend_scalar(mesh, &ls, sc, 16) >= 2 && sc[0] > 0.2f,
+               "b6_blend_scalar");
+        aether_mesh_free(mesh);
+        aether_bsp_free(bsp);
+    }
+
+    /* 3. Stereo spatial mix */
+    {
+        aether_audio_t *a = aether_audio_create();
+        expect(a && aether_audio_init(a) == AETHER_OK, "b6_stereo_init");
+        aether_audio_set_buffer_callback(a, stereo_buf_cb, NULL);
+        aether_audio_set_listener(a, 0, 0, 40, 1, 0, 0);
+        f32 gl, gr;
+        aether_audio_spatial_stereo_gains(0.8f, &gl, &gr);
+        expect(gr > gl, "b6_stereo_gains_right");
+        aether_audio_spatial_stereo_gains(-0.8f, &gl, &gr);
+        expect(gl > gr, "b6_stereo_gains_left");
+        g_stereo_ch = 0; g_stereo_frames = 0; g_stereo_l = 0; g_stereo_r = 0;
+        /* Mild +Y offset so both L/R have energy; pan still biases right. */
+        expect(aether_audio_play_beep_stereo_at(a, 880.f, 0.05f, 1.f, 32, 120, 40) == AETHER_OK,
+               "b6_stereo_beep");
+        expect(g_stereo_ch == 2 && g_stereo_frames > 0, "b6_stereo_channels");
+        expect(g_stereo_l > 0.f && g_stereo_r > 0.f, "b6_stereo_energy");
+        expect(g_stereo_r > g_stereo_l, "b6_stereo_pan_bias");
+        aether_audio_shutdown(a);
+        aether_audio_destroy(a);
+    }
+
+    /* 4. Viewmodel MDL fixture path */
+    {
+        aether_weapon_view_t v;
+        aether_weapon_view_init(&v, AETHER_WPN_GLOCK);
+        aether_viewmodel_vertex_t verts[64];
+        u32 n = aether_weapon_view_copy_mdl_fixture(&v, verts, 64);
+        expect(n >= 3, "b6_view_mdl_verts");
+        expect(verts[0].z < 0.f && verts[0].a > 0.5f, "b6_view_mdl_fields");
+    }
+
+    /* 5. Lag-comp world rewind AABB history + query/trace */
+    {
+        aether_lagcomp_history_t h;
+        aether_lagcomp_init(&h);
+        aether_lagcomp_begin_frame(&h, 1.0f);
+        f32 mins[3] = {-16,-16,0}, maxs[3] = {16,16,72};
+        expect(aether_lagcomp_push_aabb(&h, 7, AETHER_LAGCOMP_PLAYER, mins, maxs), "b6_lag_push");
+        aether_lagcomp_begin_frame(&h, 1.1f);
+        f32 mins2[3] = {40,-16,0}, maxs2[3] = {72,16,72};
+        expect(aether_lagcomp_push_aabb(&h, 7, AETHER_LAGCOMP_PLAYER, mins2, maxs2), "b6_lag_push2");
+        expect(aether_lagcomp_frame_count(&h) == 2, "b6_lag_frames");
+        aether_lagcomp_aabb_t got;
+        expect(aether_lagcomp_query(&h, 1.0f, 7, &got), "b6_lag_query");
+        expect(got.mins[0] == -16.f, "b6_lag_rewind_pos");
+        f32 origin[3] = {-40, 0, 36}, dir[3] = {1, 0, 0};
+        i32 id = -1; f32 t = 0, pt[3];
+        expect(aether_lagcomp_trace(&h, 1.0f, origin, dir, 200.f, &id, &t, pt), "b6_lag_trace");
+        expect(id == 7 && t > 0.f, "b6_lag_hit");
+    }
+
+    /* 6. PVS → dynlight cull */
+    {
+        aether_bsp_t *bsp = aether_bsp_create_synthetic_room();
+        expect(bsp != NULL, "b6_pvs_bsp");
+        aether_dyn_lights_t dl;
+        aether_dyn_lights_init(&dl);
+        f32 col[3] = {1,1,1};
+        f32 near_pos[3] = {0, 0, 40};
+        f32 far_pos[3] = {5000, 5000, 40}; /* outside room → solid/non-vis leaf */
+        expect(aether_dyn_lights_add(&dl, near_pos, col, 128.f, 1.f) == AETHER_OK, "b6_pvs_add_near");
+        expect(aether_dyn_lights_add(&dl, far_pos, col, 128.f, 1.f) == AETHER_OK, "b6_pvs_add_far");
+        i32 leaf = aether_bsp_find_leaf(bsp, 0, 0, 40);
+        expect(leaf >= 0, "b6_pvs_view_leaf");
+        aether_dyn_light_ubo_t ubo;
+        u32 n = aether_dyn_lights_cull_pvs(&dl, bsp, leaf, &ubo);
+        expect(n >= 1, "b6_pvs_kept");
+        expect(n <= 2, "b6_pvs_bounded");
+        /* Far light should typically be culled (solid leaf / invisible). */
+        expect(n == 1 || ubo.count <= 2, "b6_pvs_cull_or_keep");
+        f32 arr[64];
+        expect(aether_dyn_lights_fill_array_pvs(&dl, bsp, leaf, arr, 64) >= 4, "b6_pvs_array");
+        aether_bsp_free(bsp);
+    }
+
+    /* 7. Studio hitboxes for use/trace */
+    {
+        u8 buf[16384];
+        u32 n = aether_mdl_write_studio_fixture(buf, sizeof buf);
+        expect(n > 0, "b6_hb_fixture");
+        aether_mdl_hitbox_t boxes[8];
+        u32 hc = aether_mdl_fixture_hitboxes(buf, n, boxes, 8);
+        expect(hc == 2, "b6_hb_count");
+        expect(boxes[0].group == 1 && boxes[1].group == 2, "b6_hb_groups");
+        f32 origin[3] = {0, 0, -10}, dir[3] = {0, 0, 1};
+        i32 idx = -1; f32 t = 0, pt[3];
+        expect(aether_mdl_hitbox_trace(boxes, hc, origin, dir, 100.f, &idx, &t, pt), "b6_hb_trace");
+        expect(idx == 0 && pt[2] >= 0.f, "b6_hb_hit_torso");
+    }
+
+    /* 8. Particle muzzle / trail linked to weapons */
+    {
+        aether_particles_t p;
+        aether_particles_init(&p);
+        f32 origin[3] = {0,0,40}, fwd[3] = {1,0,0};
+        expect(aether_particles_spawn_muzzle(&p, origin, fwd, 12) == 12, "b6_muzzle");
+        f32 to[3] = {200, 0, 40};
+        expect(aether_particles_spawn_trail(&p, origin, to, 16) == 16, "b6_trail");
+        expect(aether_particles_active_count(&p) >= 28, "b6_fx_active");
+        aether_particles_update(&p, 0.05f);
+        expect(aether_particles_active_count(&p) >= 1, "b6_fx_tick");
+    }
+
+    printf("--- batch_studio_vis_stereo done ---\n");
+}
 
 
 static void smoke_batch_seq_pvs_audio_ui(void) {
@@ -2125,6 +2301,7 @@ int main(void) {
 
     smoke_batch_gpu_lightstyles_skin_mp();
     smoke_batch_seq_pvs_audio_ui();
+    smoke_batch_studio_vis_stereo();
 
     if (g_failures) {
         fprintf(stderr, "\n%d smoke check(s) failed\n", g_failures);

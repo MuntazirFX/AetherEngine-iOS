@@ -116,3 +116,68 @@ u32 aether_weapon_view_copy_stub(const aether_weapon_view_t *v,
     for (int i = 0; i < 6; ++i) out[i] = corners[idx[i]];
     return 6;
 }
+
+#include "../../model/AetherMDLGeometry.h"
+#include "../../model/AetherModelFixture.h"
+#include "../../model/AetherMDL.h"
+
+u32 aether_weapon_view_copy_mdl(const aether_weapon_view_t *v,
+                                const struct aether_model_mesh *mesh,
+                                aether_viewmodel_vertex_t *out, u32 max_verts) {
+    if (!mesh || !mesh->positions || !mesh->indices || !out) return 0;
+    u32 tris = mesh->triangle_count;
+    u32 need = tris * 3u;
+    if (need == 0 || need > max_verts) {
+        /* Cap to available verts */
+        if (max_verts < 3) return 0;
+        tris = max_verts / 3u;
+        need = tris * 3u;
+    }
+    f32 bob_x = v ? sinf(v->bob_phase) * v->bob_amount * 0.02f : 0.f;
+    f32 bob_y = v ? sinf(v->bob_phase * 2.f) * v->bob_amount * 0.015f : 0.f;
+    f32 kick = 0.f;
+    if (v && v->current_anim == AETHER_VIEW_ANIM_FIRE) {
+        f32 t = v->anim_length > 0.f ? (v->anim_time / v->anim_length) : 0.f;
+        kick = (1.f - t) * 0.05f;
+    }
+    /* Scale fixture (~±16) down into view frustum bottom-right. */
+    const f32 scale = 0.012f;
+    const f32 ox = 0.35f + bob_x;
+    const f32 oy = -0.35f + bob_y - kick;
+    const f32 oz = -0.85f - kick;
+    for (u32 t = 0; t < tris; ++t) {
+        for (int k = 0; k < 3; ++k) {
+            u32 ii = mesh->indices[t * 3u + (u32)k];
+            if (ii >= mesh->vertex_count) ii = 0;
+            const f32 *p = mesh->positions + ii * 3u;
+            aether_viewmodel_vertex_t *dst = &out[t * 3u + (u32)k];
+            dst->x = ox + p[0] * scale;
+            dst->y = oy + p[2] * scale; /* Z-up model → view Y */
+            dst->z = oz + p[1] * scale;
+            dst->u = (k == 0) ? 0.f : (k == 1 ? 1.f : 0.5f);
+            dst->v = (k == 2) ? 1.f : 0.f;
+            dst->r = 0.6f; dst->g = 0.58f; dst->b = 0.52f; dst->a = 1.f;
+        }
+    }
+    return need;
+}
+
+u32 aether_weapon_view_copy_mdl_fixture(const aether_weapon_view_t *v,
+                                        aether_viewmodel_vertex_t *out, u32 max_verts) {
+    if (!out || max_verts < 3) return 0;
+    u8 buf[16384];
+    u32 n = aether_mdl_write_studio_fixture(buf, sizeof buf);
+    if (!n) n = aether_mdl_write_fixture(buf, sizeof buf);
+    if (!n) return 0;
+    aether_mdl_t *m = aether_mdl_load_from_memory(buf, n, "v_fixture");
+    if (!m) return 0;
+    aether_model_mesh_t *mesh = NULL;
+    if (aether_mdl_geometry_extract(m, &mesh) != AETHER_OK || !mesh) {
+        aether_mdl_free(m);
+        return 0;
+    }
+    u32 got = aether_weapon_view_copy_mdl(v, mesh, out, max_verts);
+    aether_mdl_geometry_free(mesh);
+    aether_mdl_free(m);
+    return got;
+}

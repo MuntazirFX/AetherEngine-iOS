@@ -167,7 +167,6 @@ grep -q "engine_net_predict_local_step" ios/AetherApp/EngineBridge.h || fail "mi
 ok "batch postfx/lightmap/mdl/predict API symbols present"
 
 
-info "All host verification checks passed."
 
 
 grep -q "aether_lightstyles_fill_gpu_weights" engine/render/AetherLightmap.h || fail "missing lightstyles_fill_gpu_weights"
@@ -195,3 +194,18 @@ grep -q "aether_postfx_bloom_encode_needed" engine/render/AetherPostFX.h || fail
 grep -q "engine_mdl_skin_build_from_sequence" ios/AetherApp/EngineBridge.h || fail "missing bridge seq skin"
 grep -q "engine_net_predict_apply_cmd_clipped" ios/AetherApp/EngineBridge.h || fail "missing bridge predict clip"
 ok "batch seq/styles/spatial/HUD API symbols present"
+
+grep -q "aether_mdl_write_studio_fixture" engine/model/AetherModelFixture.h || fail "missing studio fixture"
+grep -q "aether_mdl_sequence_load_from_data" engine/render/AetherMDLAnimation.h || fail "missing seq load_from_data"
+grep -q "aether_lightmap_fill_face_style_blend" engine/render/AetherLightmap.h || fail "missing style blend"
+grep -q "aether_audio_play_beep_stereo_at" engine/audio/AetherAudio.h || fail "missing stereo beep"
+grep -q "aether_weapon_view_copy_mdl_fixture" engine/game/weapons/AetherWeaponView.h || fail "missing view mdl"
+grep -q "aether_lagcomp_query" engine/net/AetherLagComp.h || fail "missing lagcomp query"
+grep -q "aether_dyn_lights_cull_pvs" engine/render/AetherDynLight.h || fail "missing dynlight pvs cull"
+grep -q "aether_mdl_hitbox_trace" engine/model/AetherModelFixture.h || fail "missing hitbox trace"
+grep -q "aether_particles_spawn_muzzle" engine/render/AetherParticle.h || fail "missing muzzle particles"
+grep -q "engine_audio_play_beep_stereo_at" ios/AetherApp/EngineBridge.h || fail "missing bridge stereo"
+grep -q "engine_dynlights_fill_ubo_pvs" ios/AetherApp/EngineBridge.h || fail "missing bridge pvs lights"
+ok "batch studio/vis/stereo API symbols present"
+
+info "All host verification checks passed."

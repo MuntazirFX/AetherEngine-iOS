@@ -55,3 +55,26 @@ u32 aether_mdl_fixture_seq_frame_count(const u8 *data, u32 size);
 }
 #endif
 #endif
+
+/* Studio fixture: real sequence + anim keyframe blocks (clean-room, not sway-only). */
+u32 aether_mdl_write_studio_fixture(u8 *out, u32 cap);
+u32 aether_mdl_write_studio_fixture_file(const char *filepath);
+
+/* Hitbox stub embedded in studio fixture. */
+typedef struct aether_mdl_hitbox {
+    i32 bone;
+    i32 group;
+    f32 mins[3];
+    f32 maxs[3];
+} aether_mdl_hitbox_t;
+
+#define AETHER_MDL_FIXTURE_MAX_HITBOXES 8
+
+/* Parse hitboxes from studio/seq fixture bytes. Returns count. */
+u32 aether_mdl_fixture_hitboxes(const u8 *data, u32 size,
+                                aether_mdl_hitbox_t *out, u32 max_out);
+
+/* Ray vs fixture hitboxes (world-space AABB, bone transform ignored for stub). */
+bool aether_mdl_hitbox_trace(const aether_mdl_hitbox_t *boxes, u32 count,
+                             const f32 origin[3], const f32 dir[3], f32 max_dist,
+                             i32 *out_index, f32 *out_t, f32 out_point[3]);

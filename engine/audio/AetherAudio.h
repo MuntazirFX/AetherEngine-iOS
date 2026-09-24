@@ -134,3 +134,16 @@ aether_result_t aether_audio_play_wav_at(aether_audio_t *a,
 }
 #endif
 #endif /* AETHER_AUDIO_H */
+
+/* Stereo pan → L/R gains (constant-power-ish). pan -1..1. */
+void aether_audio_spatial_stereo_gains(f32 pan, f32 *out_left, f32 *out_right);
+
+/* Submit stereo beep with explicit L/R gains (channels=2 interleaved). */
+aether_result_t aether_audio_play_beep_stereo(aether_audio_t *a, f32 freq_hz,
+                                              f32 duration_sec, f32 volume,
+                                              f32 gain_l, f32 gain_r);
+
+/* Spatial beep that mixes stereo L/R from pan (host + iOS PCM path). */
+aether_result_t aether_audio_play_beep_stereo_at(aether_audio_t *a, f32 freq_hz,
+                                                 f32 duration_sec, f32 volume,
+                                                 f32 src_x, f32 src_y, f32 src_z);

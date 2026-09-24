@@ -1,0 +1,66 @@
+/* AetherLagComp.h — World rewind stub: history of player/monster AABBs + query.
+ * AetherEngine-iOS · Clean-room.
+ */
+#ifndef AETHER_LAGCOMP_H
+#define AETHER_LAGCOMP_H
+
+#include "../core/AetherCore.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define AETHER_LAGCOMP_MAX_ENTS   32
+#define AETHER_LAGCOMP_MAX_FRAMES 16
+
+typedef enum aether_lagcomp_kind {
+    AETHER_LAGCOMP_PLAYER = 1,
+    AETHER_LAGCOMP_MONSTER = 2,
+    AETHER_LAGCOMP_OTHER = 3
+} aether_lagcomp_kind_t;
+
+typedef struct aether_lagcomp_aabb {
+    i32 id;
+    u8  kind;
+    u8  pad[3];
+    f32 mins[3];
+    f32 maxs[3];
+} aether_lagcomp_aabb_t;
+
+typedef struct aether_lagcomp_frame {
+    f32 time;
+    u32 count;
+    aether_lagcomp_aabb_t items[AETHER_LAGCOMP_MAX_ENTS];
+} aether_lagcomp_frame_t;
+
+typedef struct aether_lagcomp_history {
+    aether_lagcomp_frame_t frames[AETHER_LAGCOMP_MAX_FRAMES];
+    u32 head;  /* next write */
+    u32 count;
+} aether_lagcomp_history_t;
+
+void aether_lagcomp_init(aether_lagcomp_history_t *h);
+void aether_lagcomp_clear(aether_lagcomp_history_t *h);
+
+/* Begin a new frame snapshot at `time` (seconds). */
+void aether_lagcomp_begin_frame(aether_lagcomp_history_t *h, f32 time);
+
+/* Add an AABB to the current (newest) frame. Returns false if full. */
+bool aether_lagcomp_push_aabb(aether_lagcomp_history_t *h, i32 id, u8 kind,
+                              const f32 mins[3], const f32 maxs[3]);
+
+/* Find AABB for id nearest to `time` (rewound). Returns false if missing. */
+bool aether_lagcomp_query(const aether_lagcomp_history_t *h, f32 time, i32 id,
+                          aether_lagcomp_aabb_t *out);
+
+/* Ray vs rewound AABB set. Picks nearest hit among ents at that time. */
+bool aether_lagcomp_trace(const aether_lagcomp_history_t *h, f32 time,
+                          const f32 origin[3], const f32 dir[3], f32 max_dist,
+                          i32 *out_id, f32 *out_t, f32 out_point[3]);
+
+u32 aether_lagcomp_frame_count(const aether_lagcomp_history_t *h);
+
+#ifdef __cplusplus
+}
+#endif
+#endif

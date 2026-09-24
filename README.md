@@ -212,11 +212,37 @@ frame hook — still clean-room:
 | 10 | README + gaps | **done** | This table |
 
 ### Known gaps after seq / styles / spatial / HUD batch
-- Sequence skinning uses clean-room sway keys (not full Studio sequence/anim blocks from `.mdl`)
-- Per-face style weights are primary style only (styles[1..3] blend TBD on GPU)
-- Spatial pan is computed but mono beep path applies gain only (stereo mix on iOS TBD)
+- *(addressed in studio/vis/stereo batch: studio anim blocks, multi-style blend, stereo mix, viewmodel MDL, lagcomp rewind, PVS lights, hitboxes, muzzle/trail)*
 - Bloom encode needs device/Metal; host validates uniforms + encode-needed flag
-- Viewmodel is a colored stub quad (no real v_*.mdl)
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+
+## Studio / Vis / Stereo batch (`continue/batch-studio-vis-stereo`)
+
+One PR advances real studio sequence/anim blocks, multi-style lightmap blend, stereo
+spatial mix, viewmodel MDL path, lag-comp world rewind, PVS dynlight cull, studio
+hitboxes, and weapon particle muzzle/trail — still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Studio sequence/anim blocks | **done** | `aether_mdl_write_studio_fixture` embeds seq+keyframe blocks; `sequence_load_from_data` |
+| 2 | Multi-style lightmap blend | **done** | `fill_face_style_blend` packs styles[0..3]×weights; synthetic styles[1]=3 |
+| 3 | Stereo spatial mix | **done** | `play_beep_stereo_at` + equal-power L/R; `play_beep_at` uses stereo path |
+| 4 | Viewmodel MDL path | **done** | `aether_weapon_view_copy_mdl_fixture` extracts clean-room fixture → view verts |
+| 5 | Lag-comp world rewind | **done** | `AetherLagComp` AABB history + query/trace at time |
+| 6 | PVS → dynlight cull | **done** | `aether_dyn_lights_cull_pvs` skips lights outside view PVS |
+| 7 | Studio hitboxes stub | **done** | fixture hitboxes + `aether_mdl_hitbox_trace` for use/trace |
+| 8 | Particle muzzle/trail | **done** | `spawn_muzzle` / `spawn_trail` weapon-linked stubs |
+| 9 | Host smokes | **done** | studio anim, stereo mix, lagcomp, pvs-lights (+ blend/view/hb/fx) |
+| 10 | README + gaps | **done** | This table |
+
+### Known gaps after studio / vis / stereo batch
+- Studio fixture anim blocks are clean-room packed keys (not full GoldSrc `mstudioanim_t` RLE)
+- Multi-style blend packs 4 weights for GPU; Metal shader still samples primary scalar path until wired
+- Stereo PCM reaches iOS `submitPCM16` (channels=2); spatial listener up-vector still Z-up planar pan
+- Lag-comp rewind is AABB history (no full entity pose / hit validation vs cmds yet)
+- PVS light cull uses leaf marksurface visibility (no radius overlap across leaf borders)
+- Viewmodel uses fixture triangle (not skinned weapon sequences / attachments)
 - IPA still requires macOS + Xcode via workflow_dispatch
 
 
