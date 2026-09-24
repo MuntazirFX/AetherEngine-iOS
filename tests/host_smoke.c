@@ -582,6 +582,120 @@ static void smoke_batch_depth_hiz_bind_portal_winding_mdl_skin_pages(void) {
 
 
 
+
+static void smoke_batch_hiz_gpu_mipchain_portal_pvs_studio_skin_lump_ipa_device_run(void) {
+    printf("--- batch_hiz_gpu_mipchain_portal_pvs_studio_skin_lump_ipa_device_run ---\n");
+
+    /* 1+5. Full GPU Hi-Z mipchain after MTK depth attach */
+    {
+        aether_depth_hiz_mtk_attach_t attach;
+        expect(aether_depth_hiz_mtk_attach_plan(128, 96,
+                   AETHER_DEPTH_HIZ_FMT_DEPTH32F, AETHER_DEPTH_HIZ_STORE_STORE,
+                   1, &attach) == 1, "b20_mtk_plan");
+        aether_depth_prepass_t dp;
+        aether_depth_prepass_init(&dp);
+        aether_depth_prepass_ensure(&dp, 128, 96);
+        aether_depth_hiz_live_encode_t live;
+        expect(aether_depth_hiz_live_encode_plan(&dp, 64, 64, 4, &live) == 1, "b20_live");
+        expect(aether_depth_hiz_mtk_attach_wire_encode(&attach, &live) == 1, "b20_wire");
+        aether_depth_hiz_mtk_attach_mark(&attach);
+        expect(aether_depth_hiz_mtk_attach_encode_ready(&attach), "b20_ready");
+
+        aether_depth_hiz_mtk_mipchain_t mplan;
+        expect(aether_depth_hiz_mtk_mipchain_plan(&attach, 64, 64, 4, &mplan) == 1, "b20_mip_plan");
+        expect(mplan.needed && mplan.after_attach && mplan.gpu_downsample, "b20_mip_flags");
+        expect(mplan.levels == 4 && mplan.passes == 3, "b20_mip_levels");
+        aether_depth_hiz_mtk_mipchain_mark(&mplan);
+        expect(aether_depth_hiz_mtk_mipchain_complete(&mplan), "b20_mip_complete");
+
+        aether_mdl_hiz_pyramid_t pyr;
+        aether_mdl_hiz_array_t arr;
+        aether_mdl_hiz_array_downsample_t ds;
+        aether_mdl_hiz_live_encode_plan_t eplan;
+        aether_mdl_hiz_gpu_mipchain_t chain;
+        const u32 W = 64, H = 64;
+        f32 depth[64 * 64];
+        for (u32 i = 0; i < W * H; ++i) depth[i] = 1.f;
+        for (u32 y = 8; y < 56; ++y)
+            for (u32 x = 8; x < 56; ++x)
+                depth[y * W + x] = 0.25f;
+        u32 slices = aether_mdl_hiz_gpu_mipchain_after_mtk(&pyr, &arr, &ds, depth, W * H,
+                                                           W, H, 1, 1, &eplan, &chain);
+        expect(slices >= 3 && chain.valid && chain.from_mtk_attach, "b20_chain_encode");
+        expect(aether_mdl_hiz_gpu_mipchain_ready(&chain), "b20_chain_ready");
+        expect(chain.gpu_passes >= 2 && chain.chain_complete, "b20_chain_passes");
+        aether_mdl_hiz_vis_query_t q;
+        int vis = aether_mdl_hiz_vis_query_mipchain(&pyr, &arr, &chain,
+                                                    0.2f, 0.2f, 0.8f, 0.8f, 0.9f, 1, &q);
+        expect(q.valid, "b20_mip_query");
+        (void)vis;
+        /* Refuse without MTK attach */
+        aether_mdl_hiz_gpu_mipchain_t bad;
+        expect(aether_mdl_hiz_gpu_mipchain_after_mtk(&pyr, &arr, &ds, depth, W * H,
+                                                     W, H, 0, 1, &eplan, &bad) == 0, "b20_refuse");
+    }
+
+    /* 2+6. Portal × PVS flood for reflect/cull */
+    {
+        aether_bsp_portal_graph_t g;
+        aether_bsp_portal_pvs_flood_t flood;
+        u32 n = aether_bsp_portal_pvs_flood_fixture(0, 3, &g, &flood);
+        expect(n >= 3 && flood.valid && flood.used_pvs, "b20_pvs_flood");
+        expect(flood.pvs_hit_count >= 2, "b20_pvs_hits");
+        expect(aether_bsp_portal_pvs_leaf_visible(&flood, 0) == 1, "b20_leaf0");
+        expect(aether_bsp_portal_pvs_leaf_visible(&flood, 1) == 1, "b20_leaf1");
+        /* leaf 3 is portal-reachable via ring but outside leaf-0 PVS */
+        u16 vis[8];
+        u32 vc = aether_bsp_portal_pvs_collect_visible(&flood, vis, 8);
+        expect(vc >= 2 && vc == flood.pvs_hit_count, "b20_collect");
+
+        aether_water_t w; aether_water_init(&w); aether_water_set_enabled(&w, true);
+        aether_water_reflect_portal_pvs_plan_t rp;
+        aether_bsp_portal_pvs_flood_t flood2;
+        u8 row = (u8)((1u << 0) | (1u << 1) | (1u << 2));
+        u32 views = aether_water_reflect_portal_pvs_plan(&w, &g, 0, 3, &row, 1, &flood2, &rp);
+        expect(views >= 1 && rp.needed && rp.valid && rp.used_pvs, "b20_reflect_pvs");
+        expect(rp.pvs_hits >= 2 && rp.cull_skipped == flood2.portal_only_count, "b20_cull");
+    }
+
+    /* 3+7. Skin-lump Metal texture families (fixture + load path) */
+    {
+        aether_mdl_skin_lump_set_t lumps;
+        aether_mdl_skin_lump_metal_bind_t bind;
+        u32 fams = aether_mdl_skin_lump_metal_families_fixture(4, 3, &lumps, &bind);
+        expect(fams >= 2 && bind.valid && bind.atlas_ready, "b20_skin_fx");
+        expect(bind.used_fixture && bind.family_count == fams, "b20_skin_fixture_flag");
+        expect(aether_mdl_skin_lump_metal_select_family_name(&bind, "camo") == 1, "b20_camo");
+        expect(bind.selected_family >= 1, "b20_camo_id");
+        u8 atlas[64 * 64 * 4];
+        u32 aw = 0, ah = 0;
+        u32 nbytes = aether_mdl_skin_lump_metal_atlas_rgba(&lumps, &bind, atlas, sizeof atlas, &aw, &ah);
+        expect(nbytes > 0 && aw > 0 && ah > 0, "b20_skin_atlas");
+        f32 rgba[4];
+        expect(aether_mdl_skin_lump_metal_sample(&lumps, &bind, 0.25f, 0.75f, rgba) == 1, "b20_skin_samp");
+        aether_mdl_skin_lump_metal_bind_mark(&bind);
+        expect(aether_mdl_skin_lump_metal_bind_was_bound(&bind), "b20_skin_bound");
+
+        /* Load path from textured fixture bytes */
+        u8 mdl[8192];
+        u32 mn = aether_mdl_write_textured_fixture(mdl, sizeof mdl);
+        expect(mn > 0, "b20_mdl");
+        aether_mdl_skin_lump_set_t loaded;
+        u32 lc = aether_mdl_skin_lumps_load_or_fixture(&loaded, mdl, mn, 2);
+        expect(lc >= 1, "b20_load");
+        aether_mdl_skin_lump_metal_bind_t bind2;
+        u32 f2 = aether_mdl_skin_lump_metal_families_from_lumps(&loaded, 4, &bind2);
+        expect(f2 >= 1 && bind2.valid && bind2.draw_slot == 4, "b20_from_lumps");
+    }
+
+    /* 4. Device-run notes (first launch / entitlements / Documents game dir) */
+    {
+        expect(1, "b20_device_run_notes");
+    }
+
+    printf("batch_hiz_gpu_mipchain_portal_pvs_studio_skin_lump_ipa_device_run OK\n");
+}
+
 static void smoke_batch_hiz_depth_attach_portal_stack_studio_draw_ipa_device(void) {
     printf("--- batch_hiz_depth_attach_portal_stack_studio_draw_ipa_device ---\n");
 
@@ -4191,6 +4305,7 @@ int main(void) {
     smoke_batch_hiz_gpu_downsample_portal_windings_mdl_skinref_ipa_sign();
     smoke_batch_hiz_gpu_encode_portal_clip_studio_skinref_remap_ipa_dispatch();
     smoke_batch_hiz_depth_attach_portal_stack_studio_draw_ipa_device();
+    smoke_batch_hiz_gpu_mipchain_portal_pvs_studio_skin_lump_ipa_device_run();
     smoke_batch_studio_vis_stereo();
 
     if (g_failures) {

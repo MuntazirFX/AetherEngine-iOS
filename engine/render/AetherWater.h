@@ -442,4 +442,25 @@ u32  aether_water_reflect_portal_stack_plan(const aether_water_t *water,
                                             aether_portal_clip_stack_t *out_stack,
                                             aether_portal_winding_t *out_clipped);
 
+
+/* ---------- Portal × PVS flood reflect / cull plan (batch20) ---------- */
+typedef struct aether_water_reflect_portal_pvs_plan {
+    u32 view_count;         /* reflect views (= pvs-visible portal leaves) */
+    u32 portal_reached;
+    u32 pvs_hits;
+    u32 cull_skipped;       /* portal-only (outside PVS) leaves skipped */
+    bool needed;
+    bool used_pvs;
+    bool valid;
+} aether_water_reflect_portal_pvs_plan_t;
+
+void aether_water_reflect_portal_pvs_plan_init(aether_water_reflect_portal_pvs_plan_t *plan);
+/* Flood portal×PVS from eye leaf; plan reflect views for PVS-visible leaves only. */
+u32  aether_water_reflect_portal_pvs_plan(const aether_water_t *water,
+                                          const aether_bsp_portal_graph_t *graph,
+                                          u16 eye_leaf, u32 max_depth,
+                                          const u8 *pvs_bits, u32 pvs_bytes,
+                                          aether_bsp_portal_pvs_flood_t *out_flood,
+                                          aether_water_reflect_portal_pvs_plan_t *out);
+
 #endif /* AETHER_WATER_H */

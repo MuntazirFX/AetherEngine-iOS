@@ -782,3 +782,84 @@ int aether_bsp_portal_winding_to_render(const aether_bsp_portal_winding_t *src,
     return 1;
 }
 
+
+/* ===== Portal × PVS flood for reflect / cull (batch20) ===== */
+
+void aether_bsp_portal_pvs_flood_init(aether_bsp_portal_pvs_flood_t *f) {
+    if (!f) return;
+    memset(f, 0, sizeof(*f));
+}
+
+static int portal_pvs_bit(const u8 *bits, u32 nbytes, u16 leaf) {
+    if (!bits || nbytes == 0) return 1; /* no PVS → treat all as visible */
+    u32 byte_i = (u32)leaf >> 3;
+    if (byte_i >= nbytes) return 0;
+    return (bits[byte_i] >> (leaf & 7)) & 1;
+}
+
+u32 aether_bsp_portal_pvs_flood(const aether_bsp_portal_graph_t *g,
+                                u16 start_leaf, u32 max_depth,
+                                const u8 *pvs_bits, u32 pvs_byte_count,
+                                aether_bsp_portal_pvs_flood_t *out) {
+    if (!out) return 0;
+    aether_bsp_portal_pvs_flood_init(out);
+    aether_bsp_portal_flood_t flood;
+    u32 n = aether_bsp_portal_graph_flood(g, start_leaf, max_depth, &flood);
+    if (n == 0 || !flood.valid) return 0;
+
+    out->start_leaf = start_leaf;
+    out->used_pvs = (pvs_bits != NULL && pvs_byte_count > 0);
+    out->pvs_row_bytes = pvs_byte_count;
+    for (u32 i = 0; i < flood.reached_count && out->reached_count < AETHER_BSP_PORTAL_PVS_MAX_REACH; ++i) {
+        u16 leaf = flood.reached[i];
+        out->reached[out->reached_count] = leaf;
+        out->depth[out->reached_count] = flood.depth[i];
+        int hit = portal_pvs_bit(pvs_bits, pvs_byte_count, leaf);
+        out->in_pvs[out->reached_count] = hit ? 1 : 0;
+        if (hit) out->pvs_hit_count++;
+        else out->portal_only_count++;
+        out->reached_count++;
+    }
+    out->valid = (out->reached_count > 0);
+    return out->reached_count;
+}
+
+u32 aether_bsp_portal_pvs_flood_fixture(u16 start_leaf, u32 max_depth,
+                                        aether_bsp_portal_graph_t *out_graph,
+                                        aether_bsp_portal_pvs_flood_t *out) {
+    aether_bsp_portal_graph_t local;
+    aether_bsp_portal_graph_t *g = out_graph ? out_graph : &local;
+    u32 edges = aether_bsp_portal_graph_build_multi_fixture(g);
+    if (edges == 0) return 0;
+    /* Synthetic PVS: leaf 0 sees 0,1,2 ; leaf 1 sees 0,1 ; others see self only.
+     * Row bytes for 4 leaves = 1 byte. Use leaf-0 row when start is 0. */
+    u8 pvs_rows[4] = {
+        (u8)( (1u<<0) | (1u<<1) | (1u<<2) ), /* leaf 0 */
+        (u8)( (1u<<0) | (1u<<1) ),           /* leaf 1 */
+        (u8)( (1u<<2) ),                     /* leaf 2 */
+        (u8)( (1u<<3) )                      /* leaf 3 */
+    };
+    u16 sl = start_leaf;
+    if (sl >= g->leaf_count) sl = 0;
+    u8 row = pvs_rows[sl < 4 ? sl : 0];
+    return aether_bsp_portal_pvs_flood(g, sl, max_depth, &row, 1, out);
+}
+
+int aether_bsp_portal_pvs_leaf_visible(const aether_bsp_portal_pvs_flood_t *f, u16 leaf) {
+    if (!f || !f->valid) return 0;
+    for (u32 i = 0; i < f->reached_count; ++i) {
+        if (f->reached[i] == leaf) return f->in_pvs[i] ? 1 : 0;
+    }
+    return 0;
+}
+
+u32 aether_bsp_portal_pvs_collect_visible(const aether_bsp_portal_pvs_flood_t *f,
+                                          u16 *out, u32 max_out) {
+    if (!f || !f->valid || !out || max_out == 0) return 0;
+    u32 n = 0;
+    for (u32 i = 0; i < f->reached_count && n < max_out; ++i) {
+        if (!f->in_pvs[i]) continue;
+        out[n++] = f->reached[i];
+    }
+    return n;
+}

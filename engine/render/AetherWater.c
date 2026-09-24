@@ -1115,3 +1115,35 @@ u32 aether_water_reflect_portal_stack_plan(const aether_water_t *water,
     }
     return views;
 }
+
+/* ===== Portal × PVS flood reflect / cull plan (batch20) ===== */
+
+void aether_water_reflect_portal_pvs_plan_init(aether_water_reflect_portal_pvs_plan_t *plan) {
+    if (!plan) return;
+    memset(plan, 0, sizeof(*plan));
+}
+
+u32 aether_water_reflect_portal_pvs_plan(const aether_water_t *water,
+                                         const aether_bsp_portal_graph_t *graph,
+                                         u16 eye_leaf, u32 max_depth,
+                                         const u8 *pvs_bits, u32 pvs_bytes,
+                                         aether_bsp_portal_pvs_flood_t *out_flood,
+                                         aether_water_reflect_portal_pvs_plan_t *out) {
+    if (out) aether_water_reflect_portal_pvs_plan_init(out);
+    aether_bsp_portal_pvs_flood_t local;
+    aether_bsp_portal_pvs_flood_t *flood = out_flood ? out_flood : &local;
+    u32 n = aether_bsp_portal_pvs_flood(graph, eye_leaf, max_depth, pvs_bits, pvs_bytes, flood);
+    if (n == 0 || !out) return 0;
+    out->portal_reached = flood->reached_count;
+    out->pvs_hits = flood->pvs_hit_count;
+    out->cull_skipped = flood->portal_only_count;
+    out->used_pvs = flood->used_pvs;
+    /* Reflect views: one per PVS-visible leaf (cap modestly). */
+    out->view_count = flood->pvs_hit_count;
+    if (out->view_count > 4) out->view_count = 4;
+    if (water && water->enabled && out->view_count == 0 && flood->reached_count > 0)
+        out->view_count = 1; /* always at least one when water on + portal reach */
+    out->needed = (out->view_count > 0);
+    out->valid = flood->valid && out->needed;
+    return out->view_count;
+}

@@ -378,3 +378,47 @@ bool aether_depth_hiz_mtk_attach_was_attached(const aether_depth_hiz_mtk_attach_
 bool aether_depth_hiz_mtk_attach_encode_ready(const aether_depth_hiz_mtk_attach_t *a) {
     return a && a->attached && a->encode_wired && a->shader_read_usage;
 }
+
+/* ===== Full GPU Hi-Z mipchain after MTK depth attach (batch20) ===== */
+
+void aether_depth_hiz_mtk_mipchain_init(aether_depth_hiz_mtk_mipchain_t *m) {
+    if (!m) return;
+    memset(m, 0, sizeof(*m));
+}
+
+int aether_depth_hiz_mtk_mipchain_plan(const aether_depth_hiz_mtk_attach_t *attach,
+                                       u32 mip0_w, u32 mip0_h, u32 slices,
+                                       aether_depth_hiz_mtk_mipchain_t *out) {
+    if (!out) return 0;
+    aether_depth_hiz_mtk_mipchain_init(out);
+    if (!attach || !aether_depth_hiz_mtk_attach_encode_ready(attach)) return 0;
+    if (mip0_w == 0) mip0_w = attach->width ? attach->width : 64;
+    if (mip0_h == 0) mip0_h = attach->height ? attach->height : 64;
+    if (slices == 0) slices = 4;
+    if (slices > AETHER_DEPTH_HIZ_MAX_MIP_VIEWS) slices = AETHER_DEPTH_HIZ_MAX_MIP_VIEWS;
+    out->after_attach = true;
+    out->gpu_downsample = true;
+    out->needed = true;
+    out->mip0_w = mip0_w;
+    out->mip0_h = mip0_h;
+    out->slices = slices;
+    out->levels = slices;
+    out->passes = (slices > 1) ? (slices - 1) : 0;
+    out->complete = false;
+    out->marked = false;
+    return 1;
+}
+
+void aether_depth_hiz_mtk_mipchain_mark(aether_depth_hiz_mtk_mipchain_t *m) {
+    if (!m) return;
+    m->marked = m->needed && m->after_attach && m->gpu_downsample && m->levels > 0;
+    m->complete = m->marked && m->passes == ((m->levels > 0) ? (m->levels - 1) : 0);
+}
+
+bool aether_depth_hiz_mtk_mipchain_complete(const aether_depth_hiz_mtk_mipchain_t *m) {
+    return m && m->complete;
+}
+
+bool aether_depth_hiz_mtk_mipchain_needed(const aether_depth_hiz_mtk_mipchain_t *m) {
+    return m && m->needed;
+}

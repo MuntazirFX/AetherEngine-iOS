@@ -751,4 +751,93 @@ int  aether_mdl_skinref_metal_bind_draw(const aether_mdl_skinref_table_t *t,
 void aether_mdl_skinref_metal_bind_mark(aether_mdl_skinref_metal_bind_t *b);
 bool aether_mdl_skinref_metal_bind_was_bound(const aether_mdl_skinref_metal_bind_t *b);
 
+/* ---------- Full GPU Hi-Z mipchain after MTK depth attach (batch20) ---------- */
+typedef struct aether_mdl_hiz_gpu_mipchain {
+    u32 mip_levels;         /* including mip0 */
+    u32 mip0_w, mip0_h;
+    u32 gpu_passes;         /* Metal compute downsample passes */
+    u32 slices_filled;
+    bool from_mtk_attach;
+    bool chain_complete;
+    bool gpu_armed;
+    bool ready;
+    bool valid;
+} aether_mdl_hiz_gpu_mipchain_t;
+
+void aether_mdl_hiz_gpu_mipchain_init(aether_mdl_hiz_gpu_mipchain_t *m);
+/* Encode from MTK attach then run full GPU mipchain downsample (host mirror). */
+u32  aether_mdl_hiz_gpu_mipchain_after_mtk(aether_mdl_hiz_pyramid_t *pyr,
+                                           aether_mdl_hiz_array_t *arr,
+                                           aether_mdl_hiz_array_downsample_t *ds,
+                                           const f32 *depth_lin, u32 depth_count,
+                                           u32 w, u32 h,
+                                           int mtk_attached, int shader_read,
+                                           aether_mdl_hiz_live_encode_plan_t *encode_plan,
+                                           aether_mdl_hiz_gpu_mipchain_t *out);
+void aether_mdl_hiz_gpu_mipchain_set_gpu(aether_mdl_hiz_gpu_mipchain_t *m, bool armed);
+bool aether_mdl_hiz_gpu_mipchain_ready(const aether_mdl_hiz_gpu_mipchain_t *m);
+/* Vis query that requires full mipchain after MTK attach. */
+int  aether_mdl_hiz_vis_query_mipchain(const aether_mdl_hiz_pyramid_t *pyr,
+                                       const aether_mdl_hiz_array_t *arr,
+                                       const aether_mdl_hiz_gpu_mipchain_t *chain,
+                                       f32 x0, f32 y0, f32 x1, f32 y1,
+                                       f32 object_depth, i32 preferred_mip,
+                                       aether_mdl_hiz_vis_query_t *out);
+
+/* ---------- Skin-lump Metal texture families (fixture + load path) ---------- */
+#define AETHER_MDL_SKIN_LUMP_METAL_MAX_FAM  4
+
+typedef struct aether_mdl_skin_lump_metal_family {
+    u32 family_id;
+    char name[AETHER_MDL_SKINREF_NAME_LEN];
+    u32 lump_index;
+    u32 tex_width;
+    u32 tex_height;
+    u32 rgba_bytes;
+    u32 draw_slot;
+    bool from_fixture;
+    bool texture_ready;
+    bool bound;
+    bool valid;
+} aether_mdl_skin_lump_metal_family_t;
+
+typedef struct aether_mdl_skin_lump_metal_bind {
+    u32 family_count;
+    u32 selected_family;
+    u32 atlas_w, atlas_h;
+    u32 atlas_bytes;
+    u32 draw_slot;
+    bool atlas_ready;
+    bool bound;
+    bool used_fixture;
+    bool valid;
+    aether_mdl_skin_lump_metal_family_t families[AETHER_MDL_SKIN_LUMP_METAL_MAX_FAM];
+} aether_mdl_skin_lump_metal_bind_t;
+
+void aether_mdl_skin_lump_metal_bind_init(aether_mdl_skin_lump_metal_bind_t *b);
+/* Build Metal texture families from loaded skin lumps (or fixture if empty). */
+u32  aether_mdl_skin_lump_metal_families_from_lumps(const aether_mdl_skin_lump_set_t *lumps,
+                                                    u32 draw_slot,
+                                                    aether_mdl_skin_lump_metal_bind_t *out);
+/* Fixture path: load_or_fixture → Metal families (default/camo-style names). */
+u32  aether_mdl_skin_lump_metal_families_fixture(u32 fixture_pages, u32 draw_slot,
+                                                 aether_mdl_skin_lump_set_t *out_lumps,
+                                                 aether_mdl_skin_lump_metal_bind_t *out);
+/* Select family by id / name for Metal bind. */
+int  aether_mdl_skin_lump_metal_select_family(aether_mdl_skin_lump_metal_bind_t *b,
+                                              u32 family_id);
+int  aether_mdl_skin_lump_metal_select_family_name(aether_mdl_skin_lump_metal_bind_t *b,
+                                                   const char *name);
+/* Pack selected family's lump RGBA into contiguous atlas for MTLTexture. */
+u32  aether_mdl_skin_lump_metal_atlas_rgba(const aether_mdl_skin_lump_set_t *lumps,
+                                           const aether_mdl_skin_lump_metal_bind_t *b,
+                                           u8 *out_rgba, u32 cap,
+                                           u32 *out_w, u32 *out_h);
+void aether_mdl_skin_lump_metal_bind_mark(aether_mdl_skin_lump_metal_bind_t *b);
+bool aether_mdl_skin_lump_metal_bind_was_bound(const aether_mdl_skin_lump_metal_bind_t *b);
+/* Sample active family lump through Metal bind path. */
+int  aether_mdl_skin_lump_metal_sample(const aether_mdl_skin_lump_set_t *lumps,
+                                       const aether_mdl_skin_lump_metal_bind_t *b,
+                                       f32 u, f32 v, f32 out_rgba[4]);
+
 #endif /* AETHER_MODEL_FIXTURE_H */

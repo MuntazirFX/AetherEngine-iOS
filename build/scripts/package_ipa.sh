@@ -271,3 +271,33 @@ log "Done ✔"
 #
 # Linux/CI host: cannot sideload; this checklist is documentation only.
 # DEVICE_SIDELOAD_CHECKLIST=AppleConfigurator|XcodeDevices|ideviceinstaller|AltStore
+
+# ---------- Device-run notes (batch20): first launch / entitlements / Documents game dir ----------
+# After sideload (see DEVICE_SIDELOAD_CHECKLIST above), first launch on device:
+#
+# FIRST LAUNCH
+#   1. Tap AetherEngine; if "Untrusted Developer", Settings → General → VPN & Device Management
+#      → trust the signing identity, then relaunch.
+#   2. Grant Local Network if prompted (multiplayer UDP listen/connect smokes).
+#   3. On first launch the app creates Documents/AetherEngine/ (or Documents/aether/) for
+#      writable game data — maps, saves, aether.cfg. No retail HL assets are bundled.
+#
+# ENTITLEMENTS (expected for development / sideload builds)
+#   - application-identifier / team-id (from resign / Xcode signing)
+#   - get-task-allow=true for debug (Xcode Devices); false for distribution sideload
+#   - com.apple.security.application-groups optional; sandbox still allows app Documents
+#   - No special Game Center / iCloud entitlement required for the demo path
+#   - Microphone only if voice chat cue path is enabled later
+#
+# DOCUMENTS GAME DIR LAYOUT (under app container Documents/)
+#   Documents/AetherEngine/
+#     aether.cfg          — settings/cvars persisted from Options
+#     valve/              — user-provided Half-Life game dir (optional)
+#     cstrike/            — user-provided CS 1.6 dir (optional)
+#     bshift/ gearbox/ czero/ — other mod dirs when present
+#     maps/ or */maps/    — .bsp maps the FS VFS mounts via setup_game
+#     saves/              — host save stubs
+#   Without user game data the engine falls back to the synthetic BSP demo room.
+#
+# DEVICE_RUN_NOTES=first_launch|entitlements|Documents/AetherEngine|game_dir|synthetic_fallback
+# Linux/CI host: cannot launch on device; these notes document the on-device path only.

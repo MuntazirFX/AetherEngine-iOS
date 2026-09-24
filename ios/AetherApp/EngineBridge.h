@@ -959,4 +959,36 @@ int  engine_mdl_skinref_metal_atlas_rgba(unsigned char *out_rgba, unsigned cap,
 int  engine_mdl_skinref_metal_bind_mark(void);
 int  engine_mdl_skinref_metal_bind_was_bound(void);
 
+
+/* ---------- Batch: hiz-gpu-mipchain / portal-pvs / studio-skin-lump / ipa-device-run ---------- */
+int  engine_depth_hiz_mtk_mipchain_plan(unsigned w, unsigned h, unsigned slices,
+                                        unsigned *out_levels, unsigned *out_passes,
+                                        int *out_needed);
+int  engine_depth_hiz_mtk_mipchain_mark(void);
+int  engine_depth_hiz_mtk_mipchain_complete(void);
+int  engine_mdl_hiz_gpu_mipchain_after_mtk(unsigned w, unsigned h,
+                                           unsigned *out_slices, unsigned *out_passes,
+                                           unsigned *out_levels, int *out_ready);
+int  engine_mdl_hiz_vis_query_mipchain(float x0, float y0, float x1, float y1,
+                                       float obj_depth, int preferred_mip,
+                                       int *out_visible, int *out_occluded, float *out_hiz);
+
+unsigned engine_bsp_portal_pvs_flood_fixture(unsigned start_leaf, unsigned max_depth,
+                                             unsigned *out_reached, unsigned *out_pvs_hits,
+                                             unsigned *out_portal_only);
+int  engine_bsp_portal_pvs_leaf_visible(unsigned leaf);
+unsigned engine_water_reflect_portal_pvs_plan(unsigned eye_leaf, unsigned max_depth,
+                                              unsigned *out_views, unsigned *out_pvs_hits,
+                                              unsigned *out_culled);
+
+unsigned engine_mdl_skin_lump_metal_families_fixture(unsigned pages, unsigned draw_slot,
+                                                     unsigned *out_families, int *out_fixture);
+int  engine_mdl_skin_lump_metal_select_family_name(const char *name);
+int  engine_mdl_skin_lump_metal_atlas_rgba(unsigned char *out_rgba, unsigned cap,
+                                           unsigned *out_w, unsigned *out_h,
+                                           unsigned *out_bytes);
+int  engine_mdl_skin_lump_metal_bind_mark(void);
+int  engine_mdl_skin_lump_metal_bind_was_bound(void);
+int  engine_mdl_skin_lump_metal_sample(float u, float v, float *out_rgba4);
+
 #endif /* ENGINE_BRIDGE_H */
