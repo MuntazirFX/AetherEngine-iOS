@@ -902,3 +902,57 @@ fragment float4 aether_mdl_skin_page_fragment(WaterVertexOut in [[stage_in]],
     float4 s = skinPage.sample(samp, in.uv);
     return float4(s.rgb * tint.rgb, s.a * tint.a);
 }
+
+
+/* ============ Hi-Z texture2d_array mip vis + portal-graph flood hooks ============ */
+struct HizArrayVisUniforms {
+    float4 rect;        /* x0,y0,x1,y1 */
+    float  objectDepth;
+    float  arrayMip;    /* slice index */
+    float  pad0, pad1;
+};
+
+struct HizArrayVisResult {
+    float nearestHiz;
+    float occluded;
+    float mipUsed;
+    float valid;
+};
+
+/* Vis query samples a specific texture2d_array mip/slice (Metal encode path). */
+fragment HizArrayVisResult aether_hiz_array_vis_query_fragment(constant HizArrayVisUniforms &Q [[buffer(0)]],
+                                                               texture2d_array<float> hizArray [[texture(0)]],
+                                                               sampler samp [[sampler(0)]]) {
+    HizArrayVisResult r;
+    float2 uv = float2((Q.rect.x + Q.rect.z) * 0.5, (Q.rect.y + Q.rect.w) * 0.5);
+    uint slice = (uint)max(Q.arrayMip, 0.0);
+    if (slice >= hizArray.get_array_size()) slice = hizArray.get_array_size() - 1;
+    float hz = hizArray.sample(samp, uv, slice).r;
+    r.nearestHiz = hz;
+    r.occluded = (hz + 0.01 < Q.objectDepth) ? 1.0 : 0.0;
+    r.mipUsed = float(slice);
+    r.valid = 1.0;
+    return r;
+}
+
+struct PortalGraphFloodUniforms {
+    uint startLeaf;
+    uint reached;
+    uint maxDepth;
+    uint viewCount;
+};
+
+/* Documents multi-portal leaf-graph flood feeding reflect views. */
+fragment float4 aether_portal_graph_flood_fragment(constant PortalGraphFloodUniforms &U [[buffer(0)]],
+                                                   float2 uv [[stage_in]]) {
+    float t = (U.reached > 0) ? (float(U.viewCount) / max(float(U.reached), 1.0)) : 0.0;
+    return float4(t, float(U.startLeaf) * 0.05, float(U.maxDepth) * 0.2, 1.0);
+}
+
+fragment float4 aether_mdl_skin_lump_fragment(WaterVertexOut in [[stage_in]],
+                                              texture2d<float> skinLump [[texture(0)]],
+                                              sampler samp [[sampler(0)]],
+                                              constant float4 &tint [[buffer(2)]]) {
+    float4 s = skinLump.sample(samp, in.uv);
+    return float4(s.rgb * tint.rgb, s.a * tint.a);
+}

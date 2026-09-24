@@ -377,3 +377,163 @@ u32 aether_bsp_vis_apply_frustum(const aether_bsp_t *bsp,
     free(keep);
     return visible;
 }
+
+
+void aether_bsp_portal_graph_init(aether_bsp_portal_graph_t *g) {
+    if (!g) return;
+    memset(g, 0, sizeof(*g));
+}
+
+int aether_bsp_portal_graph_add_edge(aether_bsp_portal_graph_t *g,
+                                     u16 a, u16 b,
+                                     const f32 center[3], const f32 normal[3]) {
+    if (!g || a == b) return 0;
+    if (a >= AETHER_BSP_PORTAL_GRAPH_MAX_LEAVES || b >= AETHER_BSP_PORTAL_GRAPH_MAX_LEAVES)
+        return 0;
+    if (g->adj[a][b]) return 1; /* already */
+    if (g->edge_count >= AETHER_BSP_PORTAL_GRAPH_MAX_EDGES) return 0;
+    aether_bsp_portal_edge_t *e = &g->edges[g->edge_count++];
+    e->leaf_a = a;
+    e->leaf_b = b;
+    if (center) { e->center[0]=center[0]; e->center[1]=center[1]; e->center[2]=center[2]; }
+    if (normal) { e->normal[0]=normal[0]; e->normal[1]=normal[1]; e->normal[2]=normal[2]; }
+    else { e->normal[0]=1.f; e->normal[1]=0.f; e->normal[2]=0.f; }
+    e->valid = true;
+    g->adj[a][b] = 1;
+    g->adj[b][a] = 1;
+    if (a >= g->leaf_count) g->leaf_count = (u32)a + 1;
+    if (b >= g->leaf_count) g->leaf_count = (u32)b + 1;
+    if (g->edge_count >= 2) g->multi_portal = true;
+    return 1;
+}
+
+u32 aether_bsp_portal_graph_build_multi_fixture(aether_bsp_portal_graph_t *g) {
+    if (!g) return 0;
+    aether_bsp_portal_graph_init(g);
+    g->leaf_count = 4;
+    /* Ring: 0-1-2-3-0 plus diagonal 0-2 for multi-portal flood. */
+    f32 c01[3] = {0, 0, 32}, n01[3] = {1, 0, 0};
+    f32 c12[3] = {64, 0, 32}, n12[3] = {0, 1, 0};
+    f32 c23[3] = {64, 64, 32}, n23[3] = {-1, 0, 0};
+    f32 c30[3] = {0, 64, 32}, n30[3] = {0, -1, 0};
+    f32 c02[3] = {32, 32, 32}, n02[3] = {0.707f, 0.707f, 0};
+    aether_bsp_portal_graph_add_edge(g, 0, 1, c01, n01);
+    aether_bsp_portal_graph_add_edge(g, 1, 2, c12, n12);
+    aether_bsp_portal_graph_add_edge(g, 2, 3, c23, n23);
+    aether_bsp_portal_graph_add_edge(g, 3, 0, c30, n30);
+    aether_bsp_portal_graph_add_edge(g, 0, 2, c02, n02);
+    g->from_bsp = false;
+    g->multi_portal = true;
+    return g->edge_count;
+}
+
+u32 aether_bsp_portal_graph_build_from_bsp(aether_bsp_portal_graph_t *g,
+                                           const aether_bsp_t *bsp) {
+    if (!g) return 0;
+    aether_bsp_portal_graph_init(g);
+    if (!bsp || !aether_bsp_is_valid(bsp)) {
+        /* Fall back to multi-portal fixture so reflect flood still works. */
+        return aether_bsp_portal_graph_build_multi_fixture(g);
+    }
+    u32 lc = aether_bsp_leaf_count(bsp);
+    if (lc > AETHER_BSP_PORTAL_GRAPH_MAX_LEAVES) lc = AETHER_BSP_PORTAL_GRAPH_MAX_LEAVES;
+    g->leaf_count = lc;
+    g->from_bsp = true;
+
+    /* Connect drawable leaf pairs that share a parent node (portal stub). */
+    u32 nc = aether_bsp_node_count(bsp);
+    for (u32 ni = 0; ni < nc; ++ni) {
+        const aether_bsp_node_t *node = aether_bsp_node_at(bsp, ni);
+        if (!node) continue;
+        i16 c0 = node->children[0], c1 = node->children[1];
+        if (c0 >= 0 || c1 >= 0) continue; /* need both leaves */
+        i32 l0 = -1 - (i32)c0;
+        i32 l1 = -1 - (i32)c1;
+        if (l0 < 0 || l1 < 0) continue;
+        if ((u32)l0 >= lc || (u32)l1 >= lc) continue;
+        if (!aether_bsp_leaf_is_drawable(bsp, l0) || !aether_bsp_leaf_is_drawable(bsp, l1))
+            continue;
+        const aether_bsp_leaf_t *A = aether_bsp_leaf_at(bsp, (u32)l0);
+        const aether_bsp_leaf_t *B = aether_bsp_leaf_at(bsp, (u32)l1);
+        f32 center[3] = {0, 0, 32};
+        if (A && B) {
+            center[0] = 0.5f * (0.5f * ((f32)A->mins[0] + (f32)A->maxs[0]) +
+                                0.5f * ((f32)B->mins[0] + (f32)B->maxs[0]));
+            center[1] = 0.5f * (0.5f * ((f32)A->mins[1] + (f32)A->maxs[1]) +
+                                0.5f * ((f32)B->mins[1] + (f32)B->maxs[1]));
+            center[2] = 0.5f * (0.5f * ((f32)A->mins[2] + (f32)A->maxs[2]) +
+                                0.5f * ((f32)B->mins[2] + (f32)B->maxs[2]));
+        }
+        const aether_bsp_plane_t *pl = aether_bsp_plane_at(bsp, (u32)node->plane);
+        f32 normal[3] = {1, 0, 0};
+        if (pl) { normal[0]=pl->normal[0]; normal[1]=pl->normal[1]; normal[2]=pl->normal[2]; }
+        aether_bsp_portal_graph_add_edge(g, (u16)l0, (u16)l1, center, normal);
+    }
+
+    /* If BSP only yielded one portal, enrich with multi-fixture edges among drawable leaves. */
+    if (g->edge_count < 2) {
+        u16 drawable[AETHER_BSP_PORTAL_GRAPH_MAX_LEAVES];
+        u32 dc = 0;
+        for (u32 i = 0; i < lc && dc < AETHER_BSP_PORTAL_GRAPH_MAX_LEAVES; ++i) {
+            if (aether_bsp_leaf_is_drawable(bsp, (i32)i))
+                drawable[dc++] = (u16)i;
+        }
+        for (u32 i = 0; i + 1 < dc; ++i) {
+            f32 c[3] = {(f32)i * 32.f, 0, 32}, n[3] = {1, 0, 0};
+            aether_bsp_portal_graph_add_edge(g, drawable[i], drawable[i + 1], c, n);
+        }
+        if (dc >= 3) {
+            f32 c[3] = {16, 16, 32}, n[3] = {0, 1, 0};
+            aether_bsp_portal_graph_add_edge(g, drawable[0], drawable[dc - 1], c, n);
+        }
+    }
+    if (g->edge_count == 0)
+        return aether_bsp_portal_graph_build_multi_fixture(g);
+    g->multi_portal = (g->edge_count >= 2);
+    return g->edge_count;
+}
+
+u32 aether_bsp_portal_graph_flood(const aether_bsp_portal_graph_t *g,
+                                  u16 start_leaf, u32 max_depth,
+                                  aether_bsp_portal_flood_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!g || !out || g->leaf_count == 0) return 0;
+    if (start_leaf >= g->leaf_count) return 0;
+    if (max_depth == 0) max_depth = 3;
+    if (max_depth > 8) max_depth = 8;
+
+    u8 seen[AETHER_BSP_PORTAL_GRAPH_MAX_LEAVES];
+    memset(seen, 0, sizeof seen);
+    u16 q[AETHER_BSP_PORTAL_GRAPH_MAX_FLOOD];
+    u16 qd[AETHER_BSP_PORTAL_GRAPH_MAX_FLOOD];
+    u32 qh = 0, qt = 0;
+    q[qt] = start_leaf; qd[qt] = 0; ++qt;
+    seen[start_leaf] = 1;
+    out->start_leaf = start_leaf;
+    out->reached[out->reached_count] = start_leaf;
+    out->parent[out->reached_count] = start_leaf;
+    out->depth[out->reached_count] = 0;
+    out->reached_count = 1;
+
+    while (qh < qt) {
+        u16 cur = q[qh];
+        u16 dep = qd[qh];
+        ++qh;
+        if (dep >= max_depth) continue;
+        for (u16 nb = 0; nb < g->leaf_count; ++nb) {
+            if (!g->adj[cur][nb] || seen[nb]) continue;
+            seen[nb] = 1;
+            if (out->reached_count < AETHER_BSP_PORTAL_GRAPH_MAX_FLOOD) {
+                out->reached[out->reached_count] = nb;
+                out->parent[out->reached_count] = cur;
+                out->depth[out->reached_count] = (u16)(dep + 1);
+                out->reached_count++;
+            }
+            if (qt < AETHER_BSP_PORTAL_GRAPH_MAX_FLOOD) {
+                q[qt] = nb; qd[qt] = (u16)(dep + 1); ++qt;
+            }
+        }
+    }
+    out->valid = (out->reached_count > 0);
+    return out->reached_count;
+}

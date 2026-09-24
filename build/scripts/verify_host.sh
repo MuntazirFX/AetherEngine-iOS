@@ -341,3 +341,18 @@ grep -q "engine_depth_hiz_bind_execute\|engine_water_reflect_recursive_plan\|eng
 grep -q "depth-hiz-bind\|portal-winding\|mdl-skin-pages\|~77%" README.md || fail "missing batch15 README"
 grep -q "smoke_batch_depth_hiz_bind_portal_winding_mdl_skin_pages" tests/host_smoke.c || fail "missing batch15 smoke"
 ok "batch depth-hiz-bind/portal-winding/mdl-skin-pages API symbols present"
+
+
+grep -q "aether_mdl_hiz_bind_texture2d_array\|aether_mdl_hiz_vis_query_array_mip\|aether_mdl_hiz_array_was_bound" engine/model/AetherModelFixture.h || fail "missing Hi-Z texture2d_array bind"
+grep -q "aether_bsp_portal_graph_build_from_bsp\|aether_bsp_portal_graph_flood\|aether_bsp_portal_graph_build_multi_fixture" engine/bsp/AetherBSPVis.h || fail "missing portal leaf graph"
+grep -q "aether_water_reflect_portal_graph_plan\|aether_bsp_portal_graph_t" engine/render/AetherWater.h engine/bsp/AetherBSPVis.h || fail "missing portal graph reflect plan"
+grep -q "aether_mdl_skin_lumps_load\|aether_mdl_skin_lumps_load_or_fixture\|aether_mdl_skin_lump_sample" engine/model/AetherModelFixture.h || fail "missing packed MDL skin lumps"
+grep -q "upload-artifact@v4\|retention-days\|compression-level\|ARTIFACT_NOTES\|ipa-artifact" .github/workflows/build-arm64.yml build/scripts/package_ipa.sh || fail "missing IPA artifact automation notes"
+grep -q "aether_depth_hiz_array_bind_encode\|aether_mdl_hiz_vis_query_array_mip" engine/render/AetherDepthPrepass.h engine/model/AetherModelFixture.h || fail "missing array mip vis encode path"
+grep -q "aether_hiz_array_vis_query_fragment\|aether_portal_graph_flood_fragment\|aether_mdl_skin_lump_fragment" ios/AetherApp/Shaders.metal || fail "missing Metal hiz-array/portal-graph/skin-lump hooks"
+grep -q "engine_mdl_hiz_bind_texture2d_array\|engine_water_reflect_portal_graph_plan\|engine_mdl_skin_lumps_load_or_fixture\|engine_bsp_portal_graph_flood" ios/AetherApp/EngineBridge.h || fail "missing bridge batch16"
+grep -q "engine_mdl_hiz_bind_texture2d_array\|engine_water_reflect_portal_graph_plan\|engine_mdl_skin_lumps_load_or_fixture" ios/AetherApp/MetalRenderer.swift || fail "missing metal batch16 encode"
+grep -q "hiz-array\|portal-graph\|mdl-skin-ipa\|~78%" README.md || fail "missing batch16 README"
+grep -q "smoke_batch_hiz_array_portal_graph_mdl_skin_ipa" tests/host_smoke.c || fail "missing batch16 smoke"
+ok "batch hiz-array/portal-graph/mdl-skin-ipa API symbols present"
+

@@ -573,16 +573,57 @@ still clean-room:
 | Note | PR/push runs `verify_host` only; IPA is dispatch-only |
 
 ### Known gaps after depth-hiz-bind / portal-winding / mdl-skin-pages batch
-- Hi-Z texture views are host-authoritative descriptors (device Metal array texture still thin)
-- Portal recursion is planar water + winding clip (not full multi-portal leaf graph)
-- Skin pages are clean-room fixture RGBA (not packed MDL texture lumps from retail)
+- *(addressed in hiz-array / portal-graph / mdl-skin-ipa batch: Metal texture2d_array Hi-Z, multi-portal leaf graph flood, packed skin lumps + fixture fallback, IPA artifact automation)*
 - IPA still requires macOS + Xcode via workflow_dispatch
 
 ### Progress toward playable unsigned IPA demo
-Rough overall estimate after this batch: **~76–77%** toward a playable unsigned IPA demo
-(capped while IPA remains unbuilt on this Linux/CI host). Prior gpu-hiz-mip batch was ~75–76%.
+Rough overall estimate after depth-hiz-bind batch: **~76–77%** (superseded below).
+
+
+## Hi-Z texture2d_array / portal leaf graph / MDL skin lumps / IPA artifact (`continue/batch-hiz-array-portal-graph-mdl-skin-ipa`)
+
+One PR binds device Metal Hi-Z as `texture2d_array` / mip-chain for vis queries, builds a multi-portal
+leaf adjacency graph (from BSP portals/leaves + synthetic multi-portal fixture) with flood for water
+reflect, loads packed MDL skin lumps when a user asset is present (fixture fallback otherwise),
+improves IPA artifact automation (`upload-artifact@v4` retention input, compression-level 9,
+`ARTIFACT_NOTES.txt`), wires array-mip vis on the Metal encode path, host smokes, verify green —
+still clean-room (no retail HL assets):
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Device Metal Hi-Z as texture2d_array / mip chain | **done** | `aether_mdl_hiz_bind_texture2d_array` + `aether_depth_hiz_array_bind_*` + Metal `aether_hiz_array_vis_query_fragment` |
+| 2 | Multi-portal leaf graph + flood for reflect | **done** | `aether_bsp_portal_graph_*` + `aether_water_reflect_portal_graph_plan` |
+| 3 | Packed MDL skin lumps (asset / fixture fallback) | **done** | `aether_mdl_skin_lumps_load*` / `load_or_fixture` + water-ent bind |
+| 4 | IPA artifact automation improvements | **done** | retention input, compression-level 9, ARTIFACT_NOTES.txt beside IPA |
+| 5 | Vis query uses array mip on Metal encode path | **done** | `aether_mdl_hiz_vis_query_array_mip` + MetalRenderer encode |
+| 6 | Portal graph smoke (multi-portal synthetic) | **done** | host `b16_graph_*` / flood / reflect plan |
+| 7 | Skin lump parse smoke with fixture | **done** | textured fixture trailer → lumps; null → fixture fallback |
+| 8 | Host smokes + verify green | **done** | `smoke_batch_hiz_array_portal_graph_mdl_skin_ipa` + verify greps |
+| 9 | Fix regressions | **done** | prior depth-hiz-bind / gpu-hiz-mip smokes still green |
+| 10 | README + honest % | **done** | This table; cap **~78%** (~77–78) while IPA unbuilt on this host |
+
+### IPA artifact automation (Actions)
+
+| Knob | What |
+|------|------|
+| `upload-artifact@v4` | Uploads `AetherEngine.ipa` + `ARTIFACT_NOTES.txt` |
+| `artifact_retention_days` | workflow_dispatch input (default 30, max ~90) |
+| `compression-level: 9` | Smaller artifact upload |
+| Notes file | sha256, size, retention, upload tool — written by `package_ipa.sh` |
+| Download | `gh run download <id> -n AetherEngine-<version>` |
+
+### Known gaps after hiz-array / portal-graph / mdl-skin-ipa batch
+- Metal `texture2d_array` Hi-Z is descriptor + fragment-hook complete; full GPU downsample encode still thin
+- Portal graph adjacency is leaf/PVS/node-portal stub (not full Quake-style portal winding set from retail BSPs)
+- Skin lumps parse clean-room textured-fixture trailers (retail MDL palette/skinref families still partial)
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+### Progress toward playable unsigned IPA demo
+Rough overall estimate after this batch: **~78%** (~77–78) toward a playable unsigned IPA demo
+(capped while IPA remains unbuilt on this Linux/CI host). Prior depth-hiz-bind batch was ~76–77%.
 
 IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
+
 
 
 ## Build Status

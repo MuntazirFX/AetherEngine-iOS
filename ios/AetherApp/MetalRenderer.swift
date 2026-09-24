@@ -519,6 +519,36 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 _ = engine_water_reflect_ent_sample_skin_page(0, 0.25, 0.75, &pageRgba)
                 _ = pageRgba
             }
+            // Device Hi-Z texture2d_array + array-mip vis query on Metal encode path
+            var arrSlices: UInt32 = 0, arrW: UInt32 = 0, arrH: UInt32 = 0
+            _ = engine_mdl_hiz_bind_texture2d_array(&arrSlices, &arrW, &arrH)
+            _ = engine_mdl_hiz_array_mark_bound()
+            var dhArrSlices: Int32 = 0, dhArrBound: Int32 = 0
+            _ = engine_depth_hiz_array_bind(arrSlices, &dhArrSlices, &dhArrBound)
+            var aqVis: Int32 = 0, aqOcc: Int32 = 0, aqMip: Int32 = 0
+            var aqZ: Float = 0
+            _ = engine_mdl_hiz_vis_query_array_mip(0.4, 0.4, 0.6, 0.6, 0.85, 1,
+                                                   &aqVis, &aqOcc, &aqZ, &aqMip)
+            // Multi-portal leaf graph flood → reflect views
+            var pgLeaves: UInt32 = 0, pgEdges: UInt32 = 0
+            _ = engine_bsp_portal_graph_build_multi(&pgLeaves, &pgEdges)
+            var pgReached: UInt32 = 0, pgDepth: UInt32 = 0
+            _ = engine_bsp_portal_graph_flood(0, 3, &pgReached, &pgDepth)
+            var pgViews: UInt32 = 0, pgFlood: UInt32 = 0
+            _ = engine_water_reflect_portal_graph_plan(0, 0, 64, 0, 3, &pgViews, &pgFlood)
+            // Packed MDL skin lumps (fixture fallback when no user asset)
+            var lumpCount: UInt32 = 0
+            var lumpFallback: Int32 = 0
+            _ = engine_mdl_skin_lumps_load_or_fixture(nil, 0, 4, &lumpCount, &lumpFallback)
+            var lumpRgba = [Float](repeating: 0, count: 4)
+            _ = engine_mdl_skin_lumps_sample(0, 0.25, 0.75, &lumpRgba)
+            if studioCount > 0 {
+                _ = engine_mdl_skin_lump_bind_water_ent(0, 0)
+            }
+            _ = arrSlices; _ = arrW; _ = arrH; _ = dhArrSlices; _ = dhArrBound
+            _ = aqVis; _ = aqOcc; _ = aqZ; _ = aqMip
+            _ = pgLeaves; _ = pgEdges; _ = pgReached; _ = pgDepth; _ = pgViews; _ = pgFlood
+            _ = lumpCount; _ = lumpFallback; _ = lumpRgba
             _ = ec; _ = mc; _ = res2; _ = dw2; _ = clr2; _ = rw2; _ = rh2; _ = studioCount
             _ = hvVis; _ = hvOcc; _ = hvZ; _ = hvMip; _ = plod; _ = pissue; _ = pocc; _ = ppx
             _ = portalMvp

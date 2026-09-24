@@ -2,6 +2,7 @@
 #define AETHER_WATER_H
 #include "../core/AetherCore.h"
 #include "../model/AetherModelFixture.h"
+#include "../bsp/AetherBSPVis.h"
 
 /* GPU/bridge-friendly vertex: pos.xyz + uv.xy + color.rgba (9 floats, 36 bytes). */
 typedef struct aether_water_vertex {
@@ -357,5 +358,25 @@ int  aether_water_reflect_ent_bind_skin_page(aether_water_reflect_ent_list_t *li
                                              const aether_mdl_skin_page_t *page);
 int  aether_water_reflect_ent_sample_skin_page(const aether_water_reflect_ent_list_t *list,
                                                u32 index, f32 u, f32 v, f32 out_rgba[4]);
+
+
+/* ---------- Multi-portal leaf-graph flood → water reflect views ---------- */
+typedef struct aether_water_reflect_portal_graph_plan {
+    u32 view_count;
+    u32 flooded_leaves;
+    u32 max_depth;
+    aether_portal_reflect_view_t views[AETHER_PORTAL_REFLECT_MAX_VIEWS];
+    bool needed;
+    bool from_graph;
+} aether_water_reflect_portal_graph_plan_t;
+
+void aether_water_reflect_portal_graph_plan_init(aether_water_reflect_portal_graph_plan_t *plan);
+/* Flood portal graph from eye leaf; build reflect views for reached leaves. */
+u32  aether_water_reflect_portal_graph_plan(const aether_water_t *water,
+                                            const f32 eye[3],
+                                            const aether_bsp_portal_graph_t *graph,
+                                            u16 eye_leaf,
+                                            u32 max_depth,
+                                            aether_water_reflect_portal_graph_plan_t *out);
 
 #endif /* AETHER_WATER_H */

@@ -847,5 +847,32 @@ int  engine_game_weapon_hit_auth_hitgroup(unsigned weapon_id, float now,
                                           int *out_registered, float *out_damage,
                                           int *out_headshot);
 
+
+/* ---------- Batch: hiz-array / portal-graph / mdl-skin-lumps / ipa-artifact ---------- */
+int  engine_mdl_hiz_bind_texture2d_array(unsigned *out_slices, unsigned *out_mip0_w, unsigned *out_mip0_h);
+int  engine_mdl_hiz_array_mark_bound(void);
+int  engine_mdl_hiz_array_was_bound(void);
+int  engine_mdl_hiz_vis_query_array_mip(float x0, float y0, float x1, float y1,
+                                        float obj_depth, int array_mip,
+                                        int *out_visible, int *out_occluded,
+                                        float *out_hiz, int *out_mip);
+int  engine_depth_hiz_array_bind(unsigned slice_count, int *out_slices, int *out_bound);
+
+int  engine_bsp_portal_graph_build_multi(unsigned *out_leaves, unsigned *out_edges);
+int  engine_bsp_portal_graph_build_from_current(unsigned *out_leaves, unsigned *out_edges);
+int  engine_bsp_portal_graph_flood(unsigned start_leaf, unsigned max_depth,
+                                   unsigned *out_reached, unsigned *out_depth_max);
+unsigned engine_water_reflect_portal_graph_plan(float eye_x, float eye_y, float eye_z,
+                                                unsigned eye_leaf, unsigned max_depth,
+                                                unsigned *out_views, unsigned *out_flooded);
+
+int  engine_mdl_skin_lumps_load(const unsigned char *bytes, unsigned size,
+                                unsigned *out_count, int *out_from_asset);
+int  engine_mdl_skin_lumps_load_or_fixture(const unsigned char *bytes, unsigned size,
+                                           unsigned fixture_pages,
+                                           unsigned *out_count, int *out_fallback);
+int  engine_mdl_skin_lumps_sample(unsigned index, float u, float v, float *out_rgba4);
+int  engine_mdl_skin_lump_bind_water_ent(unsigned ent_index, unsigned lump_index);
+
 #endif /* ENGINE_BRIDGE_H */
 
