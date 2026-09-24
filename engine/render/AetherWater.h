@@ -411,4 +411,35 @@ u32  aether_water_reflect_portal_clip_plan(const aether_water_t *water,
                                            aether_portal_reflect_plan_t *out_plan,
                                            aether_portal_winding_t *out_clipped);
 
+/* ---------- Fuller portal clip stack (multi-plane clip buffer) ---------- */
+#define AETHER_PORTAL_CLIP_STACK_MAX 8
+
+typedef struct aether_portal_clip_stack {
+    f32 planes[AETHER_PORTAL_CLIP_STACK_MAX][4];
+    u32 count;
+    u32 push_count;   /* lifetime pushes */
+    u32 pop_count;
+    u32 clip_ops;     /* windings clipped against stack */
+    bool valid;
+} aether_portal_clip_stack_t;
+
+void aether_portal_clip_stack_init(aether_portal_clip_stack_t *s);
+int  aether_portal_clip_stack_push(aether_portal_clip_stack_t *s, const f32 plane[4]);
+int  aether_portal_clip_stack_pop(aether_portal_clip_stack_t *s);
+/* Push every active clip_plane from a recursive reflect plan (bottom→top). */
+u32  aether_portal_clip_stack_push_reflect(aether_portal_clip_stack_t *s,
+                                           const aether_portal_reflect_plan_t *reflect);
+/* Clip winding against the entire stack (Sutherland–Hodgman cascade). */
+u32  aether_portal_clip_stack_clip(const aether_portal_clip_stack_t *s,
+                                   const aether_portal_winding_t *in,
+                                   aether_portal_winding_t *out);
+/* Build recursive reflect plan, fill clip stack, clip portal → out_clipped. */
+u32  aether_water_reflect_portal_stack_plan(const aether_water_t *water,
+                                            const f32 eye[3],
+                                            const aether_portal_winding_t *portal,
+                                            u32 max_depth,
+                                            aether_portal_reflect_plan_t *out_plan,
+                                            aether_portal_clip_stack_t *out_stack,
+                                            aether_portal_winding_t *out_clipped);
+
 #endif /* AETHER_WATER_H */

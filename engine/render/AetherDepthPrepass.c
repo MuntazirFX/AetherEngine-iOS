@@ -322,3 +322,59 @@ bool aether_depth_hiz_live_encode_was_encoded(const aether_depth_hiz_live_encode
 bool aether_depth_hiz_live_encode_needed(const aether_depth_hiz_live_encode_t *e) {
     return e && e->needed;
 }
+
+
+/* ===== MTK depth attachment → Hi-Z encode wire (batch19) ===== */
+
+void aether_depth_hiz_mtk_attach_init(aether_depth_hiz_mtk_attach_t *a) {
+    if (!a) return;
+    memset(a, 0, sizeof(*a));
+}
+
+int aether_depth_hiz_mtk_attach_plan(u32 w, u32 h, u32 pixel_format,
+                                     u32 store_action, int shader_read,
+                                     aether_depth_hiz_mtk_attach_t *out) {
+    if (!out) return 0;
+    aether_depth_hiz_mtk_attach_init(out);
+    if (w == 0 || h == 0) return 0;
+    out->width = w;
+    out->height = h;
+    out->pixel_format = pixel_format ? pixel_format : AETHER_DEPTH_HIZ_FMT_DEPTH32F;
+    out->store_action = store_action;
+    out->store_action_store = (store_action == AETHER_DEPTH_HIZ_STORE_STORE);
+    out->shader_read_usage = (shader_read != 0);
+    out->depth_texture_ready = true;
+    out->needed = true;
+    /* fill + typical 3 downsample passes when wired */
+    out->encode_passes = 4;
+    out->encode_wired = false;
+    out->attached = false;
+    return 1;
+}
+
+int aether_depth_hiz_mtk_attach_wire_encode(aether_depth_hiz_mtk_attach_t *attach,
+                                            const aether_depth_hiz_live_encode_t *live) {
+    if (!attach || !attach->needed || !attach->depth_texture_ready) return 0;
+    if (!attach->store_action_store || !attach->shader_read_usage) return 0;
+    if (live) {
+        attach->encode_passes = live->encode_passes ? live->encode_passes : attach->encode_passes;
+        if (live->mip0_w > 0) attach->width = live->mip0_w;
+        if (live->mip0_h > 0) attach->height = live->mip0_h;
+    }
+    attach->encode_wired = true;
+    return 1;
+}
+
+void aether_depth_hiz_mtk_attach_mark(aether_depth_hiz_mtk_attach_t *a) {
+    if (!a) return;
+    a->attached = a->needed && a->depth_texture_ready && a->encode_wired
+               && a->store_action_store && a->shader_read_usage;
+}
+
+bool aether_depth_hiz_mtk_attach_was_attached(const aether_depth_hiz_mtk_attach_t *a) {
+    return a && a->attached;
+}
+
+bool aether_depth_hiz_mtk_attach_encode_ready(const aether_depth_hiz_mtk_attach_t *a) {
+    return a && a->attached && a->encode_wired && a->shader_read_usage;
+}

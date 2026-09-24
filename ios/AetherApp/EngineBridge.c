@@ -3139,7 +3139,7 @@ int engine_mdl_attachment_chain_world(float *out_pos3, float *out_fwd3) {
     aether_mdl_sequence_t seq;
     if (aether_mdl_anim_rle_decode(&seq, buf, n) != AETHER_OK)
         aether_mdl_sequence_load_from_data(&seq, buf, n);
-    aether_mdl_texgroup_state_t sk;
+    aether_mdl_skin_state_t sk;
     aether_mdl_skin_build_from_sequence(&sk, &seq, 1.0f);
     f32 mats[AETHER_MDL_MAX_BONES * 16];
     u32 bc = sk.bone_count < AETHER_MDL_MAX_BONES ? sk.bone_count : AETHER_MDL_MAX_BONES;
@@ -5072,4 +5072,178 @@ int engine_mdl_skinref_remap_sample(float u, float v, float *out_rgba4) {
         g_skinref_pages_ready = 1;
     }
     return aether_mdl_skinref_remap_sample(&g_skinref_remap, &g_skinref_pages, u, v, out_rgba4);
+}
+
+
+/* ===== Batch19: MTK depth attach / portal clip stack / skin Metal bind ===== */
+
+static aether_depth_hiz_mtk_attach_t g_mtk_attach;
+static aether_portal_clip_stack_t g_portal_stack;
+static aether_mdl_skinref_metal_bind_t g_skinref_metal_bind;
+
+int engine_depth_hiz_mtk_attach_plan(unsigned w, unsigned h,
+                                     unsigned *out_passes, int *out_needed) {
+    int ok = aether_depth_hiz_mtk_attach_plan(w ? w : 64, h ? h : 64,
+                                              AETHER_DEPTH_HIZ_FMT_DEPTH32F,
+                                              AETHER_DEPTH_HIZ_STORE_STORE,
+                                              1, &g_mtk_attach);
+    if (out_passes) *out_passes = g_mtk_attach.encode_passes;
+    if (out_needed) *out_needed = g_mtk_attach.needed ? 1 : 0;
+    return ok;
+}
+
+int engine_depth_hiz_mtk_attach_wire(void) {
+    if (!g_mtk_attach.needed)
+        (void)engine_depth_hiz_mtk_attach_plan(64, 64, NULL, NULL);
+    if (!g_depth_hiz_live.needed) {
+        aether_depth_prepass_t dp;
+        aether_depth_prepass_init(&dp);
+        aether_depth_prepass_ensure(&dp, g_mtk_attach.width, g_mtk_attach.height);
+        (void)aether_depth_hiz_live_encode_plan(&dp, g_mtk_attach.width,
+                                                g_mtk_attach.height, 4, &g_depth_hiz_live);
+    }
+    return aether_depth_hiz_mtk_attach_wire_encode(&g_mtk_attach, &g_depth_hiz_live);
+}
+
+int engine_depth_hiz_mtk_attach_mark(void) {
+    aether_depth_hiz_mtk_attach_mark(&g_mtk_attach);
+    return aether_depth_hiz_mtk_attach_was_attached(&g_mtk_attach) ? 1 : 0;
+}
+
+int engine_depth_hiz_mtk_attach_was_attached(void) {
+    return aether_depth_hiz_mtk_attach_was_attached(&g_mtk_attach) ? 1 : 0;
+}
+
+int engine_depth_hiz_mtk_attach_encode_ready(void) {
+    return aether_depth_hiz_mtk_attach_encode_ready(&g_mtk_attach) ? 1 : 0;
+}
+
+int engine_mdl_hiz_encode_from_mtk_attach(unsigned w, unsigned h,
+                                          unsigned *out_slices, unsigned *out_passes,
+                                          unsigned *out_samples, int *out_needed) {
+    const u32 W = w ? w : 64, H = h ? h : 64;
+    f32 *depth = (f32 *)malloc(sizeof(f32) * W * H);
+    if (!depth) return 0;
+    for (u32 i = 0; i < W * H; ++i) depth[i] = 1.f;
+    for (u32 y = H / 4; y < (3 * H) / 4; ++y)
+        for (u32 x = W / 4; x < (3 * W) / 4; ++x)
+            depth[y * W + x] = 0.25f;
+    if (!g_mtk_attach.attached) {
+        (void)engine_depth_hiz_mtk_attach_plan(W, H, NULL, NULL);
+        (void)engine_depth_hiz_mtk_attach_wire();
+        (void)engine_depth_hiz_mtk_attach_mark();
+    }
+    u32 slices = aether_mdl_hiz_encode_from_mtk_attach(&g_hiz_pyr, &g_hiz_array,
+                                                       &g_hiz_downsample,
+                                                       depth, W * H, W, H,
+                                                       g_mtk_attach.attached ? 1 : 0,
+                                                       g_mtk_attach.shader_read_usage ? 1 : 0,
+                                                       &g_hiz_live_encode);
+    free(depth);
+    if (out_slices) *out_slices = slices;
+    if (out_passes) *out_passes = g_hiz_live_encode.encode_passes;
+    if (out_samples) *out_samples = g_hiz_live_encode.depth_samples;
+    if (out_needed) *out_needed = g_hiz_live_encode.needed ? 1 : 0;
+    return (slices > 0) ? 1 : 0;
+}
+
+int engine_portal_clip_stack_push_reflect(unsigned *out_count) {
+    aether_portal_winding_t wind;
+    f32 c[3] = {0.f, 0.f, 32.f};
+    f32 n[3] = {0.f, 1.f, 0.f};
+    if (!aether_portal_winding_make_rect(&wind, c, n, 32.f, 48.f)) return 0;
+    aether_water_t w; aether_water_init(&w); aether_water_set_enabled(&w, true);
+    f32 eye[3] = {0.f, 0.f, 64.f};
+    aether_portal_reflect_plan_init(&g_portal_clip_plan);
+    (void)aether_water_reflect_recursive_plan(&w, eye, &wind, 3, &g_portal_clip_plan);
+    u32 nplanes = aether_portal_clip_stack_push_reflect(&g_portal_stack, &g_portal_clip_plan);
+    if (out_count) *out_count = nplanes;
+    return (nplanes > 0) ? 1 : 0;
+}
+
+int engine_portal_clip_stack_clip(unsigned *out_verts) {
+    if (g_portal_stack.count == 0)
+        (void)engine_portal_clip_stack_push_reflect(NULL);
+    aether_portal_winding_t wind;
+    f32 c[3] = {0.f, 0.f, 32.f};
+    f32 n[3] = {0.f, 1.f, 0.f};
+    if (!aether_portal_winding_make_rect(&wind, c, n, 32.f, 48.f)) return 0;
+    u32 v = aether_portal_clip_stack_clip(&g_portal_stack, &wind, &g_portal_clip_out);
+    g_portal_stack.clip_ops++;
+    if (out_verts) *out_verts = v;
+    return (v >= 3 || v == 0) ? 1 : 0;
+}
+
+unsigned engine_water_reflect_portal_stack_plan(float eye_x, float eye_y, float eye_z,
+                                                unsigned max_depth,
+                                                unsigned *out_views,
+                                                unsigned *out_stack,
+                                                unsigned *out_clip_verts) {
+    aether_portal_winding_t wind;
+    f32 c[3] = {0.f, 0.f, 32.f};
+    f32 n[3] = {0.f, 1.f, 0.f};
+    if (!aether_portal_winding_make_rect(&wind, c, n, 32.f, 48.f)) return 0;
+    aether_water_t w; aether_water_init(&w); aether_water_set_enabled(&w, true);
+    f32 eye[3] = {eye_x, eye_y, eye_z};
+    u32 views = aether_water_reflect_portal_stack_plan(&w, eye, &wind, max_depth,
+                                                       &g_portal_clip_plan,
+                                                       &g_portal_stack,
+                                                       &g_portal_clip_out);
+    if (out_views) *out_views = views;
+    if (out_stack) *out_stack = g_portal_stack.count;
+    if (out_clip_verts) *out_clip_verts = g_portal_clip_out.valid ? g_portal_clip_out.count : 0;
+    return views;
+}
+
+int engine_portal_clip_stack_pop(void) {
+    return aether_portal_clip_stack_pop(&g_portal_stack);
+}
+
+int engine_portal_clip_stack_count(void) {
+    return (int)g_portal_stack.count;
+}
+
+int engine_mdl_skinref_metal_bind_draw(unsigned draw_slot,
+                                       unsigned *out_family, unsigned *out_ref,
+                                       unsigned *out_slot, unsigned *out_w,
+                                       unsigned *out_h, unsigned *out_bytes) {
+    if (!g_skinref_ready) (void)engine_mdl_skinref_init_fixture(NULL, NULL);
+    if (!g_skinref_pages_ready) {
+        aether_mdl_skin_pages_build_fixture(&g_skinref_pages, 4);
+        g_skinref_pages_ready = 1;
+    }
+    if (!aether_mdl_skinref_metal_bind_draw(&g_skinref, &g_skinref_pages, draw_slot,
+                                            &g_skinref_remap, &g_skinref_metal_bind))
+        return 0;
+    if (out_family) *out_family = g_skinref_metal_bind.family;
+    if (out_ref) *out_ref = g_skinref_metal_bind.ref;
+    if (out_slot) *out_slot = g_skinref_metal_bind.draw_slot;
+    if (out_w) *out_w = g_skinref_metal_bind.tex_width;
+    if (out_h) *out_h = g_skinref_metal_bind.tex_height;
+    if (out_bytes) *out_bytes = g_skinref_metal_bind.rgba_bytes;
+    return 1;
+}
+
+int engine_mdl_skinref_metal_atlas_rgba(unsigned char *out_rgba, unsigned cap,
+                                        unsigned *out_w, unsigned *out_h,
+                                        unsigned *out_bytes) {
+    if (!g_skinref_pages_ready) {
+        aether_mdl_skin_pages_build_fixture(&g_skinref_pages, 4);
+        g_skinref_pages_ready = 1;
+    }
+    u32 w = 0, h = 0;
+    u32 n = aether_mdl_skinref_metal_atlas_rgba(&g_skinref_pages, out_rgba, cap, &w, &h);
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    if (out_bytes) *out_bytes = n;
+    return (n > 0) ? 1 : 0;
+}
+
+int engine_mdl_skinref_metal_bind_mark(void) {
+    aether_mdl_skinref_metal_bind_mark(&g_skinref_metal_bind);
+    return aether_mdl_skinref_metal_bind_was_bound(&g_skinref_metal_bind) ? 1 : 0;
+}
+
+int engine_mdl_skinref_metal_bind_was_bound(void) {
+    return aether_mdl_skinref_metal_bind_was_bound(&g_skinref_metal_bind) ? 1 : 0;
 }

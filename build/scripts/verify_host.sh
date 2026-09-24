@@ -389,3 +389,17 @@ grep -q "engine_mdl_hiz_encode_from_depth\|engine_portal_winding_clip_reflect_pl
 grep -q "hiz-gpu-encode\|portal-clip\|skinref-remap\|~80%" README.md || fail "missing batch18 README"
 grep -q "smoke_batch_hiz_gpu_encode_portal_clip_studio_skinref_remap_ipa_dispatch" tests/host_smoke.c || fail "missing batch18 smoke"
 ok "batch hiz-gpu-encode/portal-clip/studio-skinref-remap/ipa-dispatch API symbols present"
+
+
+info "batch hiz-depth-attach / portal-stack / studio-draw / ipa-device"
+grep -q "aether_depth_hiz_mtk_attach_plan\|aether_depth_hiz_mtk_attach_wire_encode\|aether_depth_hiz_mtk_attach_encode_ready" engine/render/AetherDepthPrepass.h || fail "missing MTK depth Hi-Z attach"
+grep -q "aether_mdl_hiz_encode_from_mtk_attach" engine/model/AetherModelFixture.h || fail "missing Hi-Z encode from MTK attach"
+grep -q "aether_portal_clip_stack_push\|aether_portal_clip_stack_clip\|aether_water_reflect_portal_stack_plan" engine/render/AetherWater.h || fail "missing portal clip stack"
+grep -q "aether_mdl_skinref_metal_bind_draw\|aether_mdl_skinref_metal_atlas_rgba\|aether_mdl_skinref_metal_bind_was_bound" engine/model/AetherModelFixture.h || fail "missing skinref Metal bind"
+grep -q "Apple Configurator\|ideviceinstaller\|Xcode.*Devices\|DEVICE_SIDELOAD" build/scripts/package_ipa.sh README.md || fail "missing device IPA sideload checklist"
+grep -q "aether_hiz_encode_from_depth\|aether_portal_clip_stack_fragment\|aether_mdl_skinref_bind_fragment\|aether_depth_hiz_mtk_attach_fragment" ios/AetherApp/Shaders.metal || fail "missing Metal depth-attach/portal-stack/skin-bind"
+grep -q "engine_depth_hiz_mtk_attach_plan\|engine_water_reflect_portal_stack_plan\|engine_mdl_skinref_metal_bind_draw\|engine_mdl_hiz_encode_from_mtk_attach" ios/AetherApp/EngineBridge.h || fail "missing bridge batch19"
+grep -q "encodeHizFromMtkDepthAttach\|ensureStudioSkinAtlas\|engine_depth_hiz_mtk_attach\|engine_mdl_skinref_metal_bind\|shaderRead" ios/AetherApp/MetalRenderer.swift || fail "missing metal batch19 encode"
+grep -q "hiz-depth-attach\|portal-stack\|studio-draw\|~81%" README.md || fail "missing batch19 README"
+grep -q "smoke_batch_hiz_depth_attach_portal_stack_studio_draw_ipa_device" tests/host_smoke.c || fail "missing batch19 smoke"
+ok "batch hiz-depth-attach/portal-stack/studio-draw/ipa-device API symbols present"

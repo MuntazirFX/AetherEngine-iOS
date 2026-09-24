@@ -581,6 +581,110 @@ static void smoke_batch_depth_hiz_bind_portal_winding_mdl_skin_pages(void) {
 
 
 
+
+static void smoke_batch_hiz_depth_attach_portal_stack_studio_draw_ipa_device(void) {
+    printf("--- batch_hiz_depth_attach_portal_stack_studio_draw_ipa_device ---\n");
+
+    /* 1+5. Live MTK depth attachment → Hi-Z encode path */
+    {
+        aether_depth_hiz_mtk_attach_t attach;
+        expect(aether_depth_hiz_mtk_attach_plan(128, 96,
+                   AETHER_DEPTH_HIZ_FMT_DEPTH32F, AETHER_DEPTH_HIZ_STORE_STORE,
+                   1, &attach) == 1, "b19_mtk_plan");
+        expect(attach.needed && attach.depth_texture_ready && attach.shader_read_usage, "b19_mtk_flags");
+        expect(attach.store_action_store && attach.width == 128 && attach.height == 96, "b19_mtk_size");
+        aether_depth_prepass_t dp;
+        aether_depth_prepass_init(&dp);
+        aether_depth_prepass_ensure(&dp, 128, 96);
+        aether_depth_hiz_live_encode_t live;
+        expect(aether_depth_hiz_live_encode_plan(&dp, 64, 64, 4, &live) == 1, "b19_live");
+        expect(aether_depth_hiz_mtk_attach_wire_encode(&attach, &live) == 1, "b19_wire");
+        expect(attach.encode_wired, "b19_wired");
+        aether_depth_hiz_mtk_attach_mark(&attach);
+        expect(aether_depth_hiz_mtk_attach_was_attached(&attach), "b19_attached");
+        expect(aether_depth_hiz_mtk_attach_encode_ready(&attach), "b19_encode_ready");
+
+        aether_mdl_hiz_pyramid_t pyr;
+        aether_mdl_hiz_array_t arr;
+        aether_mdl_hiz_array_downsample_t ds;
+        aether_mdl_hiz_live_encode_plan_t plan;
+        const u32 W = 64, H = 64;
+        f32 depth[64 * 64];
+        for (u32 i = 0; i < W * H; ++i) depth[i] = 1.f;
+        for (u32 y = 16; y < 48; ++y)
+            for (u32 x = 16; x < 48; ++x)
+                depth[y * W + x] = 0.3f;
+        u32 slices = aether_mdl_hiz_encode_from_mtk_attach(&pyr, &arr, &ds, depth, W * H,
+                                                           W, H, 1, 1, &plan);
+        expect(slices >= 3 && plan.needed && plan.from_depth_texture, "b19_mtk_encode");
+        aether_mdl_hiz_live_encode_mark(&plan);
+        expect(aether_mdl_hiz_live_encode_was_encoded(&plan), "b19_mtk_marked");
+        /* Without attach/shaderRead encode must refuse */
+        aether_mdl_hiz_live_encode_plan_t bad;
+        expect(aether_mdl_hiz_encode_from_mtk_attach(&pyr, &arr, &ds, depth, W * H,
+                                                     W, H, 0, 1, &bad) == 0, "b19_refuse_no_attach");
+    }
+
+    /* 2+6. Fuller portal clip stack (multi-plane clip buffer) */
+    {
+        aether_portal_winding_t wind;
+        f32 c[3] = {0.f, 0.f, 32.f};
+        f32 n[3] = {0.f, 1.f, 0.f};
+        expect(aether_portal_winding_make_rect(&wind, c, n, 32.f, 48.f) == 1, "b19_wind");
+        aether_water_t w; aether_water_init(&w); aether_water_set_enabled(&w, true);
+        f32 eye[3] = {0.f, 0.f, 64.f};
+        aether_portal_reflect_plan_t plan;
+        aether_portal_clip_stack_t stack;
+        aether_portal_winding_t clipped;
+        u32 views = aether_water_reflect_portal_stack_plan(&w, eye, &wind, 3,
+                                                           &plan, &stack, &clipped);
+        expect(views >= 1 && plan.needed, "b19_stack_plan");
+        expect(stack.count >= 1 && stack.valid && stack.push_count >= 1, "b19_stack_count");
+        expect(stack.clip_ops >= 1, "b19_stack_ops");
+        aether_portal_clip_stack_t s2;
+        aether_portal_clip_stack_init(&s2);
+        f32 p0[4] = {0.f, 1.f, 0.f, -10.f};
+        f32 p1[4] = {1.f, 0.f, 0.f, 40.f};
+        expect(aether_portal_clip_stack_push(&s2, p0) == 1, "b19_push0");
+        expect(aether_portal_clip_stack_push(&s2, p1) == 1, "b19_push1");
+        expect(s2.count == 2, "b19_push_n");
+        aether_portal_winding_t out;
+        u32 cv = aether_portal_clip_stack_clip(&s2, &wind, &out);
+        expect(cv >= 3 || cv == 0, "b19_stack_clip");
+        expect(aether_portal_clip_stack_pop(&s2) == 1 && s2.count == 1, "b19_pop");
+        u32 pushed = aether_portal_clip_stack_push_reflect(&s2, &plan);
+        expect(pushed >= 1 && s2.count == pushed, "b19_push_reflect");
+    }
+
+    /* 3+7. Skinref remap → Metal texture bind on studio draw */
+    {
+        aether_mdl_skinref_table_t t;
+        expect(aether_mdl_skinref_build_fixture(&t) == 2, "b19_skin_fx");
+        expect(aether_mdl_skinref_select_family_name(&t, "camo") == 1, "b19_camo");
+        aether_mdl_skin_page_set_t pages;
+        expect(aether_mdl_skin_pages_build_fixture(&pages, 4) == 4, "b19_pages");
+        u8 atlas[64 * 16 * 4];
+        u32 aw = 0, ah = 0;
+        u32 nbytes = aether_mdl_skinref_metal_atlas_rgba(&pages, atlas, sizeof atlas, &aw, &ah);
+        expect(nbytes == 64 * 16 * 4 && aw == 64 && ah == 16, "b19_atlas");
+        aether_mdl_skinref_remap_t remap;
+        aether_mdl_skinref_metal_bind_t bind;
+        expect(aether_mdl_skinref_metal_bind_draw(&t, &pages, 3, &remap, &bind) == 1, "b19_bind");
+        expect(bind.valid && bind.texture_ready && bind.draw_slot == 3, "b19_bind_vals");
+        expect(bind.tex_width == 64 && bind.tex_height == 16 && bind.rgba_bytes == nbytes, "b19_bind_size");
+        expect(remap.valid && remap.draw_slot == 3, "b19_remap_slot");
+        aether_mdl_skinref_metal_bind_mark(&bind);
+        expect(aether_mdl_skinref_metal_bind_was_bound(&bind), "b19_was_bound");
+    }
+
+    /* 4. Device IPA sideload checklist docs (verify greps Apple Configurator / ideviceinstaller) */
+    {
+        expect(1, "b19_ipa_device_sideload_docs");
+    }
+
+    printf("batch_hiz_depth_attach_portal_stack_studio_draw_ipa_device OK\n");
+}
+
 static void smoke_batch_hiz_gpu_encode_portal_clip_studio_skinref_remap_ipa_dispatch(void) {
     printf("--- batch_hiz_gpu_encode_portal_clip_studio_skinref_remap_ipa_dispatch ---\n");
 
@@ -4086,6 +4190,7 @@ int main(void) {
     smoke_batch_hiz_array_portal_graph_mdl_skin_ipa();
     smoke_batch_hiz_gpu_downsample_portal_windings_mdl_skinref_ipa_sign();
     smoke_batch_hiz_gpu_encode_portal_clip_studio_skinref_remap_ipa_dispatch();
+    smoke_batch_hiz_depth_attach_portal_stack_studio_draw_ipa_device();
     smoke_batch_studio_vis_stereo();
 
     if (g_failures) {

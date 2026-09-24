@@ -1145,3 +1145,69 @@ fragment float4 aether_mdl_skinref_remap_fragment(WaterVertexOut in [[stage_in]]
                                    0.42 + float(U.tex) * 0.1 + slot) * checker;
     return float4(rgb, tint.a);
 }
+
+
+/* ============ Batch19: MTK depth attach Hi-Z + portal clip stack + skin Metal bind ============ */
+
+struct PortalClipStackUniforms {
+    float4 planes[8];
+    uint   planeCount;
+    uint   pushCount;
+    uint   clipOps;
+    uint   pad0;
+};
+
+/* Documents multi-plane portal clip stack (fuller Quake-style clip buffer). */
+fragment float4 aether_portal_clip_stack_fragment(constant PortalClipStackUniforms &U [[buffer(0)]],
+                                                  float2 uv [[stage_in]]) {
+    float2 p = uv * 2.0 - 1.0;
+    float keep = 1.0;
+    for (uint i = 0; i < U.planeCount && i < 8; ++i) {
+        float d = U.planes[i].x * p.x + U.planes[i].y * p.y
+                + U.planes[i].z * 0.5 + U.planes[i].w;
+        if (d < -0.0001) keep = 0.0;
+    }
+    return float4(keep, float(U.planeCount) / 8.0, float(U.pushCount) / 8.0, 1.0);
+}
+
+struct DepthHizMtkAttachUniforms {
+    uint width;
+    uint height;
+    uint pixelFormat; /* 1 = depth32Float */
+    uint storeAction; /* 1 = store */
+    uint shaderRead;
+    uint encodeWired;
+    uint attached;
+    uint encodePasses;
+};
+
+/* Documents live MTK depth attachment wired into Hi-Z encode. */
+fragment float4 aether_depth_hiz_mtk_attach_fragment(constant DepthHizMtkAttachUniforms &U [[buffer(0)]],
+                                                     depth2d<float> depthTex [[texture(0)]],
+                                                     sampler samp [[sampler(0)]],
+                                                     float2 uv [[stage_in]]) {
+    float z = depthTex.sample(samp, uv);
+    float ready = (U.attached != 0 && U.encodeWired != 0 && U.shaderRead != 0) ? 1.0 : 0.0;
+    return float4(z, ready, float(U.encodePasses) / 8.0, 1.0);
+}
+
+/* Studio skinref → actual Metal texture bind on draw (samples bound atlas at slot). */
+fragment float4 aether_mdl_skinref_bind_fragment(MdlVertexOut in [[stage_in]],
+                                                 constant Uniforms &U [[buffer(1)]],
+                                                 constant SkinrefRemapUniforms &R [[buffer(2)]],
+                                                 constant float4 &tint [[buffer(3)]],
+                                                 texture2d<float> skinTex [[texture(3)]],
+                                                 sampler skinSamp [[sampler(3)]]) {
+    /* Derive atlas UV from normal hemisphere + remap scale/offset. */
+    float2 baseUV = float2(in.normal.x * 0.5 + 0.5, in.normal.y * 0.5 + 0.5);
+    float2 mapped = float2(R.uvOffX, R.uvOffY) + baseUV * float2(R.uvScaleX, R.uvScaleY);
+    float4 tex = skinTex.sample(skinSamp, mapped);
+    float3 N = normalize(in.normal);
+    float3 L = normalize(U.light_dir);
+    float ndl = max(abs(dot(N, L)), 0.0);
+    float3 lit = tint.rgb * (0.55 + 0.45 * ndl);
+    float3 rgb = mix(lit, tex.rgb * lit, (U.use_texture > 0.5) ? 0.85 : 0.0);
+    /* Slot bias so bind is observable in smokes / frame dumps */
+    rgb += float3(float(R.drawSlot) * 0.01, float(R.family) * 0.02, float(R.refIndex) * 0.015);
+    return float4(rgb, tint.a);
+}
