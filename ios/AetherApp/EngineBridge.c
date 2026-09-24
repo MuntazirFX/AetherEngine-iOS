@@ -298,6 +298,7 @@ void engine_player_set_crouching(bool crouching) {
 }
 int engine_player_hull_index(void) { return (int)g_player.hull_index; }
 float engine_player_eye_height(void) { return g_player.eye_height; }
+int engine_player_in_water(void) { return g_player.in_water ? 1 : 0; }
 
 /* ---------- Collision ---------- */
 int engine_collision_ready(void) {
@@ -308,6 +309,11 @@ int engine_collision_clipnode_count(void) {
 }
 int engine_collision_hull_root(int hull_index) {
     return g_collision ? (int)aether_collision_hull_root(g_collision, hull_index) : -1;
+}
+int engine_collision_point_contents(float x, float y, float z, int hull_index) {
+    if (!g_collision) return -1; /* AETHER_CONTENTS_EMPTY */
+    aether_vec3_t p = { x, y, z };
+    return (int)aether_collision_point_contents(g_collision, p, hull_index);
 }
 int engine_collision_point_in_solid(float x, float y, float z, int hull_index) {
     if (!g_collision) return 0;
@@ -881,7 +887,19 @@ int engine_bsp_mesh_build(const char *vp) {
 int engine_bsp_mesh_build_synthetic(void) {
     aether_bsp_t *b = aether_bsp_create_synthetic_room();
     if (!b) return 0;
-    return bridge_activate_bsp(b, true);
+    int ok = bridge_activate_bsp(b, true);
+    if (ok) {
+        /* Align render water plane with synthetic CONTENTS_WATER pool (+Y). */
+        aether_water_t *w = bridge_water();
+        if (w) {
+            aether_water_set_enabled(w, true);
+            (void)aether_water_set_origin(w, AETHER_SYNTH_WATER_ORIGIN_X,
+                                          AETHER_SYNTH_WATER_ORIGIN_Y);
+            (void)aether_water_set_height(w, AETHER_SYNTH_WATER_SURFACE_Z);
+            (void)aether_water_set_size(w, AETHER_SYNTH_WATER_HALF_SIZE);
+        }
+    }
+    return ok;
 }
 
 int engine_bsp_mesh_build_or_synthetic(const char *vpath) {
