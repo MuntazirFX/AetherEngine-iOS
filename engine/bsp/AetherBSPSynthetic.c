@@ -144,15 +144,28 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
         faces[i].side = 0;
         faces[i].first_edge = i * 4;
         faces[i].num_edges = 4;
-        faces[i].texinfo = 0;
-        faces[i].styles[0] = faces[i].styles[1] = faces[i].styles[2] = faces[i].styles[3] = 255;
-        faces[i].light_offset = -1;
+        faces[i].texinfo = (u16)(i % 2); /* alternate two texinfos */
+        faces[i].styles[0] = 0;
+        faces[i].styles[1] = faces[i].styles[2] = faces[i].styles[3] = 255;
+        faces[i].light_offset = (i32)(i * 3); /* 1 RGB sample per face */
     }
 
-    aether_bsp_texinfo_t texinfo;
-    memset(&texinfo, 0, sizeof texinfo);
-    texinfo.vecs[0][0] = 1.f;
-    texinfo.vecs[1][1] = 1.f;
+    aether_bsp_texinfo_t texinfos[2];
+    memset(texinfos, 0, sizeof texinfos);
+    /* Floor/ceil style: XY axes */
+    texinfos[0].vecs[0][0] = 1.f;
+    texinfos[0].vecs[1][1] = 1.f;
+    /* Wall style: XZ axes */
+    texinfos[1].vecs[0][0] = 1.f;
+    texinfos[1].vecs[1][2] = 1.f;
+
+    /* Per-face RGB lighting samples (6 faces × 3 bytes). */
+    u8 lighting[18];
+    for (int i = 0; i < 6; ++i) {
+        lighting[i*3+0] = (u8)(80 + i * 25);
+        lighting[i*3+1] = (u8)(70 + i * 20);
+        lighting[i*3+2] = (u8)(60 + i * 15);
+    }
 
     aether_bsp_miptex_t mip;
     memset(&mip, 0, sizeof mip);
@@ -182,20 +195,23 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     /* leaf 0 — solid (GoldSrc convention) */
     leaves[0].contents = -2; /* AETHER_CONTENTS_SOLID */
     leaves[0].vis_offset = -1;
-    /* leaf 1 — west half (x < 0) */
+    /* leaf 1 — west half (x < 0): PVS sees leaf1+leaf2 (bits 0x06) */
     leaves[1].contents = -1; /* AETHER_CONTENTS_EMPTY */
-    leaves[1].vis_offset = -1; /* stub: all empty leaves visible */
+    leaves[1].vis_offset = 0;
     leaves[1].mins[0] = -256; leaves[1].mins[1] = -256; leaves[1].mins[2] = 0;
     leaves[1].maxs[0] =    0; leaves[1].maxs[1] =  256; leaves[1].maxs[2] = 128;
     leaves[1].first_marksurface = 0;
     leaves[1].num_marksurfaces = 4;
-    /* leaf 2 — east half (x >= 0) */
+    /* leaf 2 — east half (x >= 0): PVS sees only leaf2 (bits 0x04) — asymmetric stub */
     leaves[2].contents = -1;
-    leaves[2].vis_offset = -1;
+    leaves[2].vis_offset = 1;
     leaves[2].mins[0] =    0; leaves[2].mins[1] = -256; leaves[2].mins[2] = 0;
     leaves[2].maxs[0] =  256; leaves[2].maxs[1] =  256; leaves[2].maxs[2] = 128;
     leaves[2].first_marksurface = 4;
     leaves[2].num_marksurfaces = 4;
+
+    /* Multi-leaf PVS stub: 3 leaves → 1 byte/row. Non-zero byte = raw (no RLE). */
+    u8 visbits[2] = { 0x06, 0x04 };
 
     /* Clipnodes: Quake/GoldSrc layout -- children[0]=front(+), children[1]=back(-);
      * negative child = contents (EMPTY=-1, SOLID=-2, WATER=-3).
@@ -278,13 +294,15 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     u32 edges_sz = (u32)sizeof(edges);
     u32 surf_sz = (u32)sizeof(surfedges);
     u32 faces_sz = (u32)sizeof(faces);
-    u32 texinfo_sz = (u32)sizeof(texinfo);
+    u32 texinfo_sz = (u32)sizeof(texinfos);
+    u32 lighting_sz = (u32)sizeof(lighting);
+    u32 vis_sz = (u32)sizeof(visbits);
     u32 models_sz = (u32)sizeof(model);
     u32 nodes_sz = (u32)sizeof(nodes);
     u32 leaves_sz = (u32)sizeof(leaves);
     u32 mark_sz = (u32)sizeof(marksurfaces);
     u32 clip_sz = (u32)sizeof(clipnodes);
-    /* VIS lump left empty; leaf.vis_offset = -1 means "all empty leaves visible". */
+    /* VIS + LIGHTING lumps filled for PVS decompress + lightmap UV bake paths. */
 
     const u32 header = 4u + (u32)AETHER_BSP_LUMP_COUNT * 8u;
     u32 offsets[AETHER_BSP_LUMP_COUNT];
@@ -298,9 +316,11 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     PLACE(AETHER_BSP_LUMP_PLANES, planes_sz);
     PLACE(AETHER_BSP_LUMP_TEXTURES, tex_sz);
     PLACE(AETHER_BSP_LUMP_VERTICES, verts_sz);
+    PLACE(AETHER_BSP_LUMP_VISIBILITY, vis_sz);
     PLACE(AETHER_BSP_LUMP_NODES, nodes_sz);
     PLACE(AETHER_BSP_LUMP_TEXINFO, texinfo_sz);
     PLACE(AETHER_BSP_LUMP_FACES, faces_sz);
+    PLACE(AETHER_BSP_LUMP_LIGHTING, lighting_sz);
     PLACE(AETHER_BSP_LUMP_CLIPNODES, clip_sz);
     PLACE(AETHER_BSP_LUMP_LEAVES, leaves_sz);
     PLACE(AETHER_BSP_LUMP_MARKSURFACES, mark_sz);
@@ -328,8 +348,10 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     }
     memcpy(buf + offsets[AETHER_BSP_LUMP_VERTICES], verts, verts_sz);
     memcpy(buf + offsets[AETHER_BSP_LUMP_NODES], nodes, nodes_sz);
-    memcpy(buf + offsets[AETHER_BSP_LUMP_TEXINFO], &texinfo, texinfo_sz);
+    memcpy(buf + offsets[AETHER_BSP_LUMP_VISIBILITY], visbits, vis_sz);
+    memcpy(buf + offsets[AETHER_BSP_LUMP_TEXINFO], texinfos, texinfo_sz);
     memcpy(buf + offsets[AETHER_BSP_LUMP_FACES], faces, faces_sz);
+    memcpy(buf + offsets[AETHER_BSP_LUMP_LIGHTING], lighting, lighting_sz);
     memcpy(buf + offsets[AETHER_BSP_LUMP_CLIPNODES], clipnodes, clip_sz);
     memcpy(buf + offsets[AETHER_BSP_LUMP_LEAVES], leaves, leaves_sz);
     {
@@ -351,7 +373,7 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     if (!bsp) return NULL;
 
     aether_log(AETHER_LOG_INFO, "bsp-synth",
-               "demo room: %u verts, %u faces, %u planes, %u nodes, %u leaves, %u clipnodes",
+               "demo room: %u verts, %u faces, %u planes, %u nodes, %u leaves, %u clipnodes (VIS+LIGHTING)",
                aether_bsp_vertex_count(bsp),
                aether_bsp_face_count(bsp),
                aether_bsp_plane_count(bsp),

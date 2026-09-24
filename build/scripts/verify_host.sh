@@ -124,4 +124,17 @@ grep -q "aether_net_client_connect" engine/net/AetherNetClient.h || fail "missin
 grep -q "engine_map_load" ios/AetherApp/EngineBridge.h || fail "missing engine_map_load"
 ok "STEP 3–7 + batch map/audio/ci API symbols present"
 
+grep -q "aether_lightmap_unpack_uvs_from_bsp" engine/render/AetherLightmap.h || fail "missing lightmap unpack_uvs"
+grep -q "aether_bsp_vis_encode_pvs_row" engine/bsp/AetherBSPVis.h || fail "missing vis encode_pvs"
+grep -q "aether_audio_play_wav_data" engine/audio/AetherAudio.h || fail "missing play_wav_data"
+grep -q "aether_decals_copy_quads" engine/render/AetherDecal.h || fail "missing decals_copy_quads"
+grep -q "aether_net_snapshot_apply_hud" engine/net/AetherNetSnapshot.h || fail "missing snapshot apply_hud"
+grep -q "aether_dyn_lights_apply_mesh_tint" engine/render/AetherDynLight.h || fail "missing dynlight mesh tint"
+grep -q "aether_sprite_copy_quad" engine/render/AetherSprite.h || fail "missing sprite_copy_quad"
+grep -q "aether_player_tick_fire" engine/player/AetherPlayerDamage.h || fail "missing tick_fire"
+grep -q "aether_frustum_aabb_visible" engine/render/AetherFrustum.h || fail "missing frustum aabb"
+grep -q "engine_decals_copy_quads" ios/AetherApp/EngineBridge.h || fail "missing bridge decals_copy_quads"
+ok "batch UV/WAV/decals/net API symbols present"
+
+
 info "All host verification checks passed."

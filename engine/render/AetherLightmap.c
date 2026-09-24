@@ -251,7 +251,12 @@ aether_result_t aether_lightmap_bake_from_bsp(aether_lightmap_t *lm,
     if (!lighting || lighting_sz < 3 || face_count == 0) {
         aether_log(AETHER_LOG_INFO, "lightmap",
                    "no LIGHTING lump — procedural stub path");
-        return aether_lightmap_bake_mesh_stub(lm, mesh);
+        aether_result_t r = aether_lightmap_bake_mesh_stub(lm, mesh);
+        if (r != AETHER_OK) return r;
+        /* Still unpack texinfo LUV when face_ranges exist (real UV layout). */
+        if (aether_bsp_texinfo_count(bsp) > 0 && mesh->face_ranges && mesh->face_count > 0)
+            (void)aether_lightmap_unpack_uvs_from_bsp(lm, bsp, mesh);
+        return AETHER_OK;
     }
 
     /* Atlas: one tile per face, sample first RGB from each face light_offset. */
@@ -295,9 +300,87 @@ aether_result_t aether_lightmap_bake_from_bsp(aether_lightmap_t *lm,
     lm->stub = false;
     lm->face_tiles = tiles;
     lm->enabled = true;
-    aether_result_t uv = aether_lightmap_assign_mesh_uvs(lm, mesh);
+    /* Prefer texinfo-based LUV unpack when present; else face-run tiling. */
+    aether_result_t uv;
+    if (aether_bsp_texinfo_count(bsp) > 0 && mesh->face_ranges && mesh->face_count > 0)
+        uv = aether_lightmap_unpack_uvs_from_bsp(lm, bsp, mesh);
+    else
+        uv = aether_lightmap_assign_mesh_uvs(lm, mesh);
     aether_log(AETHER_LOG_INFO, "lightmap",
-               "baked from BSP LIGHTING lump (%u bytes, %u faces) stub=0",
-               lighting_sz, face_count);
+               "baked from BSP LIGHTING lump (%u bytes, %u faces) stub=0 texinfo_uv=%d",
+               lighting_sz, face_count,
+               (aether_bsp_texinfo_count(bsp) > 0 && mesh->face_ranges) ? 1 : 0);
     return uv;
+}
+
+aether_result_t aether_lightmap_unpack_uvs_from_bsp(aether_lightmap_t *lm,
+                                                    const aether_bsp_t *bsp,
+                                                    aether_mesh_t *mesh) {
+    if (!lm || !bsp || !mesh || !mesh->vertices || mesh->vertex_count == 0)
+        return AETHER_ERR_INVALID_ARG;
+    if (!mesh->face_ranges || mesh->face_count == 0)
+        return aether_lightmap_assign_mesh_uvs(lm, mesh);
+
+    u32 face_count = mesh->face_count;
+    if (face_count > aether_bsp_face_count(bsp))
+        face_count = aether_bsp_face_count(bsp);
+    if (face_count == 0) return aether_lightmap_assign_mesh_uvs(lm, mesh);
+
+    u32 tiles = face_count;
+    u32 cols = ceil_sqrt_u32(tiles);
+    u32 rows = (tiles + cols - 1u) / cols;
+    if (rows == 0) rows = 1;
+    f32 pad = 0.02f;
+    u32 unpacked = 0;
+
+    for (u32 fi = 0; fi < face_count; ++fi) {
+        const aether_mesh_face_range_t *fr = &mesh->face_ranges[fi];
+        if (fr->vertex_count == 0) continue;
+        const aether_bsp_face_t *face = aether_bsp_face_at(bsp, fi);
+        const aether_bsp_texinfo_t *ti =
+            face ? aether_bsp_texinfo_at(bsp, face->texinfo) : NULL;
+
+        f32 su[4] = {1,0,0,0}, sv[4] = {0,1,0,0};
+        if (ti) {
+            for (int k = 0; k < 4; ++k) {
+                su[k] = ti->vecs[0][k];
+                sv[k] = ti->vecs[1][k];
+            }
+        }
+
+        f32 umin = 1e30f, umax = -1e30f, vmin = 1e30f, vmax = -1e30f;
+        for (u32 v = 0; v < fr->vertex_count; ++v) {
+            const aether_mesh_vertex_t *vtx = &mesh->vertices[fr->first_vertex + v];
+            f32 u = su[0]*vtx->x + su[1]*vtx->y + su[2]*vtx->z + su[3];
+            f32 vv = sv[0]*vtx->x + sv[1]*vtx->y + sv[2]*vtx->z + sv[3];
+            if (u < umin) umin = u;
+            if (u > umax) umax = u;
+            if (vv < vmin) vmin = vv;
+            if (vv > vmax) vmax = vv;
+        }
+        f32 ud = umax - umin; if (ud < 1e-3f) ud = 1.f;
+        f32 vd = vmax - vmin; if (vd < 1e-3f) vd = 1.f;
+
+        u32 col = fi % cols;
+        u32 row = fi / cols;
+        f32 u0 = ((f32)col + pad) / (f32)cols;
+        f32 v0 = ((f32)row + pad) / (f32)rows;
+        f32 du = (1.f - 2.f * pad) / (f32)cols;
+        f32 dv = (1.f - 2.f * pad) / (f32)rows;
+
+        for (u32 v = 0; v < fr->vertex_count; ++v) {
+            aether_mesh_vertex_t *vtx = &mesh->vertices[fr->first_vertex + v];
+            f32 u = (su[0]*vtx->x + su[1]*vtx->y + su[2]*vtx->z + su[3] - umin) / ud;
+            f32 vv = (sv[0]*vtx->x + sv[1]*vtx->y + sv[2]*vtx->z + sv[3] - vmin) / vd;
+            vtx->lu = u0 + clampf(u, 0.f, 1.f) * du;
+            vtx->lv = v0 + clampf(vv, 0.f, 1.f) * dv;
+        }
+        ++unpacked;
+    }
+
+    if (lm->face_tiles == 0) lm->face_tiles = tiles;
+    aether_log(AETHER_LOG_INFO, "lightmap",
+               "unpacked LUV from texinfo for %u/%u faces (%ux%u tiles)",
+               unpacked, face_count, cols, rows);
+    return unpacked > 0 ? AETHER_OK : aether_lightmap_assign_mesh_uvs(lm, mesh);
 }

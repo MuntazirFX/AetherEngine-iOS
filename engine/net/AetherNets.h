@@ -11,5 +11,6 @@
 #include "AetherNetServer.h"
 #include "AetherNetScoreboard.h"
 #include "AetherNetChat.h"
+#include "AetherNetSnapshot.h"
 
 #endif /* AETHER_NETS_H */

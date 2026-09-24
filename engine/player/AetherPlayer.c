@@ -110,6 +110,8 @@ void aether_player_init(aether_player_t *p) {
     p->fall_velocity_z = 0.0f;
     p->pending_fall_damage = 0.0f;
     p->view_punch_pitch = 0.0f;
+    p->on_fire = false;
+    p->in_radiation = false;
     p->hull_index  = 1;
     p->step_height = AETHER_DEFAULT_STEP_HEIGHT;
 }
@@ -330,6 +332,7 @@ void aether_player_update(aether_player_t *p,
 
     /* Re-sample waterlevel after move (may have exited/entered). */
     player_refresh_water(p, collision);
+    aether_player_refresh_hazards(p, collision);
     player_tick_air(p, dt);
 
     /* 7b. Fall impact on land / soft water entry --- */
@@ -381,4 +384,25 @@ void aether_player_update(aether_player_t *p,
         if (fabsf(p->view_punch_pitch) < 1e-4f)
             p->view_punch_pitch = 0.0f;
     }
+}
+
+
+void aether_player_set_on_fire(aether_player_t *p, bool on_fire) {
+    if (p) p->on_fire = on_fire;
+}
+bool aether_player_is_on_fire(const aether_player_t *p) {
+    return p ? p->on_fire : false;
+}
+void aether_player_set_in_radiation(aether_player_t *p, bool in_rad) {
+    if (p) p->in_radiation = in_rad;
+}
+bool aether_player_is_in_radiation(const aether_player_t *p) {
+    return p ? p->in_radiation : false;
+}
+
+void aether_player_refresh_hazards(aether_player_t *p, const aether_collision_t *collision) {
+    if (!p || !collision) return;
+    i32 c = aether_collision_point_contents(collision, p->position, p->hull_index);
+    if (c == AETHER_CONTENTS_LAVA) p->on_fire = true;
+    if (c == AETHER_CONTENTS_SLIME) p->in_radiation = true;
 }

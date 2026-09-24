@@ -378,6 +378,21 @@ int  engine_load_game(const char *filepath);
 
 /* ---------- Net listen/connect smoke ---------- */
 int  engine_net_listen(int port);
+/* ---------- Batch: UV/WAV/decals/net/hazards ---------- */
+int  engine_audio_play_wav_data(const unsigned char *data, int size, float volume);
+int  engine_decals_copy_quads(float *out_xyz_uv_fade_rgba, int max_verts);
+int  engine_sprite_copy_quad(float x, float y, float z, float w, float h,
+                             float *out_xyz_uv_rgba, int max_verts);
+int  engine_dynlights_apply_mesh_tint(float *out_rgb, int max_floats);
+int  engine_dynlights_modulate_lightmap(void);
+int  engine_net_snapshot_demo_apply(unsigned tick);
+int  engine_net_snapshot_scoreboard_count(void);
+int  engine_player_set_on_fire(int on);
+int  engine_player_is_on_fire(void);
+int  engine_player_set_in_radiation(int on);
+int  engine_player_is_in_radiation(void);
+int  engine_lightmap_unpack_uvs_active(void);
+
 int  engine_net_connect_localhost(int port);
 int  engine_net_handshake_tick(float dt); /* pump server+client; 1 if connected */
 int  engine_net_is_connected(void);

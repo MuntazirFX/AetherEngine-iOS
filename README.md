@@ -86,6 +86,32 @@ One PR advances map load, entity spawn from file BSPs, audio platform hooks, lig
 - Net is handshake smoke only (no gameplay snapshots yet)
 - IPA still requires macOS + Xcode via workflow_dispatch
 
+## UV / WAV / Decals / Net batch (`continue/batch-uv-wav-decals-net`)
+
+One PR advances lightmap UV unpack, VIS PVS stubs, WAV stream playback, projected decals, snapshot HUD, dyn-light tint, sprite/MDL Metal stubs, hazard ticks, and frustum cull — still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Lightmap UV unpack | **done** | `aether_lightmap_unpack_uvs_from_bsp` uses face texinfo vecs + face_ranges; synthetic has LIGHTING+texinfo |
+| 2 | VIS face bake / visbits | **done** | Synthetic multi-leaf PVS RLE stub (asymmetric); decompress path exercised |
+| 3 | WAV stream play | **done** | `aether_wav_extract_pcm16` + `aether_audio_play_wav_data` → buffer callback |
+| 4 | Projected decal quads | **done / partial** | `aether_decals_copy_quads` (6 verts/decal) + Metal pipeline draw |
+| 5 | Snapshot → scoreboard/chat | **done** | `AetherNetSnapshot` encode/decode/apply_hud; bridge demo tick |
+| 6 | Dyn lights vertex/lightmap tint | **done / partial** | sample_rgb + mesh tint buffer + lightmap modulate stub |
+| 7 | MDL / sprite Metal path | **done / partial** | Sprite billboard quads → Metal; MDL path already present (needs user `.mdl`) |
+| 8 | Fire / radiation ticks | **done** | Player flags + LAVA/SLIME refresh; bridge ticks like drown |
+| 9 | Frustum AABB cull | **done** | `AetherFrustum` + `aether_bsp_vis_apply_frustum` on leaf AABBs |
+| 10 | README + gaps | **done** | This table |
+
+### Known gaps after UV/WAV/decals/net batch
+- Real maps still required for full GoldSrc lightmap extents / style animations
+- Decal projection is normal-aligned billboard quads (not clipped to world triangles)
+- Dyn-light Metal fragment uniform array not yet wired (C tint + lightmap modulate only)
+- Snapshot HUD is local apply / demo tick — not yet driven by live UDP gameplay
+- Sprite/MDL draw needs user assets for textured models; procedural sprite stub only
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+
 
 ## Build Status
 - [x] STEP 1: Core modules
@@ -109,7 +135,7 @@ One PR advances map load, entity spawn from file BSPs, audio platform hooks, lig
 - [x] STEP 4: iOS application — App/settings/game-select/host_frame wired into Metal loop (partial: playable demo loop exists; full campaign load still needs user assets)
 - [x] STEP 5: 5-game configuration — manifests load_all + Dashboard selection → launch/FS roots end-to-end (partial: empty dirs fall back to synthetic BSP)
 - [x] STEP 6: Touch/Input/Settings — touch hold buttons, settings→cvars/audio/look, aether.cfg persistence (partial: no controller profile UI yet)
-- [x] STEP 7: Renderer/Audio/Filesystem — FS map load + WAV header/beep + lightmap-from-BSP when present (partial: no full WAV body decode; decal GPU still thin)
+- [x] STEP 7: Renderer/Audio/Filesystem — FS map load + WAV stream/beep + lightmap UV unpack + projected decals (partial: decal not world-clipped; dynlight GPU thin)
 - [x] STEP 8: Build system — CMake host script + XcodeGen Info.plist path + verify_host path checks (partial: iOS IPA still requires macOS/Xcode)
 - [x] STEP 9: GitHub Actions ARM64 — `verify.yml` always `verify_host`; `build-arm64.yml` splits verify_host (PR) vs IPA (`workflow_dispatch` only)
 - [x] STEP 10: Complete verification — expanded `host_smoke` + verify_host API greps; README marks honest

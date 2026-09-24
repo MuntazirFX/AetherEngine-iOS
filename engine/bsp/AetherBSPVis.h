@@ -67,6 +67,19 @@ u32 aether_bsp_vis_cull_mesh(const aether_bsp_t *bsp,
                              u32 out_cap,
                              aether_bsp_vis_stats_t *out_stats);
 
+/* Encode a GoldSrc-style RLE PVS row for `leaf_count` leaves.
+ * `visible_bits` is a bitset (1 bit per leaf). Returns bytes written into out. */
+u32 aether_bsp_vis_encode_pvs_row(const u8 *visible_bits, u32 leaf_count,
+                                  u8 *out, u32 out_cap);
+
+/* Frustum AABB cull: clear face_bits for faces whose owning leaf AABB is outside.
+ * frustum may be NULL (no-op). Returns remaining visible face count. */
+struct aether_frustum;
+u32 aether_bsp_vis_apply_frustum(const aether_bsp_t *bsp,
+                                 const struct aether_frustum *frustum,
+                                 u8 *face_bits,
+                                 u32 face_count);
+
 #ifdef __cplusplus
 }
 #endif

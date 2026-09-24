@@ -57,6 +57,12 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     var particleDepthState: MTLDepthStencilState?
     var particleBuffer:   MTLBuffer?
     var particleCount:    Int = 0
+    var decalQuadPipeline: MTLRenderPipelineState?
+    var spriteQuadPipeline: MTLRenderPipelineState?
+    var decalQuadBuffer: MTLBuffer?
+    var spriteQuadBuffer: MTLBuffer?
+    var decalQuadCount: Int = 0
+    var spriteQuadCount: Int = 0
     private let maxParticleUpload = 512
     private var particleSeedOrigin = simd_float3(0, 0, 64)
     private var particleRespawnAccum: Float = 0
@@ -101,6 +107,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         buildSkyPipeline(mtkView: mtkView)
         buildWaterPipeline(mtkView: mtkView)
         buildFogPipeline(mtkView: mtkView)
+        buildDecalSpritePipelines(mtkView: mtkView)
         buildDepthState()
         buildSampler()
 
@@ -519,6 +526,108 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         engine_renderer_resize(UInt32(size.width), UInt32(size.height))
     }
 
+
+    private func buildDecalSpritePipelines(mtkView: MTKView) {
+        guard let lib = device.makeDefaultLibrary() else { return }
+        if let vfn = lib.makeFunction(name: "aether_decal_quad_vertex"),
+           let ffn = lib.makeFunction(name: "aether_decal_quad_fragment") {
+            let vd = MTLVertexDescriptor()
+            vd.attributes[0].format = .float3; vd.attributes[0].offset = 0;  vd.attributes[0].bufferIndex = 0
+            vd.attributes[1].format = .float2; vd.attributes[1].offset = 12; vd.attributes[1].bufferIndex = 0
+            vd.attributes[2].format = .float;  vd.attributes[2].offset = 20; vd.attributes[2].bufferIndex = 0
+            vd.attributes[3].format = .float4; vd.attributes[3].offset = 24; vd.attributes[3].bufferIndex = 0
+            vd.layouts[0].stride = 40
+            vd.layouts[0].stepFunction = .perVertex
+            let d = MTLRenderPipelineDescriptor()
+            d.vertexFunction = vfn; d.fragmentFunction = ffn; d.vertexDescriptor = vd
+            d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+            d.colorAttachments[0].isBlendingEnabled = true
+            d.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+            d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+            d.depthAttachmentPixelFormat = mtkView.depthStencilPixelFormat
+            do { decalQuadPipeline = try device.makeRenderPipelineState(descriptor: d) }
+            catch { print("[MetalRenderer] decal quad pipeline error: \(error)") }
+        }
+        if let vfn = lib.makeFunction(name: "aether_sprite_quad_vertex"),
+           let ffn = lib.makeFunction(name: "aether_sprite_quad_fragment") {
+            let vd = MTLVertexDescriptor()
+            vd.attributes[0].format = .float3; vd.attributes[0].offset = 0;  vd.attributes[0].bufferIndex = 0
+            vd.attributes[1].format = .float2; vd.attributes[1].offset = 12; vd.attributes[1].bufferIndex = 0
+            vd.attributes[2].format = .float4; vd.attributes[2].offset = 20; vd.attributes[2].bufferIndex = 0
+            vd.layouts[0].stride = 36
+            vd.layouts[0].stepFunction = .perVertex
+            let d = MTLRenderPipelineDescriptor()
+            d.vertexFunction = vfn; d.fragmentFunction = ffn; d.vertexDescriptor = vd
+            d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+            d.colorAttachments[0].isBlendingEnabled = true
+            d.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+            d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+            d.depthAttachmentPixelFormat = mtkView.depthStencilPixelFormat
+            do { spriteQuadPipeline = try device.makeRenderPipelineState(descriptor: d) }
+            catch { print("[MetalRenderer] sprite quad pipeline error: \(error)") }
+        }
+    }
+
+    private func syncAndDrawDecalQuads(encoder enc: MTLRenderCommandEncoder,
+                                       viewMat: simd_float4x4, projMat: simd_float4x4) {
+        guard let pipeline = decalQuadPipeline else { return }
+        let maxV = 256 * 6
+        var packed = [Float](repeating: 0, count: maxV * 10)
+        let n = packed.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_decals_copy_quads(buf.baseAddress, Int32(maxV)))
+        }
+        decalQuadCount = Int(n)
+        guard decalQuadCount >= 6 else { return }
+        let bytes = decalQuadCount * 40
+        if decalQuadBuffer == nil || decalQuadBuffer!.length < bytes {
+            decalQuadBuffer = device.makeBuffer(length: max(bytes, 4096), options: .storageModeShared)
+        }
+        if let buf = decalQuadBuffer {
+            packed.withUnsafeBytes { raw in
+                if let base = raw.baseAddress { buf.contents().copyMemory(from: base, byteCount: bytes) }
+            }
+        }
+        engine_renderer_draw_feature(Int32(ENGINE_CMD_DRAW_DECALS))
+        struct DecalUniforms { var view: simd_float4x4; var proj: simd_float4x4 }
+        var U = DecalUniforms(view: viewMat, proj: projMat)
+        enc.setRenderPipelineState(pipeline)
+        if let soft = particleDepthState { enc.setDepthStencilState(soft) }
+        if let vb = decalQuadBuffer { enc.setVertexBuffer(vb, offset: 0, index: 0) }
+        enc.setVertexBytes(&U, length: MemoryLayout<DecalUniforms>.stride, index: 1)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: decalQuadCount)
+        if let ds = depthState { enc.setDepthStencilState(ds) }
+    }
+
+    private func syncAndDrawSpriteStub(encoder enc: MTLRenderCommandEncoder,
+                                       viewMat: simd_float4x4, projMat: simd_float4x4,
+                                       eye: simd_float3) {
+        guard let pipeline = spriteQuadPipeline else { return }
+        var packed = [Float](repeating: 0, count: 6 * 9)
+        let n = packed.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_sprite_copy_quad(eye.x + 40, eye.y, eye.z + 16, 20, 20,
+                                          buf.baseAddress, 6))
+        }
+        spriteQuadCount = Int(n)
+        guard spriteQuadCount >= 6 else { return }
+        let bytes = spriteQuadCount * 36
+        if spriteQuadBuffer == nil || spriteQuadBuffer!.length < bytes {
+            spriteQuadBuffer = device.makeBuffer(length: max(bytes, 512), options: .storageModeShared)
+        }
+        if let buf = spriteQuadBuffer {
+            packed.withUnsafeBytes { raw in
+                if let base = raw.baseAddress { buf.contents().copyMemory(from: base, byteCount: bytes) }
+            }
+        }
+        struct DecalUniforms { var view: simd_float4x4; var proj: simd_float4x4 }
+        var U = DecalUniforms(view: viewMat, proj: projMat)
+        enc.setRenderPipelineState(pipeline)
+        if let soft = particleDepthState { enc.setDepthStencilState(soft) }
+        if let vb = spriteQuadBuffer { enc.setVertexBuffer(vb, offset: 0, index: 0) }
+        enc.setVertexBytes(&U, length: MemoryLayout<DecalUniforms>.stride, index: 1)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: spriteQuadCount)
+        if let ds = depthState { enc.setDepthStencilState(ds) }
+    }
+
     func draw(in view: MTKView) {
         let now = CACurrentMediaTime()
         var dt = Float(now - lastTime)
@@ -645,6 +754,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
         // ---- Fog (fullscreen tint from AetherFog) ----
         syncAndDrawFog(encoder: enc)
+        syncAndDrawDecalQuads(encoder: enc, viewMat: viewMat, projMat: projMat)
+        syncAndDrawSpriteStub(encoder: enc, viewMat: viewMat, projMat: projMat, eye: eyeV)
 
         enc.endEncoding()
         engine_renderer_draw_hud()

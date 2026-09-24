@@ -103,3 +103,16 @@ u32 aether_wav_write_tone_pcm(u8 *out, u32 cap, u32 sample_rate, u16 channels,
     }
     return total;
 }
+
+u32 aether_wav_extract_pcm16(const u8 *data, u32 size, const aether_wav_info_t *info,
+                             i16 *out_samples, u32 max_samples) {
+    if (!data || !info || !info->valid || !out_samples || max_samples == 0) return 0;
+    if (info->audio_format != 1 || info->bits_per_sample != 16) return 0;
+    if (info->data_offset >= size) return 0;
+    u32 avail = size - info->data_offset;
+    if (avail > info->data_size) avail = info->data_size;
+    u32 samples = avail / 2u;
+    if (samples > max_samples) samples = max_samples;
+    memcpy(out_samples, data + info->data_offset, samples * 2u);
+    return samples;
+}
