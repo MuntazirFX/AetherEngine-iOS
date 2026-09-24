@@ -286,3 +286,64 @@ fragment float4 aether_fog_fragment(FogVertexOut in [[stage_in]]) {
     c.a *= vignette;
     return c;
 }
+
+/* ============ Projected decal quads (from AetherDecal pool) ============ */
+struct DecalQuadIn {
+    float3 position [[attribute(0)]];
+    float2 uv       [[attribute(1)]];
+    float  fade     [[attribute(2)]];
+    float4 color    [[attribute(3)]];
+};
+struct DecalQuadOut {
+    float4 position [[position]];
+    float2 uv;
+    float4 color;
+};
+struct DecalUniforms {
+    float4x4 view;
+    float4x4 proj;
+};
+vertex DecalQuadOut aether_decal_quad_vertex(DecalQuadIn in [[stage_in]],
+                                              constant DecalUniforms &U [[buffer(1)]]) {
+    DecalQuadOut out;
+    out.position = U.proj * U.view * float4(in.position, 1.0);
+    out.uv = in.uv;
+    out.color = float4(in.color.rgb, in.color.a * in.fade);
+    return out;
+}
+fragment float4 aether_decal_quad_fragment(DecalQuadOut in [[stage_in]]) {
+    float2 d = in.uv * 2.0 - 1.0;
+    float soft = 1.0 - smoothstep(0.55, 1.0, length(d));
+    float4 c = in.color;
+    c.a *= soft;
+    if (c.a < 0.02) discard_fragment();
+    return c;
+}
+
+/* ============ Sprite billboard stub ============ */
+struct SpriteQuadIn {
+    float3 position [[attribute(0)]];
+    float2 uv       [[attribute(1)]];
+    float4 color    [[attribute(2)]];
+};
+struct SpriteQuadOut {
+    float4 position [[position]];
+    float2 uv;
+    float4 color;
+};
+vertex SpriteQuadOut aether_sprite_quad_vertex(SpriteQuadIn in [[stage_in]],
+                                                constant DecalUniforms &U [[buffer(1)]]) {
+    SpriteQuadOut out;
+    out.position = U.proj * U.view * float4(in.position, 1.0);
+    out.uv = in.uv;
+    out.color = in.color;
+    return out;
+}
+fragment float4 aether_sprite_quad_fragment(SpriteQuadOut in [[stage_in]]) {
+    float2 d = in.uv * 2.0 - 1.0;
+    float soft = 1.0 - smoothstep(0.7, 1.0, length(d));
+    float4 c = in.color;
+    c.a *= soft;
+    if (c.a < 0.02) discard_fragment();
+    return c;
+}

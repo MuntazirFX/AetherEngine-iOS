@@ -40,6 +40,25 @@ u32 aether_dyn_lights_active_count(const aether_dyn_lights_t *dl);
 u32 aether_dyn_lights_copy_render(const aether_dyn_lights_t *dl,
                                   aether_dyn_light_vertex_t *out, u32 max_out);
 
+/* Sample summed RGB tint at a world point (attenuation by radius). */
+void aether_dyn_lights_sample_rgb(const aether_dyn_lights_t *dl,
+                                  f32 x, f32 y, f32 z,
+                                  f32 out_rgb[3]);
+
+/* Forward decls (full types in AetherBSPGeometry / AetherLightmap). */
+struct aether_mesh;
+struct aether_lightmap;
+
+/* Apply dyn-light tint into per-vertex RGB buffer (3 floats per mesh vertex).
+ * out_rgb length >= vertex_count*3. Returns vertices tinted. */
+u32 aether_dyn_lights_apply_mesh_tint(const aether_dyn_lights_t *dl,
+                                      const struct aether_mesh *mesh,
+                                      f32 *out_rgb, u32 max_floats);
+
+/* Bake a simple additive influence into lightmap atlas samples (host/Metal stub). */
+aether_result_t aether_dyn_lights_modulate_lightmap(const aether_dyn_lights_t *dl,
+                                                    struct aether_lightmap *lm);
+
 #ifdef __cplusplus
 }
 #endif

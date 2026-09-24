@@ -22,13 +22,21 @@ typedef struct aether_decals {
     u32 count;
 } aether_decals_t;
 
-/* Metal slice: center + normal + size + fade = 8 floats */
+/* Metal slice (point): center + normal + size + fade = 8 floats */
 typedef struct aether_decal_vertex {
     f32 x, y, z;
     f32 nx, ny, nz;
     f32 size;
     f32 fade; /* 1..0 over life */
 } aether_decal_vertex_t;
+
+/* Projected / billboard quad vertex for Metal triangles (pos + uv + fade + rgba). */
+typedef struct aether_decal_quad_vertex {
+    f32 x, y, z;
+    f32 u, v;
+    f32 fade;
+    f32 r, g, b, a;
+} aether_decal_quad_vertex_t;
 
 aether_result_t aether_decals_init(aether_decals_t *d);
 aether_result_t aether_decals_add(aether_decals_t *d, const f32 pos[3], const f32 normal[3],
@@ -38,6 +46,11 @@ void aether_decals_clear(aether_decals_t *d);
 u32  aether_decals_active_count(const aether_decals_t *d);
 u32  aether_decals_copy_render(const aether_decals_t *d,
                                aether_decal_vertex_t *out, u32 max_out);
+
+/* Expand each active decal into 6 verts (2 tris) oriented on the surface normal.
+ * Returns vertex count written (multiple of 6). max_out is vertex capacity. */
+u32 aether_decals_copy_quads(const aether_decals_t *d,
+                             aether_decal_quad_vertex_t *out, u32 max_out);
 
 #ifdef __cplusplus
 }

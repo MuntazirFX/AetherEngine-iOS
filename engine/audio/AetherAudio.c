@@ -192,6 +192,7 @@ void aether_audio_flush(aether_audio_t *a) {
 
 
 #include <math.h>
+#include "AetherWav.h"
 
 void aether_audio_set_buffer_callback(aether_audio_t *a,
                                       aether_audio_buffer_fn fn,
@@ -255,5 +256,46 @@ aether_result_t aether_audio_play_beep(aether_audio_t *a, f32 freq_hz,
     /* Also enqueue a logical voice so platform voice callback sees a "beep". */
     (void)aether_audio_play_effect(a, "procedural:beep", volume, false);
     free(pcm);
+    return r;
+}
+
+aether_result_t aether_audio_play_wav_data(aether_audio_t *a,
+                                           const u8 *wav_data, u32 wav_size,
+                                           f32 volume) {
+    if (!a || !wav_data || wav_size < 44) return AETHER_ERR_INVALID_ARG;
+    if (a->state != AETHER_AUDIO_STATE_READY) return AETHER_ERR_NOT_READY;
+    if (volume < 0.f) volume = 0.f;
+    if (volume > 1.f) volume = 1.f;
+
+    aether_wav_info_t info;
+    aether_result_t pr = aether_wav_parse_header(wav_data, wav_size, &info);
+    if (pr != AETHER_OK || !info.valid) return pr != AETHER_OK ? pr : AETHER_ERR_UNSUPPORTED;
+    if (info.audio_format != 1 || info.bits_per_sample != 16 || info.channels == 0)
+        return AETHER_ERR_UNSUPPORTED;
+
+    u32 max_samp = info.data_size / 2u;
+    if (max_samp == 0) return AETHER_ERR_UNSUPPORTED;
+    /* Cap stream body for host safety (~2s @ 44.1k stereo). */
+    if (max_samp > 176400u) max_samp = 176400u;
+    i16 *pcm = (i16 *)malloc(sizeof(i16) * max_samp);
+    if (!pcm) return AETHER_ERR_OUT_OF_MEM;
+    u32 got = aether_wav_extract_pcm16(wav_data, wav_size, &info, pcm, max_samp);
+    if (got == 0) { free(pcm); return AETHER_ERR_UNSUPPORTED; }
+
+    u32 frames = got / info.channels;
+    if (frames == 0) { free(pcm); return AETHER_ERR_UNSUPPORTED; }
+
+    aether_audio_buffer_t buf = {
+        .samples = pcm,
+        .frame_count = frames,
+        .sample_rate = info.sample_rate,
+        .channels = info.channels,
+        .volume = volume,
+    };
+    aether_result_t r = aether_audio_submit_buffer(a, &buf);
+    (void)aether_audio_play_effect(a, "stream:wav", volume, false);
+    free(pcm);
+    aether_log(AETHER_LOG_INFO, "audio",
+               "play_wav_data frames=%u rate=%u ch=%u", frames, info.sample_rate, info.channels);
     return r;
 }

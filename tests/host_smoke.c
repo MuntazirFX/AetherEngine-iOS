@@ -50,6 +50,11 @@
 #include "AetherNetServer.h"
 #include "AetherDecal.h"
 #include "AetherDynLight.h"
+#include "AetherMDLGeometry.h"
+#include "AetherMDL.h"
+#include "AetherFrustum.h"
+#include "AetherSprite.h"
+#include "AetherNetSnapshot.h"
 #include <unistd.h>
 #include "AetherMath.h"
 
@@ -1147,7 +1152,8 @@ int main(void) {
             aether_lightmap_t lm;
             expect(aether_lightmap_init(&lm, 64, 64, 1) == AETHER_OK, "lm_init_batch");
             expect(aether_lightmap_bake_from_bsp(&lm, syn, sm) == AETHER_OK, "lm_bake_from_bsp_synth");
-            expect(aether_lightmap_is_stub(&lm), "lm_stub_when_no_lighting");
+            /* Synthetic now ships LIGHTING+texinfo — bake should be non-stub. */
+            expect(!aether_lightmap_is_stub(&lm), "lm_baked_when_lighting");
             aether_lightmap_shutdown(&lm);
             /* Fixture with lighting lump */
             aether_mesh_t *fm = NULL;
@@ -1245,6 +1251,171 @@ int main(void) {
             aether_net_client_disconnect(cli);
             aether_net_client_destroy(cli);
             aether_net_server_destroy(srv);
+        }
+    }
+
+
+
+    /* ========== batch_uv_wav_decals_net ========== */
+    printf("--- batch_uv_wav_decals_net ---\n");
+    {
+        /* 1. Lightmap UV unpack from texinfo + LIGHTING on synthetic */
+        aether_bsp_t *syn = aether_bsp_create_synthetic_room();
+        expect(syn != NULL, "batch_synth_bsp");
+        expect(aether_bsp_lump_size(syn, AETHER_BSP_LUMP_LIGHTING) >= 3, "batch_synth_lighting");
+        expect(aether_bsp_lump_size(syn, AETHER_BSP_LUMP_VISIBILITY) >= 2, "batch_synth_visbits");
+        expect(aether_bsp_texinfo_count(syn) >= 1, "batch_synth_texinfo");
+        aether_mesh_t *mesh = NULL;
+        expect(aether_mesh_from_bsp(syn, NULL, &mesh) == AETHER_OK && mesh, "batch_mesh");
+        aether_lightmap_t lm;
+        expect(aether_lightmap_init(&lm, 64, 64, 1) == AETHER_OK, "batch_lm_init");
+        expect(aether_lightmap_bake_from_bsp(&lm, syn, mesh) == AETHER_OK, "batch_lm_bake");
+        expect(!aether_lightmap_is_stub(&lm), "batch_lm_not_stub");
+        expect(aether_lightmap_unpack_uvs_from_bsp(&lm, syn, mesh) == AETHER_OK, "batch_lm_unpack_uv");
+        {
+            f32 lu0 = mesh->vertices[0].lu, lv0 = mesh->vertices[0].lv;
+            expect(lu0 >= 0.f && lu0 <= 1.f && lv0 >= 0.f && lv0 <= 1.f, "batch_lm_uv_range");
+        }
+
+        /* 2. VIS uses visbits (asymmetric PVS: east leaf sees fewer faces) */
+        {
+            u32 idx_w[4096], idx_e[4096];
+            aether_bsp_vis_stats_t sw, se;
+            u32 nw = aether_bsp_vis_cull_mesh(syn, mesh, -64.f, 0.f, 40.f,
+                                             AETHER_BSP_VIS_USE_PVS, idx_w, 4096, &sw);
+            u32 ne = aether_bsp_vis_cull_mesh(syn, mesh,  64.f, 0.f, 40.f,
+                                             AETHER_BSP_VIS_USE_PVS, idx_e, 4096, &se);
+            expect(nw > 0 && ne > 0, "batch_vis_indices");
+            expect(sw.view_leaf == 1 && se.view_leaf == 2, "batch_vis_leaves");
+            /* East-only PVS should mark fewer (or equal) faces than west-sees-both. */
+            expect(se.visible_faces <= sw.visible_faces, "batch_vis_asymmetric");
+            const aether_bsp_leaf_t *l1 = aether_bsp_leaf_at(syn, 1);
+            const aether_bsp_leaf_t *l2 = aether_bsp_leaf_at(syn, 2);
+            expect(l1 && l1->vis_offset >= 0 && l2 && l2->vis_offset >= 0, "batch_vis_offsets");
+        }
+
+        /* 9. Frustum AABB cull on leaves/faces */
+        {
+            aether_mat4_t view = aether_mat4_look_at(
+                (aether_vec3_t){0, -400, 64},
+                (aether_vec3_t){0, 0, 64},
+                (aether_vec3_t){0, 0, 1});
+            aether_mat4_t proj = aether_mat4_perspective(1.2f, 1.6f, 1.f, 2000.f);
+            aether_mat4_t vp = aether_mat4_multiply(proj, view);
+            aether_frustum_t fr;
+            aether_frustum_from_view_proj(&fr, &vp);
+            expect(fr.valid, "batch_frustum_valid");
+            f32 mins[3] = {-10, -10, -10}, maxs[3] = {10, 10, 10};
+            expect(aether_frustum_aabb_visible(&fr, mins, maxs), "batch_frustum_near_visible");
+            f32 far_mins[3] = {9000, 9000, 9000}, far_maxs[3] = {9100, 9100, 9100};
+            expect(!aether_frustum_aabb_visible(&fr, far_mins, far_maxs), "batch_frustum_far_culled");
+            u8 bits[64];
+            memset(bits, 1, sizeof bits);
+            u32 fc = aether_bsp_face_count(syn);
+            if (fc > 64) fc = 64;
+            u32 kept = aether_bsp_vis_apply_frustum(syn, &fr, bits, fc);
+            expect(kept > 0 && kept <= fc, "batch_frustum_faces");
+        }
+
+        /* 6. Dyn lights tint mesh / lightmap */
+        {
+            aether_dyn_lights_t dl;
+            expect(aether_dyn_lights_init(&dl) == AETHER_OK, "batch_dl_init");
+            f32 lp[3] = {0, 0, 64}, lc[3] = {1.f, 0.4f, 0.1f};
+            expect(aether_dyn_lights_add(&dl, lp, lc, 200.f, 1.5f) == AETHER_OK, "batch_dl_add");
+            f32 rgb[3];
+            aether_dyn_lights_sample_rgb(&dl, 0, 0, 64, rgb);
+            expect(rgb[0] > 0.5f, "batch_dl_sample");
+            f32 *tint = (f32 *)malloc(sizeof(f32) * mesh->vertex_count * 3u);
+            expect(tint != NULL, "batch_dl_tint_alloc");
+            u32 tn = aether_dyn_lights_apply_mesh_tint(&dl, mesh, tint, mesh->vertex_count * 3u);
+            expect(tn == mesh->vertex_count, "batch_dl_mesh_tint");
+            expect(aether_dyn_lights_modulate_lightmap(&dl, &lm) == AETHER_OK, "batch_dl_modulate_lm");
+            free(tint);
+        }
+
+        aether_lightmap_shutdown(&lm);
+        aether_mesh_free(mesh);
+        aether_bsp_free(syn);
+
+        /* 3. WAV stream via buffer callback */
+        {
+            g_batch_buf_cb = 0;
+            aether_audio_t *au = aether_audio_create();
+            expect(au && aether_audio_init(au) == AETHER_OK, "batch_wav_audio");
+            aether_audio_set_buffer_callback(au, batch_audio_buf_cb, NULL);
+            u8 wav[8192];
+            u32 wn = aether_wav_write_tone_pcm(wav, sizeof wav, 22050, 1, 660.f, 0.08f, 0.4f);
+            expect(wn > 44, "batch_wav_tone");
+            expect(aether_audio_play_wav_data(au, wav, wn, 0.5f) == AETHER_OK, "batch_wav_play");
+            expect(g_batch_buf_cb >= 1, "batch_wav_callback");
+            aether_wav_info_t wi;
+            expect(aether_wav_parse_header(wav, wn, &wi) == AETHER_OK, "batch_wav_hdr");
+            i16 pcm[4096];
+            u32 got = aether_wav_extract_pcm16(wav, wn, &wi, pcm, 4096);
+            expect(got > 100, "batch_wav_extract");
+            aether_audio_shutdown(au);
+            aether_audio_destroy(au);
+        }
+
+        /* 4. Projected decal quads */
+        {
+            aether_decals_t dec;
+            expect(aether_decals_init(&dec) == AETHER_OK, "batch_decal_init");
+            f32 dp[3] = {10, 20, 0}, dn[3] = {0, 0, 1};
+            expect(aether_decals_add(&dec, dp, dn, 24.f, 5.f) == AETHER_OK, "batch_decal_add");
+            aether_decal_quad_vertex_t qv[12];
+            u32 qn = aether_decals_copy_quads(&dec, qv, 12);
+            expect(qn == 6, "batch_decal_quads");
+            expect(qv[0].a > 0.f && qv[0].fade > 0.f, "batch_decal_fade");
+        }
+
+        /* 5. Snapshot → scoreboard/chat HUD bridge */
+        {
+            aether_net_snapshot_t snap;
+            aether_net_snapshot_make_demo(&snap, 42, 2.1f);
+            u8 pkt[1024];
+            u32 psz = aether_net_snapshot_encode(&snap, pkt, sizeof pkt);
+            expect(psz > 16, "batch_snap_encode");
+            aether_net_snapshot_t out;
+            expect(aether_net_snapshot_decode(pkt, psz, &out) == AETHER_OK, "batch_snap_decode");
+            expect(out.tick == 42 && out.player_count == 2, "batch_snap_fields");
+            aether_scoreboard_t sb; aether_chat_log_t chat;
+            aether_scoreboard_init(&sb); aether_chat_init(&chat);
+            aether_net_snapshot_apply_hud(&out, &sb, &chat, 2.1f);
+            expect(sb.count == 2 && sb.visible, "batch_snap_scoreboard");
+            expect(chat.count >= 1 && chat.visible, "batch_snap_chat");
+            expect(strcmp(sb.entries[0].name, "Freeman") == 0, "batch_snap_name");
+        }
+
+        /* 7. Sprite / MDL vertical path stub */
+        {
+            aether_sprite_t spr;
+            expect(aether_sprite_init(&spr) == AETHER_OK, "batch_sprite_init");
+            aether_sprite_set_position(&spr, 0, 0, 40);
+            aether_sprite_set_size(&spr, 32, 32);
+            aether_sprite_quad_vertex_t sq[6];
+            expect(aether_sprite_copy_quad(&spr, NULL, NULL, sq, 6) == 6, "batch_sprite_quad");
+            /* MDL: no game files — geometry free path still OK (null-safe). */
+            aether_mdl_t *m = aether_mdl_load_from_memory(NULL, 0, "missing");
+            expect(m == NULL, "batch_mdl_missing_ok");
+        }
+
+        /* 8. Fire / radiation damage ticks wired */
+        {
+            aether_player_t pl;
+            aether_player_init(&pl);
+            aether_player_health_t hp;
+            aether_player_health_init(&hp);
+            f32 h0 = aether_player_health_get(&hp);
+            aether_player_set_on_fire(&pl, true);
+            aether_player_set_in_radiation(&pl, true);
+            expect(aether_player_is_on_fire(&pl) && aether_player_is_in_radiation(&pl),
+                   "batch_hazard_flags");
+            aether_player_tick_fire(&hp, 0.5f, true);
+            aether_player_tick_radiation(&hp, 0.5f, true);
+            f32 h1 = aether_player_health_get(&hp);
+            expect(h1 < h0 - 5.f, "batch_hazard_damage");
         }
     }
 

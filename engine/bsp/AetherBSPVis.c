@@ -300,3 +300,80 @@ u32 aether_bsp_vis_cull_mesh(const aether_bsp_t *bsp,
     if (out_stats) *out_stats = stats;
     return stats.visible_indices;
 }
+
+#include "../render/AetherFrustum.h"
+
+u32 aether_bsp_vis_encode_pvs_row(const u8 *visible_bits, u32 leaf_count,
+                                  u8 *out, u32 out_cap) {
+    if (!visible_bits || !out || out_cap == 0 || leaf_count == 0) return 0;
+    u32 row = (leaf_count + 7u) / 8u;
+    u32 w = 0;
+    u32 i = 0;
+    while (i < row) {
+        if (visible_bits[i] == 0) {
+            u32 run = 0;
+            while (i < row && visible_bits[i] == 0 && run < 255) { ++i; ++run; }
+            if (w + 2 > out_cap) return w;
+            out[w++] = 0;
+            out[w++] = (u8)run;
+        } else {
+            if (w + 1 > out_cap) return w;
+            out[w++] = visible_bits[i++];
+        }
+    }
+    return w;
+}
+
+u32 aether_bsp_vis_apply_frustum(const aether_bsp_t *bsp,
+                                 const aether_frustum_t *frustum,
+                                 u8 *face_bits,
+                                 u32 face_count) {
+    if (!bsp || !face_bits || face_count == 0) return 0;
+    if (!frustum || !frustum->valid) {
+        u32 n = 0;
+        for (u32 f = 0; f < face_count; ++f) if (face_bits[f]) ++n;
+        return n;
+    }
+    u32 leaf_count = aether_bsp_leaf_count(bsp);
+    u32 mark_count = aether_bsp_lump_size(bsp, AETHER_BSP_LUMP_MARKSURFACES) / sizeof(u16);
+    const u8 *mark_raw = aether_bsp_lump_data(bsp, AETHER_BSP_LUMP_MARKSURFACES);
+
+    /* Build set of faces owned by frustum-visible leaves. */
+    u8 *keep = (u8 *)calloc(1, face_count);
+    if (!keep) {
+        u32 n = 0;
+        for (u32 f = 0; f < face_count; ++f) if (face_bits[f]) ++n;
+        return n;
+    }
+    for (u32 li = 0; li < leaf_count; ++li) {
+        const aether_bsp_leaf_t *leaf = aether_bsp_leaf_at(bsp, li);
+        if (!leaf || !aether_bsp_leaf_is_drawable(bsp, (i32)li)) continue;
+        f32 mins[3] = { (f32)leaf->mins[0], (f32)leaf->mins[1], (f32)leaf->mins[2] };
+        f32 maxs[3] = { (f32)leaf->maxs[0], (f32)leaf->maxs[1], (f32)leaf->maxs[2] };
+        /* Degenerate AABB (all zero) → keep (fail-open for sparse fixtures). */
+        if (mins[0] == 0 && mins[1] == 0 && mins[2] == 0 &&
+            maxs[0] == 0 && maxs[1] == 0 && maxs[2] == 0) {
+            /* keep all marksurfaces of this leaf */
+        } else if (!aether_frustum_aabb_visible(frustum, mins, maxs)) {
+            continue;
+        }
+        if (!mark_raw || leaf->num_marksurfaces == 0) continue;
+        for (u32 m = 0; m < leaf->num_marksurfaces; ++m) {
+            u32 off = leaf->first_marksurface + m;
+            if (off >= mark_count) break;
+            const u8 *p = mark_raw + off * 2u;
+            u16 face = (u16)((u32)p[0] | ((u32)p[1] << 8));
+            if (face < face_count) keep[face] = 1;
+        }
+    }
+    u32 visible = 0;
+    for (u32 f = 0; f < face_count; ++f) {
+        if (face_bits[f] && keep[f]) {
+            ++visible;
+        } else {
+            face_bits[f] = 0;
+        }
+    }
+    free(keep);
+    return visible;
+}

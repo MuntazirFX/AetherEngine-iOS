@@ -94,6 +94,12 @@ aether_result_t aether_audio_submit_buffer(aether_audio_t *a,
 aether_result_t aether_audio_play_beep(aether_audio_t *a, f32 freq_hz,
                                        f32 duration_sec, f32 volume);
 
+/* Stream a WAV (header+PCM16 body) through the buffer callback.
+ * Parses header, extracts PCM, submits. Tone writer WAV works for host smoke. */
+aether_result_t aether_audio_play_wav_data(aether_audio_t *a,
+                                           const u8 *wav_data, u32 wav_size,
+                                           f32 volume);
+
 /* Internal: called by the engine to flush queued commands. */
 void aether_audio_flush(aether_audio_t *a);
 

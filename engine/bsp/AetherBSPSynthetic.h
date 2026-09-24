@@ -19,7 +19,8 @@ extern "C" {
 
 /* Build an in-memory GoldSrc-style BSP v30 "demo room":
  * axis-aligned box (-256..256, -256..256, 0..128) with floor/ceiling/walls,
- * a tiny node/leaf tree (split at X=0) + marksurfaces for VIS/leaf culling,
+ * a tiny node/leaf tree (split at X=0) + marksurfaces + multi-leaf PVS stub,
+ * LIGHTING samples + dual texinfo for lightmap UV unpack,
  * CLIPNODES hulls: point + standing (72u Z) + crouch (36u Z, distinct ceiling),
  * a 16u step ledge on +X, low-ceiling alcove on -X (z=48), +Y water pool
  * (CONTENTS_WATER, surface z=48) for swim/buoyancy tests,

@@ -47,6 +47,8 @@ typedef struct aether_player {
     f32           fall_velocity_z;   /* most-negative Z vel while airborne (impact speed) */
     f32           pending_fall_damage; /* set on dry land impact; consume via take_fall */
     f32           view_punch_pitch;  /* additive pitch punch (radians); decays toward 0 */
+    bool          on_fire;       /* hazard: feed aether_player_tick_fire */
+    bool          in_radiation;  /* hazard: feed aether_player_tick_radiation */
     i32           hull_index;    /* 1 or 2 */
     f32           step_height;   /* max auto-step (Quake 18); 0 disables */
 } aether_player_t;
@@ -83,6 +85,13 @@ f32  aether_player_take_fall_damage(aether_player_t *p);
 f32  aether_player_fall_velocity(const aether_player_t *p);
 /* Additive view punch pitch (radians); decays in update. */
 f32  aether_player_view_punch_pitch(const aether_player_t *p);
+
+void aether_player_set_on_fire(aether_player_t *p, bool on_fire);
+bool aether_player_is_on_fire(const aether_player_t *p);
+void aether_player_set_in_radiation(aether_player_t *p, bool in_rad);
+bool aether_player_is_in_radiation(const aether_player_t *p);
+/* Sample collision contents at feet: LAVA→on_fire, SLIME→radiation. */
+void aether_player_refresh_hazards(aether_player_t *p, const aether_collision_t *collision);
 
 #ifdef __cplusplus
 }

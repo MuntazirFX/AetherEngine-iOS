@@ -51,6 +51,13 @@ aether_result_t aether_lightmap_bake_from_bsp(aether_lightmap_t *lm,
                                               const struct aether_bsp *bsp,
                                               struct aether_mesh *mesh);
 
+/* Unpack lightmap UVs from BSP face texinfo vecs into mesh face_ranges.
+ * Requires mesh built via aether_mesh_from_bsp (face_ranges populated).
+ * Falls back to face-run tiling when texinfo/face_ranges missing. */
+aether_result_t aether_lightmap_unpack_uvs_from_bsp(aether_lightmap_t *lm,
+                                                    const struct aether_bsp *bsp,
+                                                    struct aether_mesh *mesh);
+
 #ifdef __cplusplus
 }
 #endif

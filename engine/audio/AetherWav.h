@@ -31,6 +31,11 @@ aether_result_t aether_wav_parse_file(const char *filepath, aether_wav_info_t *o
 u32 aether_wav_write_tone_pcm(u8 *out, u32 cap, u32 sample_rate, u16 channels,
                               f32 freq_hz, f32 duration_sec, f32 amplitude);
 
+/* Extract PCM16 samples from a parsed WAV (or full file buffer).
+ * Copies up to max_samples interleaved i16s. Returns sample count written. */
+u32 aether_wav_extract_pcm16(const u8 *data, u32 size, const aether_wav_info_t *info,
+                             i16 *out_samples, u32 max_samples);
+
 #ifdef __cplusplus
 }
 #endif

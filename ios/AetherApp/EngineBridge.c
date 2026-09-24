@@ -19,6 +19,7 @@
 #include "../../engine/map/AetherMapLoad.h"
 #include "../../engine/render/AetherDecal.h"
 #include "../../engine/render/AetherDynLight.h"
+#include "../../engine/render/AetherSprite.h"
 #include "../../engine/save/AetherSave.h"
 #include "../../engine/net/AetherNetClient.h"
 #include "../../engine/net/AetherNetServer.h"
@@ -33,6 +34,7 @@
 #include "../../engine/bsp/AetherBSPGeometry.h"
 #include "../../engine/bsp/AetherBSPSynthetic.h"
 #include "../../engine/bsp/AetherBSPVis.h"
+#include "../../engine/render/AetherFrustum.h"
 #include "../../engine/render/AetherWorld.h"
 #include "../../engine/player/AetherPlayer.h"
 #include "../../engine/player/AetherPlayerHealth.h"
@@ -52,6 +54,7 @@
 #include "../../engine/vgui/AetherVGUIRuntime.h"
 #include "../../engine/net/AetherNetScoreboard.h"
 #include "../../engine/net/AetherNetChat.h"
+#include "../../engine/net/AetherNetSnapshot.h"
 #include "../../engine/console/AetherCVar.h"
 #include "../../engine/game/AetherManifest.h"
 
@@ -379,6 +382,22 @@ void engine_player_tick(float dt) {
             f32 lost = hp_before - aether_player_health_get(&g_player_health);
             if (lost > 0.0f)
                 aether_hud_health_trigger_damage_flash(g_hud_health, lost);
+        }
+    }
+
+    /* Fire / radiation hazard ticks (flags from set_* or LAVA/SLIME contents). */
+    {
+        bool on_fire = aether_player_is_on_fire(&g_player);
+        bool in_rad  = aether_player_is_in_radiation(&g_player);
+        if (on_fire || in_rad) {
+            f32 hp_before = aether_player_health_get(&g_player_health);
+            aether_player_tick_fire(&g_player_health, dt, on_fire);
+            aether_player_tick_radiation(&g_player_health, dt, in_rad);
+            if (g_hud_health) {
+                f32 lost = hp_before - aether_player_health_get(&g_player_health);
+                if (lost > 0.0f)
+                    aether_hud_health_trigger_damage_flash(g_hud_health, lost);
+            }
         }
     }
 
@@ -2110,4 +2129,80 @@ void engine_net_shutdown(void) {
         aether_net_server_destroy(g_net_server);
         g_net_server = NULL;
     }
+}
+
+
+/* ===== Batch: UV / WAV / decals / net / hazards ===== */
+int engine_audio_play_wav_data(const unsigned char *data, int size, float volume) {
+    if (!g_audio || !data || size <= 0) return 0;
+    return aether_audio_play_wav_data(g_audio, data, (u32)size, volume) == AETHER_OK ? 1 : 0;
+}
+
+int engine_decals_copy_quads(float *out_xyz_uv_fade_rgba, int max_verts) {
+    aether_decals_t *d = bridge_decals();
+    if (!d || !out_xyz_uv_fade_rgba || max_verts <= 0) return 0;
+    return (int)aether_decals_copy_quads(d, (aether_decal_quad_vertex_t *)out_xyz_uv_fade_rgba,
+                                         (u32)max_verts);
+}
+
+int engine_sprite_copy_quad(float x, float y, float z, float w, float h,
+                            float *out_xyz_uv_rgba, int max_verts) {
+    if (!out_xyz_uv_rgba || max_verts < 6) return 0;
+    aether_sprite_t spr;
+    aether_sprite_init(&spr);
+    aether_sprite_set_position(&spr, x, y, z);
+    aether_sprite_set_size(&spr, w, h);
+    f32 col[4] = {0.3f, 0.9f, 0.4f, 0.85f};
+    aether_sprite_set_color(&spr, col);
+    return (int)aether_sprite_copy_quad(&spr, NULL, NULL,
+                                        (aether_sprite_quad_vertex_t *)out_xyz_uv_rgba,
+                                        (u32)max_verts);
+}
+
+int engine_dynlights_apply_mesh_tint(float *out_rgb, int max_floats) {
+    ensure_dynlights();
+    if (!g_active_mesh || !out_rgb || max_floats <= 0) return 0;
+    return (int)aether_dyn_lights_apply_mesh_tint(&g_dynlights, g_active_mesh,
+                                                  out_rgb, (u32)max_floats);
+}
+
+int engine_dynlights_modulate_lightmap(void) {
+    ensure_dynlights();
+    aether_lightmap_t *lm = bridge_lightmap();
+    if (!lm) return 0;
+    return aether_dyn_lights_modulate_lightmap(&g_dynlights, lm) == AETHER_OK ? 1 : 0;
+}
+
+int engine_net_snapshot_demo_apply(unsigned tick) {
+    if (!g_scoreboard_init) engine_scoreboard_init();
+    if (!g_chat_init) engine_chat_init();
+    aether_net_snapshot_t snap;
+    aether_net_snapshot_make_demo(&snap, (u32)tick, (f32)tick * 0.05f);
+    aether_net_snapshot_apply_hud(&snap, &g_scoreboard, &g_chat, (f32)tick * 0.05f);
+    return (int)g_scoreboard.count;
+}
+
+int engine_net_snapshot_scoreboard_count(void) {
+    return (int)g_scoreboard.count;
+}
+
+int engine_player_set_on_fire(int on) {
+    aether_player_set_on_fire(&g_player, on != 0);
+    return 1;
+}
+int engine_player_is_on_fire(void) {
+    return aether_player_is_on_fire(&g_player) ? 1 : 0;
+}
+int engine_player_set_in_radiation(int on) {
+    aether_player_set_in_radiation(&g_player, on != 0);
+    return 1;
+}
+int engine_player_is_in_radiation(void) {
+    return aether_player_is_in_radiation(&g_player) ? 1 : 0;
+}
+
+int engine_lightmap_unpack_uvs_active(void) {
+    aether_lightmap_t *lm = bridge_lightmap();
+    if (!g_active_bsp || !g_active_mesh || !lm) return 0;
+    return aether_lightmap_unpack_uvs_from_bsp(lm, g_active_bsp, g_active_mesh) == AETHER_OK ? 1 : 0;
 }
