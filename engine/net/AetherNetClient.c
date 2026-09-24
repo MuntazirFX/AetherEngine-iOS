@@ -2,6 +2,7 @@
  * AetherEngine-iOS · Clean-room.
  */
 #include "AetherNetClient.h"
+#include "AetherNetSnapshot.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -20,6 +21,9 @@ struct aether_net_client {
     u32                 outgoing_seq;
     aether_net_stats_t  stats;
     char                player_name[AETHER_NET_MAX_NAME];
+    aether_net_snapshot_t last_snap;
+    bool                has_snap;
+    u32                 snap_count;
 };
 
 aether_net_client_t *aether_net_client_create(void) {
@@ -129,9 +133,16 @@ static void handle_packet(aether_net_client_t *c, const u8 *data, u32 size) {
             c->state = AETHER_NET_STATE_DISCONNECTED;
             break;
         }
-        case AETHER_MSG_SERVER_SNAPSHOT:
-            /* Snapshot payload — parsed by game code */
+        case AETHER_MSG_SERVER_SNAPSHOT: {
+            /* Full packet includes 7-byte header; decode from start. */
+            aether_net_snapshot_t snap;
+            if (aether_net_snapshot_decode(data, size, &snap) == AETHER_OK) {
+                c->last_snap = snap;
+                c->has_snap = true;
+                c->snap_count++;
+            }
             break;
+        }
         case AETHER_MSG_PING:
             /* Respond with pong */
             break;
@@ -238,4 +249,26 @@ void aether_net_client_dump(const aether_net_client_t *c) {
                c->stats.packets_sent, c->stats.bytes_sent,
                c->stats.packets_received, c->stats.bytes_received,
                c->stats.ping_ms);
+}
+
+const aether_net_snapshot_t *aether_net_client_last_snapshot(const aether_net_client_t *c) {
+    if (!c || !c->has_snap) return NULL;
+    return &c->last_snap;
+}
+u32 aether_net_client_snapshot_count(const aether_net_client_t *c) {
+    return c ? c->snap_count : 0;
+}
+u32 aether_net_client_apply_snapshot_hud(aether_net_client_t *c,
+                                         aether_scoreboard_t *sb,
+                                         aether_chat_log_t *chat,
+                                         f32 now) {
+    if (!c || !c->has_snap || !sb) return 0;
+    aether_net_snapshot_apply_hud(&c->last_snap, sb, chat, now);
+    return c->last_snap.player_count;
+}
+aether_result_t aether_net_client_ingest_snapshot_packet(aether_net_client_t *c,
+                                                         const u8 *data, u32 size) {
+    if (!c || !data || size < 8) return AETHER_ERR_INVALID_ARG;
+    handle_packet(c, data, size);
+    return c->has_snap ? AETHER_OK : AETHER_ERR_INVALID_ARG;
 }

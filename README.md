@@ -113,6 +113,34 @@ One PR advances lightmap UV unpack, VIS PVS stubs, WAV stream playback, projecte
 
 
 
+
+## GPU lights / Decal clip / Netplay batch (`continue/batch-gpu-lights-decal-clip-netplay`)
+
+One PR advances Metal dyn-light UBO, world-clipped decals, live UDP snapshot HUD, lightstyles,
+clean-room MDL/SPR fixtures, blob shadows, PostFX brightness/gamma, and use/interact traces — still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Metal dyn-light UBO | **done / partial** | `aether_dyn_lights_fill_ubo` + Metal `aether_fragment_dynlights_world` buffer(2) |
+| 2 | Decal triangle clip | **done / partial** | `aether_decals_project_onto_mesh` (normal-aligned face tris; UV clip stub) |
+| 3 | Client snapshot UDP ingest | **done** | NetClient stores SERVER_SNAPSHOT; live tick → scoreboard/chat; host smoke |
+| 4 | Style-animated lightmaps | **done** | GoldSrc-style `aether_lightstyles_*` + `aether_lightmap_apply_style` |
+| 5 | Clean-room MDL/SPR fixture | **done** | `aether_mdl_write_fixture` / `aether_sprite_write_fixture` (no HL IP) |
+| 6 | Sprite/MDL fixture path | **done / partial** | Host loads fixture; sprite quad draw; MDL header/bones; Metal path via bridge |
+| 7 | Soft/blob shadow stub | **done** | `aether_shadow_copy_blob` + Metal blob pipeline under player |
+| 8 | PostFX brightness/gamma | **done / partial** | settings/cvars `r_brightness`/`r_gamma` → PostFX; Metal pass hook (offscreen TBD) |
+| 9 | Use/interact trace | **done** | `aether_interact_trace` ray/AABB + USE action wires eye trace |
+| 10 | README + gaps | **done** | This table |
+
+### Known gaps after GPU lights / decal clip / netplay batch
+- Dyn-light UBO uses world-pos vertex path; atlas-only maps still need full light entity binding polish
+- Decal clip is accept/reject per world tri (not full Sutherland–Hodgman polygon clip)
+- PostFX Metal pass is hooked but needs an offscreen color target to sample the scene
+- Lightstyle modulate currently rewrites atlas in-place (want base+style dual buffer for seamless loop)
+- Fixture MDL has valid header/bones/bodypart but zero studio meshes (geom extract may be empty)
+- Full multiplayer still needs prediction / delta compression beyond snapshot HUD
+
+
 ## Build Status
 - [x] STEP 1: Core modules
 - [x] STEP 2: Verification (host compile + smoke via `build/scripts/verify_host.sh` / `.github/workflows/verify.yml`)

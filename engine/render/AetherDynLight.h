@@ -59,6 +59,18 @@ u32 aether_dyn_lights_apply_mesh_tint(const aether_dyn_lights_t *dl,
 aether_result_t aether_dyn_lights_modulate_lightmap(const aether_dyn_lights_t *dl,
                                                     struct aether_lightmap *lm);
 
+/* GPU UBO: packed lights for Metal fragment (pos.xyz, radius, color.rgb, intensity). */
+#define AETHER_DYN_LIGHT_UBO_MAX 16
+
+typedef struct aether_dyn_light_ubo {
+    u32 count;
+    u32 pad0, pad1, pad2;
+    aether_dyn_light_vertex_t lights[AETHER_DYN_LIGHT_UBO_MAX];
+} aether_dyn_light_ubo_t;
+
+/* Fill UBO for GPU — up to AETHER_DYN_LIGHT_UBO_MAX active lights. Returns count packed. */
+u32 aether_dyn_lights_fill_ubo(const aether_dyn_lights_t *dl, aether_dyn_light_ubo_t *ubo);
+
 #ifdef __cplusplus
 }
 #endif

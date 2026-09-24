@@ -129,3 +129,12 @@ aether_result_t aether_dyn_lights_modulate_lightmap(const aether_dyn_lights_t *d
     }
     return AETHER_OK;
 }
+
+u32 aether_dyn_lights_fill_ubo(const aether_dyn_lights_t *dl, aether_dyn_light_ubo_t *ubo) {
+    if (!ubo) return 0;
+    memset(ubo, 0, sizeof(*ubo));
+    if (!dl) return 0;
+    u32 n = aether_dyn_lights_copy_render(dl, ubo->lights, AETHER_DYN_LIGHT_UBO_MAX);
+    ubo->count = n;
+    return n;
+}

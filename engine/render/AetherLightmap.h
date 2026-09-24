@@ -58,6 +58,28 @@ aether_result_t aether_lightmap_unpack_uvs_from_bsp(aether_lightmap_t *lm,
                                                     const struct aether_bsp *bsp,
                                                     struct aether_mesh *mesh);
 
+/* GoldSrc-style lightstyles: up to 64 style strings ('a'..'z' mapped to 0..1).
+ * style 0 is normally fullbright ("m"); animated styles cycle over time. */
+#define AETHER_MAX_LIGHTSTYLES 64
+#define AETHER_LIGHTSTYLE_LEN  64
+
+typedef struct aether_lightstyles {
+    char  strings[AETHER_MAX_LIGHTSTYLES][AETHER_LIGHTSTYLE_LEN];
+    f32   values[AETHER_MAX_LIGHTSTYLES]; /* current 0..1 scaled value */
+    f32   time;
+    u32   count;
+} aether_lightstyles_t;
+
+void aether_lightstyles_init(aether_lightstyles_t *ls);
+void aether_lightstyles_set(aether_lightstyles_t *ls, u32 index, const char *pattern);
+void aether_lightstyles_update(aether_lightstyles_t *ls, f32 time);
+f32  aether_lightstyles_value(const aether_lightstyles_t *ls, u32 index);
+
+/* Modulate atlas RGB by style 0 (or style_index) current value — host/Metal stub. */
+aether_result_t aether_lightmap_apply_style(aether_lightmap_t *lm,
+                                            const aether_lightstyles_t *ls,
+                                            u32 style_index);
+
 #ifdef __cplusplus
 }
 #endif

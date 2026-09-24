@@ -2,6 +2,8 @@
 #define AETHER_DECAL_H
 #include "../core/AetherCore.h"
 
+struct aether_mesh;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -51,6 +53,14 @@ u32  aether_decals_copy_render(const aether_decals_t *d,
  * Returns vertex count written (multiple of 6). max_out is vertex capacity. */
 u32 aether_decals_copy_quads(const aether_decals_t *d,
                              aether_decal_quad_vertex_t *out, u32 max_out);
+
+/* Project / clip each active decal onto mesh triangles whose normals align with
+ * the decal normal and whose verts lie within the decal radius. Better than a
+ * free-floating billboard: only emits tris that sit on world faces.
+ * Returns vertex count written (multiple of 3). */
+u32 aether_decals_project_onto_mesh(const aether_decals_t *d,
+                                    const struct aether_mesh *mesh,
+                                    aether_decal_quad_vertex_t *out, u32 max_out);
 
 #ifdef __cplusplus
 }

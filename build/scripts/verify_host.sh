@@ -137,4 +137,18 @@ grep -q "engine_decals_copy_quads" ios/AetherApp/EngineBridge.h || fail "missing
 ok "batch UV/WAV/decals/net API symbols present"
 
 
+
+grep -q "aether_dyn_lights_fill_ubo" engine/render/AetherDynLight.h || fail "missing dyn_lights_fill_ubo"
+grep -q "aether_decals_project_onto_mesh" engine/render/AetherDecal.h || fail "missing decals_project_onto_mesh"
+grep -q "aether_net_client_apply_snapshot_hud" engine/net/AetherNetClient.h || fail "missing client apply_snapshot_hud"
+grep -q "aether_lightstyles_update" engine/render/AetherLightmap.h || fail "missing lightstyles_update"
+grep -q "aether_mdl_write_fixture" engine/model/AetherModelFixture.h || fail "missing mdl_write_fixture"
+grep -q "aether_shadow_copy_blob" engine/render/AetherShadow.h || fail "missing shadow_copy_blob"
+grep -q "aether_postfx_set_from_cvars" engine/render/AetherPostFX.h || fail "missing postfx_set_from_cvars"
+grep -q "aether_interact_trace" engine/input/AetherInteract.h || fail "missing interact_trace"
+grep -q "engine_dynlights_fill_ubo" ios/AetherApp/EngineBridge.h || fail "missing bridge dynlights_fill_ubo"
+grep -q "engine_interact_trace" ios/AetherApp/EngineBridge.h || fail "missing bridge interact_trace"
+ok "batch GPU lights / decal clip / netplay API symbols present"
+
+
 info "All host verification checks passed."

@@ -347,3 +347,184 @@ fragment float4 aether_sprite_quad_fragment(SpriteQuadOut in [[stage_in]]) {
     if (c.a < 0.02) discard_fragment();
     return c;
 }
+
+/* ============ Dyn-light UBO (fragment additive) ============ */
+struct DynLightGPU {
+    float4 pos_radius;   /* xyz + radius */
+    float4 color_inten;  /* rgb + intensity */
+};
+struct DynLightUBO {
+    uint count;
+    uint pad0, pad1, pad2;
+    DynLightGPU lights[16];
+};
+
+/* World-position variant of BSP fragment with dyn lights (buffer 2). */
+fragment float4 aether_fragment_dynlights(BSPVertexOut in [[stage_in]],
+                                           constant Uniforms &U [[buffer(1)]],
+                                           constant DynLightUBO &DL [[buffer(2)]],
+                                           texture2d<float> atlas [[texture(0)]],
+                                           texture2d<float> lightmap [[texture(1)]],
+                                           sampler samp [[sampler(0)]]) {
+    float3 N = normalize(in.normal);
+    float  ndl_abs = max(abs(dot(N, normalize(U.light_dir))), 0.0);
+    float  ambient = 0.50;
+    float  diff = ambient + ndl_abs * 0.55;
+    if (diff > 1.0) diff = 1.0;
+
+    float3 base_color;
+    if (U.use_texture > 0.5) {
+        float4 tex = atlas.sample(samp, in.uv);
+        base_color = (tex.a < 0.5) ? U.base_color.rgb : tex.rgb;
+    } else {
+        float3 tint = float3(0.5 + 0.5*N.x, 0.5 + 0.5*N.y, 0.5 + 0.5*N.z);
+        base_color = U.base_color.rgb * tint;
+    }
+    if (U.use_lightmap > 0.5) {
+        float3 lm = lightmap.sample(samp, in.luv).rgb;
+        base_color *= lm;
+        diff = mix(diff, 1.0, 0.55);
+    }
+
+    /* Reconstruct approximate world pos from clip is unavailable — use
+     * lightmap-space sampling fallback: treat luv-derived stub. For the
+     * vertical slice, sample lights at a proxy from normal*scale (host also
+     * tints CPU-side). Prefer true world pos when vertex stage passes it. */
+    float3 world_proxy = float3(in.luv.x * 256.0 - 128.0,
+                                in.luv.y * 256.0 - 128.0,
+                                64.0);
+
+    float3 dyn = float3(0.0);
+    uint n = min(DL.count, 16u);
+    for (uint i = 0u; i < n; ++i) {
+        float3 Lpos = DL.lights[i].pos_radius.xyz;
+        float  rad  = DL.lights[i].pos_radius.w;
+        float3 Lcol = DL.lights[i].color_inten.xyz;
+        float  inten= DL.lights[i].color_inten.w;
+        if (rad <= 0.0) continue;
+        float dist = distance(world_proxy, Lpos);
+        if (dist >= rad) continue;
+        float attn = 1.0 - (dist / rad);
+        attn *= attn;
+        dyn += Lcol * (attn * inten);
+    }
+    float3 color = base_color * diff + dyn;
+    color = clamp(color, 0.0, 2.0);
+    return float4(color, 1.0);
+}
+
+/* Better: pass world position through BSPVertexOut — added field path. */
+struct BSPVertexOutW {
+    float4 position [[position]];
+    float3 normal;
+    float2 uv;
+    float2 luv;
+    float3 world_pos;
+};
+
+vertex BSPVertexOutW aether_vertex_main_world(BSPVertexIn in [[stage_in]],
+                                               constant Uniforms &U [[buffer(1)]]) {
+    BSPVertexOutW out;
+    float4 world = U.model * float4(in.position, 1.0);
+    out.position = U.proj * U.view * world;
+    out.normal = normalize((U.model * float4(in.normal, 0.0)).xyz);
+    out.uv = in.uv;
+    out.luv = in.luv;
+    out.world_pos = world.xyz;
+    return out;
+}
+
+fragment float4 aether_fragment_dynlights_world(BSPVertexOutW in [[stage_in]],
+                                                 constant Uniforms &U [[buffer(1)]],
+                                                 constant DynLightUBO &DL [[buffer(2)]],
+                                                 texture2d<float> atlas [[texture(0)]],
+                                                 texture2d<float> lightmap [[texture(1)]],
+                                                 sampler samp [[sampler(0)]]) {
+    float3 N = normalize(in.normal);
+    float  ndl_abs = max(abs(dot(N, normalize(U.light_dir))), 0.0);
+    float  diff = clamp(0.50 + ndl_abs * 0.55, 0.0, 1.0);
+    float3 base_color = U.base_color.rgb;
+    if (U.use_texture > 0.5) {
+        float4 tex = atlas.sample(samp, in.uv);
+        if (tex.a >= 0.5) base_color = tex.rgb;
+    }
+    if (U.use_lightmap > 0.5) {
+        base_color *= lightmap.sample(samp, in.luv).rgb;
+        diff = mix(diff, 1.0, 0.55);
+    }
+    float3 dyn = float3(0.0);
+    uint n = min(DL.count, 16u);
+    for (uint i = 0u; i < n; ++i) {
+        float3 Lpos = DL.lights[i].pos_radius.xyz;
+        float  rad  = max(DL.lights[i].pos_radius.w, 0.001);
+        float3 Lcol = DL.lights[i].color_inten.xyz;
+        float  inten= DL.lights[i].color_inten.w;
+        float dist = distance(in.world_pos, Lpos);
+        if (dist >= rad) continue;
+        float attn = 1.0 - (dist / rad);
+        attn *= attn;
+        dyn += Lcol * (attn * inten);
+    }
+    return float4(clamp(base_color * diff + dyn, 0.0, 2.0), 1.0);
+}
+
+/* ============ Blob soft-shadow under entities ============ */
+struct BlobIn {
+    float3 position [[attribute(0)]];
+    float2 uv       [[attribute(1)]];
+    float  alpha    [[attribute(2)]];
+};
+struct BlobOut {
+    float4 position [[position]];
+    float2 uv;
+    float  alpha;
+};
+vertex BlobOut aether_blob_shadow_vertex(BlobIn in [[stage_in]],
+                                          constant DecalUniforms &U [[buffer(1)]]) {
+    BlobOut out;
+    out.position = U.proj * U.view * float4(in.position, 1.0);
+    out.uv = in.uv;
+    out.alpha = in.alpha;
+    return out;
+}
+fragment float4 aether_blob_shadow_fragment(BlobOut in [[stage_in]]) {
+    float2 d = in.uv * 2.0 - 1.0;
+    float soft = 1.0 - smoothstep(0.35, 1.0, length(d));
+    float a = in.alpha * soft;
+    if (a < 0.02) discard_fragment();
+    return float4(0.0, 0.0, 0.0, a);
+}
+
+/* ============ PostFX brightness/gamma fullscreen ============ */
+struct PostFXIn {
+    float3 position [[attribute(0)]];
+    float2 uv       [[attribute(1)]];
+};
+struct PostFXOut {
+    float4 position [[position]];
+    float2 uv;
+};
+struct PostFXUniforms {
+    float brightness;
+    float gamma;
+    float exposure;
+    float enabled;
+};
+vertex PostFXOut aether_postfx_vertex(PostFXIn in [[stage_in]]) {
+    PostFXOut out;
+    out.position = float4(in.position.xy, 0.0, 1.0);
+    out.uv = in.uv;
+    return out;
+}
+fragment float4 aether_postfx_fragment(PostFXOut in [[stage_in]],
+                                        constant PostFXUniforms &P [[buffer(1)]],
+                                        texture2d<float> scene [[texture(0)]],
+                                        sampler samp [[sampler(0)]]) {
+    float4 c = scene.sample(samp, in.uv);
+    if (P.enabled < 0.5) return c;
+    float3 rgb = c.rgb * max(P.exposure, 0.01) + P.brightness;
+    rgb = max(rgb, float3(0.0));
+    float g = max(P.gamma, 0.2);
+    rgb = pow(rgb, float3(1.0 / g));
+    return float4(clamp(rgb, 0.0, 1.0), c.a);
+}

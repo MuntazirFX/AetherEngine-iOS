@@ -124,3 +124,88 @@ u32 aether_decals_copy_quads(const aether_decals_t *d,
     }
     return w;
 }
+
+#include "../bsp/AetherBSPGeometry.h"
+
+u32 aether_decals_project_onto_mesh(const aether_decals_t *d,
+                                    const aether_mesh_t *mesh,
+                                    aether_decal_quad_vertex_t *out, u32 max_out) {
+    if (!d || !mesh || !mesh->vertices || !mesh->indices || !out || max_out < 3)
+        return 0;
+    u32 w = 0;
+    u32 tris = mesh->index_count / 3u;
+    for (u32 di = 0; di < d->count; ++di) {
+        const aether_decal_t *dec = &d->items[di];
+        if (!dec->active) continue;
+        f32 fade = 1.f;
+        if (dec->life > 0.f) {
+            fade = 1.f - (dec->age / dec->life);
+            if (fade < 0.f) fade = 0.f;
+        }
+        f32 nx = dec->normal[0], ny = dec->normal[1], nz = dec->normal[2];
+        f32 nlen = sqrtf(nx*nx + ny*ny + nz*nz);
+        if (nlen < 1e-6f) { nx = 0; ny = 0; nz = 1; }
+        else { nx /= nlen; ny /= nlen; nz /= nlen; }
+        f32 hs = dec->size * 0.5f;
+        if (hs < 1.f) hs = 1.f;
+
+        f32 tx, ty, tz, bx, by, bz;
+        orthonormal_basis(nx, ny, nz, &tx, &ty, &tz, &bx, &by, &bz);
+
+        /* Plane distance of decal origin along normal — used for face coplanarity. */
+        f32 d0 = -(nx * dec->position[0] + ny * dec->position[1] + nz * dec->position[2]);
+
+        for (u32 t = 0; t < tris && w + 3 <= max_out; ++t) {
+            u32 i0 = mesh->indices[t*3+0];
+            u32 i1 = mesh->indices[t*3+1];
+            u32 i2 = mesh->indices[t*3+2];
+            if (i0 >= mesh->vertex_count || i1 >= mesh->vertex_count || i2 >= mesh->vertex_count)
+                continue;
+            const aether_mesh_vertex_t *vs[3] = {
+                &mesh->vertices[i0], &mesh->vertices[i1], &mesh->vertices[i2]
+            };
+            f32 fnx = (vs[0]->nx + vs[1]->nx + vs[2]->nx) * (1.f/3.f);
+            f32 fny = (vs[0]->ny + vs[1]->ny + vs[2]->ny) * (1.f/3.f);
+            f32 fnz = (vs[0]->nz + vs[1]->nz + vs[2]->nz) * (1.f/3.f);
+            f32 ndot = fnx*nx + fny*ny + fnz*nz;
+            if (ndot < 0.25f) continue;
+
+            /* Coplanar-ish with decal plane? */
+            f32 plane_err = 0.f;
+            for (int k = 0; k < 3; ++k) {
+                f32 pd = nx*vs[k]->x + ny*vs[k]->y + nz*vs[k]->z + d0;
+                if (fabsf(pd) > plane_err) plane_err = fabsf(pd);
+            }
+            if (plane_err > 8.f) continue;
+
+            f32 local[3][2];
+            f32 umin = 1e9f, umax = -1e9f, vmin = 1e9f, vmax = -1e9f;
+            for (int k = 0; k < 3; ++k) {
+                f32 dx = vs[k]->x - dec->position[0];
+                f32 dy = vs[k]->y - dec->position[1];
+                f32 dz = vs[k]->z - dec->position[2];
+                local[k][0] = dx*tx + dy*ty + dz*tz;
+                local[k][1] = dx*bx + dy*by + dz*bz;
+                if (local[k][0] < umin) umin = local[k][0];
+                if (local[k][0] > umax) umax = local[k][0];
+                if (local[k][1] < vmin) vmin = local[k][1];
+                if (local[k][1] > vmax) vmax = local[k][1];
+            }
+            /* Tangent-space AABB overlap with decal square [-hs, hs]^2 */
+            if (umax < -hs || umin > hs || vmax < -hs || vmin > hs) continue;
+
+            f32 eps = 0.4f;
+            for (int k = 0; k < 3; ++k) {
+                aether_decal_quad_vertex_t *o = &out[w++];
+                o->x = vs[k]->x + nx * eps;
+                o->y = vs[k]->y + ny * eps;
+                o->z = vs[k]->z + nz * eps;
+                o->u = 0.5f + local[k][0] / (hs * 2.f);
+                o->v = 0.5f + local[k][1] / (hs * 2.f);
+                o->fade = fade;
+                o->r = 0.9f; o->g = 0.2f; o->b = 0.15f; o->a = 0.8f * fade;
+            }
+        }
+    }
+    return w;
+}

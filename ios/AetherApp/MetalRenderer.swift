@@ -63,6 +63,15 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     var spriteQuadBuffer: MTLBuffer?
     var decalQuadCount: Int = 0
     var spriteQuadCount: Int = 0
+    var bspDynPipeline: MTLRenderPipelineState?
+    var blobShadowPipeline: MTLRenderPipelineState?
+    var postfxPipeline: MTLRenderPipelineState?
+    var dynLightUboBuffer: MTLBuffer?
+    var blobShadowBuffer: MTLBuffer?
+    var postfxBuffer: MTLBuffer?
+    var blobShadowCount: Int = 0
+    private var styleTimeAccum: Float = 0
+
     private let maxParticleUpload = 512
     private var particleSeedOrigin = simd_float3(0, 0, 64)
     private var particleRespawnAccum: Float = 0
@@ -108,6 +117,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         buildWaterPipeline(mtkView: mtkView)
         buildFogPipeline(mtkView: mtkView)
         buildDecalSpritePipelines(mtkView: mtkView)
+        buildDynBlobPostfxPipelines(mtkView: mtkView)
         buildDepthState()
         buildSampler()
 
@@ -685,7 +695,10 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         // ---- BSP (culled index list when VIS is active) ----
         let bspIndexCount = culledIndexCount > 0 ? culledIndexCount : indexCount
         let bspIndexBuffer = culledIndexBuffer ?? indexBuffer
-        if let pipeline = bspPipeline, let vb = vertexBuffer, let ib = bspIndexBuffer, bspIndexCount > 0 {
+        if let vb = vertexBuffer, let ib = bspIndexBuffer, bspIndexCount > 0 {
+            let useDyn = (bspDynPipeline != nil)
+            let pipeline = useDyn ? bspDynPipeline! : bspPipeline
+            if let pipeline = pipeline {
             enc.setRenderPipelineState(pipeline)
             var U = Uniforms(model: matrix_identity_float4x4,
                              view: viewMat, proj: projMat,
@@ -698,6 +711,26 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             enc.setVertexBuffer(vb, offset: 0, index: 0)
             enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
             enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+            if useDyn {
+                var packed = [Float](repeating: 0, count: 4 + 16 * 8)
+                let n = packed.withUnsafeMutableBufferPointer { buf -> Int32 in
+                    Int32(engine_dynlights_fill_ubo(buf.baseAddress, Int32(packed.count)))
+                }
+                if n > 0 {
+                    let bytes = Int(n) * MemoryLayout<Float>.stride
+                    if dynLightUboBuffer == nil || dynLightUboBuffer!.length < bytes {
+                        dynLightUboBuffer = device.makeBuffer(length: max(bytes, 512), options: .storageModeShared)
+                    }
+                    if let buf = dynLightUboBuffer {
+                        packed.withUnsafeBytes { raw in
+                            if let base = raw.baseAddress {
+                                buf.contents().copyMemory(from: base, byteCount: bytes)
+                            }
+                        }
+                        enc.setFragmentBuffer(buf, offset: 0, index: 2)
+                    }
+                }
+            }
             if let ss = samplerState {
                 enc.setFragmentSamplerState(ss, index: 0)
             }
@@ -709,6 +742,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             }
             enc.drawIndexedPrimitives(type: .triangle, indexCount: bspIndexCount,
                                       indexType: .uint32, indexBuffer: ib, indexBufferOffset: 0)
+            }
         }
 
         // ---- MDL (test model) ----
@@ -756,6 +790,11 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         syncAndDrawFog(encoder: enc)
         syncAndDrawDecalQuads(encoder: enc, viewMat: viewMat, projMat: projMat)
         syncAndDrawSpriteStub(encoder: enc, viewMat: viewMat, projMat: projMat, eye: eyeV)
+        syncAndDrawBlobShadows(encoder: enc, viewMat: viewMat, projMat: projMat, eye: eyeV)
+        styleTimeAccum += dt
+        _ = engine_lightstyles_update(styleTimeAccum)
+        _ = engine_postfx_set_from_settings()
+        syncAndDrawPostFXHook(encoder: enc)
 
         enc.endEncoding()
         engine_renderer_draw_hud()
@@ -936,6 +975,133 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: fogVertexCount)
         if let ds = depthState { enc.setDepthStencilState(ds) }
     }
+
+
+    private func buildDynBlobPostfxPipelines(mtkView: MTKView) {
+        guard let lib = device.makeDefaultLibrary() else { return }
+        // BSP + dyn lights (world pos)
+        if let vfn = lib.makeFunction(name: "aether_vertex_main_world"),
+           let ffn = lib.makeFunction(name: "aether_fragment_dynlights_world") {
+            let vd = MTLVertexDescriptor()
+            vd.attributes[0].format = .float3; vd.attributes[0].offset = 0;  vd.attributes[0].bufferIndex = 0
+            vd.attributes[1].format = .float3; vd.attributes[1].offset = 12; vd.attributes[1].bufferIndex = 0
+            vd.attributes[2].format = .float2; vd.attributes[2].offset = 24; vd.attributes[2].bufferIndex = 0
+            vd.attributes[3].format = .float2; vd.attributes[3].offset = 32; vd.attributes[3].bufferIndex = 0
+            vd.layouts[0].stride = 40
+            vd.layouts[0].stepFunction = .perVertex
+            let d = MTLRenderPipelineDescriptor()
+            d.vertexFunction = vfn; d.fragmentFunction = ffn; d.vertexDescriptor = vd
+            d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+            d.depthAttachmentPixelFormat = mtkView.depthStencilPixelFormat
+            do { bspDynPipeline = try device.makeRenderPipelineState(descriptor: d) }
+            catch { print("[MetalRenderer] BSP dyn pipeline error: \(error)") }
+        }
+        // Blob shadow
+        if let vfn = lib.makeFunction(name: "aether_blob_shadow_vertex"),
+           let ffn = lib.makeFunction(name: "aether_blob_shadow_fragment") {
+            let vd = MTLVertexDescriptor()
+            vd.attributes[0].format = .float3; vd.attributes[0].offset = 0;  vd.attributes[0].bufferIndex = 0
+            vd.attributes[1].format = .float2; vd.attributes[1].offset = 12; vd.attributes[1].bufferIndex = 0
+            vd.attributes[2].format = .float;  vd.attributes[2].offset = 20; vd.attributes[2].bufferIndex = 0
+            vd.layouts[0].stride = 32
+            let d = MTLRenderPipelineDescriptor()
+            d.vertexFunction = vfn; d.fragmentFunction = ffn; d.vertexDescriptor = vd
+            d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+            d.colorAttachments[0].isBlendingEnabled = true
+            d.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+            d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+            d.colorAttachments[0].sourceAlphaBlendFactor = .one
+            d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            d.depthAttachmentPixelFormat = mtkView.depthStencilPixelFormat
+            do { blobShadowPipeline = try device.makeRenderPipelineState(descriptor: d) }
+            catch { print("[MetalRenderer] blob pipeline error: \(error)") }
+        }
+        // PostFX hook (fullscreen; samples color attachment if available — stub draws params path)
+        if let vfn = lib.makeFunction(name: "aether_postfx_vertex"),
+           let ffn = lib.makeFunction(name: "aether_postfx_fragment") {
+            let vd = MTLVertexDescriptor()
+            vd.attributes[0].format = .float3; vd.attributes[0].offset = 0; vd.attributes[0].bufferIndex = 0
+            vd.attributes[1].format = .float2; vd.attributes[1].offset = 12; vd.attributes[1].bufferIndex = 0
+            vd.layouts[0].stride = 20
+            let d = MTLRenderPipelineDescriptor()
+            d.vertexFunction = vfn; d.fragmentFunction = ffn; d.vertexDescriptor = vd
+            d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+            d.depthAttachmentPixelFormat = mtkView.depthStencilPixelFormat
+            do { postfxPipeline = try device.makeRenderPipelineState(descriptor: d) }
+            catch { print("[MetalRenderer] postfx pipeline error: \(error)") }
+        }
+    }
+
+    private func syncAndDrawBlobShadows(encoder enc: MTLRenderCommandEncoder,
+                                        viewMat: simd_float4x4,
+                                        projMat: simd_float4x4,
+                                        eye: simd_float3) {
+        guard let pipeline = blobShadowPipeline else { return }
+        var packed = [Float](repeating: 0, count: 6 * 8)
+        // Player blob
+        let nPlayer = packed.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_shadow_copy_blob(eye.x, eye.y, 0.0, 24.0, buf.baseAddress, 6))
+        }
+        let total = Int(nPlayer)
+        guard total >= 6 else { return }
+        let bytes = total * 32
+        if blobShadowBuffer == nil || blobShadowBuffer!.length < bytes {
+            blobShadowBuffer = device.makeBuffer(length: max(bytes, 512), options: .storageModeShared)
+        }
+        if let buf = blobShadowBuffer {
+            packed.withUnsafeBytes { raw in
+                if let base = raw.baseAddress {
+                    buf.contents().copyMemory(from: base, byteCount: bytes)
+                }
+            }
+        }
+        struct DecalUniforms { var view: simd_float4x4; var proj: simd_float4x4 }
+        var U = DecalUniforms(view: viewMat, proj: projMat)
+        enc.setRenderPipelineState(pipeline)
+        enc.setCullMode(.none)
+        if let vb = blobShadowBuffer { enc.setVertexBuffer(vb, offset: 0, index: 0) }
+        enc.setVertexBytes(&U, length: MemoryLayout<DecalUniforms>.stride, index: 1)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: total)
+        blobShadowCount = total
+    }
+
+    private func syncAndDrawPostFXHook(encoder enc: MTLRenderCommandEncoder) {
+        // Hook only: upload fullscreen verts + brightness/gamma uniforms.
+        // Full scene texture blit needs an offscreen target; this validates the pass path.
+        guard let pipeline = postfxPipeline else { return }
+        var packed = [Float](repeating: 0, count: 6 * 5)
+        let n = packed.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_postfx_copy_fullscreen(buf.baseAddress, 6))
+        }
+        guard n >= 6 else { return }
+        let bytes = Int(n) * 20
+        if postfxBuffer == nil || postfxBuffer!.length < bytes {
+            postfxBuffer = device.makeBuffer(length: max(bytes, 256), options: .storageModeShared)
+        }
+        if let buf = postfxBuffer {
+            packed.withUnsafeBytes { raw in
+                if let base = raw.baseAddress {
+                    buf.contents().copyMemory(from: base, byteCount: bytes)
+                }
+            }
+        }
+        struct PostFXUniforms {
+            var brightness: Float
+            var gamma: Float
+            var exposure: Float
+            var enabled: Float
+        }
+        var PU = PostFXUniforms(brightness: engine_postfx_brightness(),
+                                gamma: engine_postfx_gamma(),
+                                exposure: 1.0,
+                                enabled: 0.0) // disabled until offscreen target exists
+        // Keep pipeline warm / uniforms readable; skip actual draw when enabled==0
+        _ = pipeline
+        _ = PU
+        _ = postfxBuffer
+        _ = enc
+    }
+
 
     /// Column-major float[16] matching aether_mat4_t / Metal simd layout.
     private func flattenMatrix(_ m: simd_float4x4) -> [Float] {

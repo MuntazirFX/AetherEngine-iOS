@@ -190,6 +190,8 @@ void aether_settings_register_engine_defaults(aether_settings_t *s) {
     aether_settings_register_int  (s, "r_height",           0);
     aether_settings_register_bool (s, "r_vsync",            true);
     aether_settings_register_string(s, "r_backend",         "metal");
+    aether_settings_register_float(s, "r_brightness",       0.0f);
+    aether_settings_register_float(s, "r_gamma",            1.0f);
 
     /* Audio */
     aether_settings_register_float(s, "s_master_volume",    1.0f);

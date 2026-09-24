@@ -401,6 +401,31 @@ void engine_net_shutdown(void);
 /* Lightmap: prefer BSP lighting lump when present */
 int  engine_lightmap_bake_from_active_bsp(void);
 
+
+/* ---------- Batch: GPU lights / decal clip / netplay / styles / fixtures ---------- */
+int  engine_dynlights_fill_ubo(float *out_bytes, int max_floats); /* packs UBO as floats */
+int  engine_dynlights_ubo_count(void);
+int  engine_decals_project_onto_mesh(float *out_xyz_uv_fade_rgba, int max_verts);
+int  engine_net_snapshot_live_tick(float dt); /* UDP ingest → HUD; returns snap count */
+int  engine_net_snapshot_ingested_count(void);
+int  engine_lightstyles_update(float time);
+float engine_lightstyles_value(unsigned index);
+int  engine_lightmap_apply_style(unsigned style_index);
+int  engine_mdl_write_fixture(const char *filepath);
+int  engine_sprite_write_fixture(const char *filepath);
+int  engine_mdl_load_fixture_file(const char *filepath); /* load+build mesh for Metal */
+int  engine_sprite_fixture_quad(float x, float y, float z, float w, float h,
+                                float *out_xyz_uv_rgba, int max_verts);
+int  engine_shadow_copy_blob(float px, float py, float ground_z, float radius,
+                             float *out_xyz_uv_alpha_pad, int max_verts);
+int  engine_postfx_set_from_settings(void);
+int  engine_postfx_copy_fullscreen(float *out_xyz_uv, int max_verts);
+float engine_postfx_brightness(void);
+float engine_postfx_gamma(void);
+int  engine_interact_trace(float eye_x, float eye_y, float eye_z,
+                           float yaw_deg, float pitch_deg, float max_dist,
+                           float *out_hit_xyz, char *out_classname, int classname_cap);
+
 /* ---------- Utility ---------- */
 const char *engine_base_path(void);
 const char *engine_version(void);

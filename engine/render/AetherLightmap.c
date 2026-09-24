@@ -384,3 +384,65 @@ aether_result_t aether_lightmap_unpack_uvs_from_bsp(aether_lightmap_t *lm,
                unpacked, face_count, cols, rows);
     return unpacked > 0 ? AETHER_OK : aether_lightmap_assign_mesh_uvs(lm, mesh);
 }
+
+void aether_lightstyles_init(aether_lightstyles_t *ls) {
+    if (!ls) return;
+    memset(ls, 0, sizeof(*ls));
+    /* GoldSrc defaults: style 0 = "m" (mid/full), a few classic flickers. */
+    aether_str_copy(ls->strings[0], AETHER_LIGHTSTYLE_LEN, "m");
+    aether_str_copy(ls->strings[1], AETHER_LIGHTSTYLE_LEN, "mmnmmommommnonmmonqnmmo");
+    aether_str_copy(ls->strings[2], AETHER_LIGHTSTYLE_LEN, "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba");
+    aether_str_copy(ls->strings[3], AETHER_LIGHTSTYLE_LEN, "mmmmmaaaaammmmmaaaaaabcdefgabcdefg");
+    aether_str_copy(ls->strings[4], AETHER_LIGHTSTYLE_LEN, "mamamamamama");
+    ls->count = 5;
+    for (u32 i = 0; i < AETHER_MAX_LIGHTSTYLES; ++i) ls->values[i] = 1.f;
+    aether_lightstyles_update(ls, 0.f);
+}
+
+void aether_lightstyles_set(aether_lightstyles_t *ls, u32 index, const char *pattern) {
+    if (!ls || index >= AETHER_MAX_LIGHTSTYLES || !pattern) return;
+    aether_str_copy(ls->strings[index], AETHER_LIGHTSTYLE_LEN, pattern);
+    if (index >= ls->count) ls->count = index + 1;
+}
+
+void aether_lightstyles_update(aether_lightstyles_t *ls, f32 time) {
+    if (!ls) return;
+    ls->time = time;
+    /* ~10 Hz like GoldSrc (cl_lightstyle / 10). */
+    f32 frame = time * 10.f;
+    for (u32 i = 0; i < AETHER_MAX_LIGHTSTYLES; ++i) {
+        const char *s = ls->strings[i];
+        size_t len = strlen(s);
+        if (len == 0) { ls->values[i] = 1.f; continue; }
+        u32 k = (u32)frame % (u32)len;
+        char c = s[k];
+        if (c < 'a') c = 'a';
+        if (c > 'z') c = 'z';
+        ls->values[i] = (f32)(c - 'a') / 25.f; /* a=0 .. z=1 */
+    }
+}
+
+f32 aether_lightstyles_value(const aether_lightstyles_t *ls, u32 index) {
+    if (!ls || index >= AETHER_MAX_LIGHTSTYLES) return 1.f;
+    return ls->values[index];
+}
+
+aether_result_t aether_lightmap_apply_style(aether_lightmap_t *lm,
+                                            const aether_lightstyles_t *ls,
+                                            u32 style_index) {
+    if (!lm || !lm->rgba || !ls || lm->width == 0 || lm->height == 0)
+        return AETHER_ERR_INVALID_ARG;
+    f32 v = aether_lightstyles_value(ls, style_index);
+    if (v < 0.f) v = 0.f;
+    if (v > 1.f) v = 1.f;
+    /* Soft modulate: keep a floor so the atlas never goes fully black. */
+    f32 scale = 0.25f + 0.75f * v;
+    u32 n = lm->width * lm->height;
+    for (u32 i = 0; i < n; ++i) {
+        u32 idx = i * 4u;
+        lm->rgba[idx+0] = (u8)((f32)lm->rgba[idx+0] * scale);
+        lm->rgba[idx+1] = (u8)((f32)lm->rgba[idx+1] * scale);
+        lm->rgba[idx+2] = (u8)((f32)lm->rgba[idx+2] * scale);
+    }
+    return AETHER_OK;
+}
