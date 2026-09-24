@@ -135,3 +135,62 @@ u32 aether_weapon_fire_combat_auth(aether_weapon_state_t *ws,
     }
     return queued ? 1 : 0;
 }
+
+
+f32 aether_weapon_hitgroup_scale(u8 hitgroup) {
+    switch (hitgroup) {
+        case AETHER_HITGROUP_HEAD:    return 4.f;
+        case AETHER_HITGROUP_CHEST:   return 1.f;
+        case AETHER_HITGROUP_STOMACH: return 1.25f;
+        case AETHER_HITGROUP_ARM:     return 0.75f;
+        case AETHER_HITGROUP_LEG:     return 0.75f;
+        default:                      return 1.f;
+    }
+}
+
+u32 aether_weapon_fire_combat_auth_hitgroup(aether_weapon_state_t *ws,
+                                            aether_player_inventory_t *inv,
+                                            f32 now,
+                                            aether_vec3_t origin,
+                                            aether_vec3_t view_dir,
+                                            u32 killer_id, u32 victim_id,
+                                            bool force_hit,
+                                            u8 hitgroup,
+                                            aether_weapon_auth_queue_fn queue_fn,
+                                            void *queue_user,
+                                            aether_weapon_combat_hit_t *out) {
+    aether_weapon_combat_hit_t hit;
+    u32 q = aether_weapon_fire_combat_auth(ws, inv, now, origin, view_dir,
+                                           killer_id, victim_id, force_hit,
+                                           NULL, NULL, &hit);
+    f32 scale = aether_weapon_hitgroup_scale(hitgroup);
+    f32 scaled = hit.damage * scale;
+    bool queued = false;
+    if (hit.hit && scaled > 0.f && queue_fn) {
+        /* Re-queue with scaled damage (base path queued with NULL above). */
+        u32 dmg_type = hit.dmg_type;
+        if (hitgroup == AETHER_HITGROUP_HEAD)
+            dmg_type |= (u32)AETHER_DMG_BULLET; /* keep bullet; headshot flagged in out */
+        queue_fn(queue_user, killer_id, victim_id, scaled, dmg_type);
+        queued = true;
+        q = 1;
+    } else if (q && queue_fn == NULL) {
+        /* Should not happen — if base queued without fn, nothing to do. */
+    }
+    /* If force path already queued via non-null fn in base — we passed NULL.
+     * Always queue here when hit. */
+    if (!queued && hit.fired && hit.hit && scaled > 0.f && queue_fn) {
+        queue_fn(queue_user, killer_id, victim_id, scaled, hit.dmg_type);
+        queued = true;
+        q = 1;
+    }
+    if (out) {
+        *out = hit;
+        out->damage = scaled;
+        out->damage_scale = scale;
+        out->hitgroup = hitgroup;
+        out->headshot = (hitgroup == AETHER_HITGROUP_HEAD);
+        out->queued = queued;
+    }
+    return queued ? 1 : 0;
+}

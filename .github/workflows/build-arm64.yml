@@ -132,3 +132,11 @@ jobs:
           echo "- Runner: macos-14; unsigned IPA via build_ios.sh + package_ipa.sh" >> $GITHUB_STEP_SUMMARY
           echo "- Local dry-run: ./build/scripts/build_ios.sh && ./build/scripts/package_ipa.sh" >> $GITHUB_STEP_SUMMARY
           echo "- Sideload: AltStore / Sideloadly / TrollStore (no baked signing)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### UNSIGNED IPA DRY-RUN checklist (macos-14)" >> $GITHUB_STEP_SUMMARY
+          echo "1. workflow_dispatch with version + publish_release=false" >> $GITHUB_STEP_SUMMARY
+          echo "2. Job runs on macos-14: build_ios.sh → package_ipa.sh" >> $GITHUB_STEP_SUMMARY
+          echo "3. Artifact AetherEngine-<version> via upload-artifact@v4 (30d)" >> $GITHUB_STEP_SUMMARY
+          echo "4. gh run download <run-id> -n AetherEngine-<version>" >> $GITHUB_STEP_SUMMARY
+          echo "5. Sideload unsigned IPA (no baked signing)" >> $GITHUB_STEP_SUMMARY
+          echo "PR/push: verify_host only — IPA is dispatch-only." >> $GITHUB_STEP_SUMMARY

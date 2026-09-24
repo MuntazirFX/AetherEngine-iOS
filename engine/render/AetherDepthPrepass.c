@@ -161,3 +161,58 @@ void aether_depth_prepass_encode_plan_ex(const aether_depth_prepass_t *d,
     aether_depth_prepass_camera_fill_mvp(cam, out->mvp);
     out->has_mvp = cam && cam->valid;
 }
+
+
+/* ---------- Depth → Hi-Z bind plan ---------- */
+void aether_depth_hiz_bind_plan_init(aether_depth_hiz_bind_plan_t *plan) {
+    if (!plan) return;
+    memset(plan, 0, sizeof(*plan));
+}
+
+int aether_depth_hiz_bind_plan_encode(const aether_depth_prepass_t *d,
+                                      u32 mip0_w, u32 mip0_h,
+                                      aether_depth_hiz_bind_plan_t *out) {
+    if (!out) return 0;
+    aether_depth_hiz_bind_plan_init(out);
+    if (mip0_w < 2) mip0_w = 2;
+    if (mip0_h < 2) mip0_h = 2;
+    out->mip0_w = mip0_w;
+    out->mip0_h = mip0_h;
+    if (!aether_depth_prepass_encode_needed(d)) {
+        out->needed = false;
+        return 0;
+    }
+    out->needed = true;
+    out->depth_first = true;
+    out->fill_mip0_from_depth = true;
+    out->build_pyramid = true;
+    out->texture_views = true;
+    out->encode_steps = 4;
+    return 1;
+}
+
+void aether_depth_hiz_bind_plan_mark_bound(aether_depth_hiz_bind_plan_t *plan) {
+    if (plan) plan->bound = true;
+}
+
+bool aether_depth_hiz_bind_plan_was_bound(const aether_depth_hiz_bind_plan_t *plan) {
+    return plan && plan->needed && plan->bound && plan->depth_first
+        && plan->fill_mip0_from_depth && plan->build_pyramid;
+}
+
+u32 aether_depth_hiz_bind_plan_fill_views(aether_depth_hiz_bind_plan_t *plan,
+                                          const u32 *level_w, const u32 *level_h,
+                                          const u32 *level_off, u32 levels) {
+    if (!plan || !level_w || !level_h || !level_off || levels == 0) return 0;
+    u32 n = levels < AETHER_DEPTH_HIZ_MAX_MIP_VIEWS ? levels : AETHER_DEPTH_HIZ_MAX_MIP_VIEWS;
+    for (u32 i = 0; i < n; ++i) {
+        plan->views[i].mip = i;
+        plan->views[i].width = level_w[i];
+        plan->views[i].height = level_h[i];
+        plan->views[i].texel_offset = level_off[i];
+        plan->views[i].valid = (level_w[i] > 0 && level_h[i] > 0);
+    }
+    plan->mip_view_count = n;
+    plan->texture_views = (n > 0);
+    return n;
+}

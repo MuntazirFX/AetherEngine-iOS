@@ -432,4 +432,70 @@ i32 aether_mdl_lod_hiz_pyramid_gate(const aether_mdl_lod_table_t *table,
                                     f32 sx, f32 sy, f32 depth_ndc,
                                     aether_mdl_hiz_gate_t *out);
 
+
+/* ---------- Depth-prepass → Hi-Z pyramid bind + mip-explicit vis query ---------- */
+typedef struct aether_mdl_hiz_bind_result {
+    bool filled;
+    bool built;
+    bool views_ready;
+    u32  mip0_filled;
+    u32  levels;
+    u32  view_count;
+} aether_mdl_hiz_bind_result_t;
+
+/* Fill pyramid mip0 from depth-prepass stub samples (row-major depths, size count).
+ * Then build pyramid. Returns levels built. */
+u32  aether_mdl_hiz_bind_from_depth(aether_mdl_hiz_pyramid_t *pyr,
+                                    const f32 *depth_samples, u32 count,
+                                    u32 mip0_w, u32 mip0_h,
+                                    aether_mdl_hiz_bind_result_t *out);
+
+/* Copy pyramid level layout into caller arrays (for texture views). Returns levels. */
+u32  aether_mdl_hiz_pyramid_texture_views(const aether_mdl_hiz_pyramid_t *pyr,
+                                          u32 *out_w, u32 *out_h, u32 *out_off,
+                                          u32 max_levels);
+
+/* Visibility query forcing a specific mip (for multi-mip / pyramid-mip tests). */
+int  aether_mdl_hiz_vis_query_at_mip(const aether_mdl_hiz_pyramid_t *pyr,
+                                     f32 x0, f32 y0, f32 x1, f32 y1,
+                                     f32 object_depth, i32 mip,
+                                     aether_mdl_hiz_vis_query_t *out);
+
+/* Conservative multi-mip query: occluded if ANY covering mip says occluded. */
+int  aether_mdl_hiz_vis_query_multi_mip(const aether_mdl_hiz_pyramid_t *pyr,
+                                        f32 x0, f32 y0, f32 x1, f32 y1,
+                                        f32 object_depth,
+                                        aether_mdl_hiz_vis_query_t *out);
+
+/* ---------- Fixture MDL skin pages (clean-room RGBA pages, no HL assets) ---------- */
+#define AETHER_MDL_SKIN_PAGE_W     16
+#define AETHER_MDL_SKIN_PAGE_H     16
+#define AETHER_MDL_SKIN_PAGE_MAX   4
+#define AETHER_MDL_SKIN_PAGE_MAGIC ((i32)0xAE7E5C11)
+
+typedef struct aether_mdl_skin_page {
+    u8  rgba[AETHER_MDL_SKIN_PAGE_W * AETHER_MDL_SKIN_PAGE_H * 4];
+    u32 width;
+    u32 height;
+    u8  group;
+    u8  tex;
+    bool valid;
+} aether_mdl_skin_page_t;
+
+typedef struct aether_mdl_skin_page_set {
+    u32 count;
+    aether_mdl_skin_page_t pages[AETHER_MDL_SKIN_PAGE_MAX];
+} aether_mdl_skin_page_set_t;
+
+/* Build procedural skin pages (checker / gradient per group·tex). */
+void aether_mdl_skin_pages_init(aether_mdl_skin_page_set_t *set);
+u32  aether_mdl_skin_pages_build_fixture(aether_mdl_skin_page_set_t *set, u32 page_count);
+/* Sample bilinear-ish nearest texel → RGBA 0..1. Returns 1 if page valid. */
+int  aether_mdl_skin_page_sample(const aether_mdl_skin_page_t *page,
+                                 f32 u, f32 v, f32 out_rgba[4]);
+int  aether_mdl_skin_pages_sample(const aether_mdl_skin_page_set_t *set,
+                                  u8 group, u8 tex, f32 u, f32 v, f32 out_rgba[4]);
+/* Find page index by group/tex; -1 if missing. */
+i32  aether_mdl_skin_pages_find(const aether_mdl_skin_page_set_t *set, u8 group, u8 tex);
+
 #endif /* AETHER_MODEL_FIXTURE_H */

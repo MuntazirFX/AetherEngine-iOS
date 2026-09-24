@@ -1,6 +1,7 @@
 #ifndef AETHER_WATER_H
 #define AETHER_WATER_H
 #include "../core/AetherCore.h"
+#include "../model/AetherModelFixture.h"
 
 /* GPU/bridge-friendly vertex: pos.xyz + uv.xy + color.rgba (9 floats, 36 bytes). */
 typedef struct aether_water_vertex {
@@ -299,5 +300,62 @@ int  aether_water_reflect_ent_set_studio_tex(aether_water_reflect_ent_list_t *li
 int  aether_water_reflect_ent_get_studio_tex(const aether_water_reflect_ent_list_t *list,
                                              u32 index,
                                              aether_water_reflect_studio_tex_t *out);
+
+
+/* ---------- Portal winding clip + recursive reflect views ---------- */
+#define AETHER_PORTAL_WINDING_MAX_VERTS 8
+#define AETHER_PORTAL_REFLECT_MAX_DEPTH 3
+#define AETHER_PORTAL_REFLECT_MAX_VIEWS 4
+
+typedef struct aether_portal_winding {
+    f32 verts[AETHER_PORTAL_WINDING_MAX_VERTS][3];
+    u32 count;
+    f32 plane[4];   /* ax+by+cz+d = 0 of portal surface */
+    bool valid;
+} aether_portal_winding_t;
+
+typedef struct aether_portal_reflect_view {
+    u32 depth;             /* recursion depth (0 = primary) */
+    f32 clip_plane[4];
+    f32 mirror[16];
+    f32 eye[3];
+    f32 eye_reflected[3];
+    bool clipped;
+    bool active;
+    u32 winding_verts;     /* verts kept after clip */
+} aether_portal_reflect_view_t;
+
+typedef struct aether_portal_reflect_plan {
+    u32 view_count;
+    u32 max_depth;
+    aether_portal_reflect_view_t views[AETHER_PORTAL_REFLECT_MAX_VIEWS];
+    bool needed;
+} aether_portal_reflect_plan_t;
+
+void aether_portal_winding_init(aether_portal_winding_t *w);
+/* Build a rectangular portal winding from center + right/up extents on a plane. */
+int  aether_portal_winding_make_rect(aether_portal_winding_t *w,
+                                     const f32 center[3], const f32 normal[3],
+                                     f32 half_w, f32 half_h);
+/* Clip winding against a plane (keep positive side). Returns remaining vert count. */
+u32  aether_portal_winding_clip(const aether_portal_winding_t *in,
+                                const f32 clip_plane[4],
+                                aether_portal_winding_t *out);
+
+void aether_portal_reflect_plan_init(aether_portal_reflect_plan_t *plan);
+/* Build recursive reflect views through a portal winding (limited depth).
+ * Each deeper view mirrors about water then re-clips through portal. */
+u32  aether_water_reflect_recursive_plan(const aether_water_t *water,
+                                         const f32 eye[3],
+                                         const aether_portal_winding_t *portal,
+                                         u32 max_depth,
+                                         aether_portal_reflect_plan_t *out);
+
+/* ---------- Bind fixture MDL skin page into water reflect RT ent ---------- */
+int  aether_water_reflect_ent_bind_skin_page(aether_water_reflect_ent_list_t *list,
+                                             u32 index,
+                                             const aether_mdl_skin_page_t *page);
+int  aether_water_reflect_ent_sample_skin_page(const aether_water_reflect_ent_list_t *list,
+                                               u32 index, f32 u, f32 v, f32 out_rgba[4]);
 
 #endif /* AETHER_WATER_H */

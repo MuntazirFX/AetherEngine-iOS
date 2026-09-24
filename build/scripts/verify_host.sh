@@ -327,3 +327,17 @@ grep -q "assisted vs\|get_event_ex" ios/AetherApp/ClassicScoreboardChatOverlay.s
 grep -q "gpu-hiz-mip\|weapon-auth\|~76%\|Hi-Z mip pyramid" README.md || fail "missing batch14 README"
 grep -q "smoke_batch_gpu_hiz_mip_weapon_auth_portal" tests/host_smoke.c || fail "missing batch14 smoke"
 ok "batch gpu-hiz-mip/weapon-auth/portal API symbols present"
+
+
+grep -q "aether_depth_hiz_bind_plan_encode\|aether_depth_hiz_bind_plan_was_bound" engine/render/AetherDepthPrepass.h || fail "missing depth→hiz bind plan"
+grep -q "aether_mdl_hiz_bind_from_depth\|aether_mdl_hiz_vis_query_multi_mip\|aether_mdl_hiz_pyramid_texture_views" engine/model/AetherModelFixture.h || fail "missing hiz bind/multi-mip"
+grep -q "aether_portal_winding_clip\|aether_water_reflect_recursive_plan\|aether_portal_winding_make_rect" engine/render/AetherWater.h || fail "missing portal winding/recursive"
+grep -q "aether_mdl_skin_pages_build_fixture\|aether_mdl_skin_page_sample\|aether_water_reflect_ent_bind_skin_page" engine/model/AetherModelFixture.h engine/render/AetherWater.h || fail "missing mdl skin pages"
+grep -q "aether_weapon_fire_combat_auth_hitgroup\|aether_weapon_hitgroup_scale\|aether_game_weapon_hit_auth_hitgroup" engine/game/weapons/AetherWeaponFiring.h engine/game/AetherGameManager.h || fail "missing weapon hitgroup auth"
+grep -q "macos-14\|Unsigned IPA dry-run\|workflow_dispatch" README.md build/scripts/package_ipa.sh .github/workflows/build-arm64.yml || fail "missing clearer IPA macos-14 dry-run docs"
+grep -q "aether_depth_hiz_bind_fragment\|aether_portal_recursive_vertex\|aether_mdl_skin_page_fragment" ios/AetherApp/Shaders.metal || fail "missing Metal depth-hiz/portal/skin hooks"
+grep -q "engine_depth_hiz_bind_execute\|engine_water_reflect_recursive_plan\|engine_mdl_skin_pages_build\|engine_game_weapon_hit_auth_hitgroup" ios/AetherApp/EngineBridge.h || fail "missing bridge batch15"
+grep -q "engine_depth_hiz_bind_execute\|engine_water_reflect_recursive_plan\|engine_water_reflect_ent_bind_skin_page" ios/AetherApp/MetalRenderer.swift || fail "missing metal batch15 encode"
+grep -q "depth-hiz-bind\|portal-winding\|mdl-skin-pages\|~77%" README.md || fail "missing batch15 README"
+grep -q "smoke_batch_depth_hiz_bind_portal_winding_mdl_skin_pages" tests/host_smoke.c || fail "missing batch15 smoke"
+ok "batch depth-hiz-bind/portal-winding/mdl-skin-pages API symbols present"

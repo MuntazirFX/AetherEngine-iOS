@@ -364,7 +364,11 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         }
         _ = engine_depth_prepass_mark_bound()
         depthPrepassBoundThisFrame = true
-        _ = w; _ = h; _ = writeDepth
+        // Chain depth prepass → Hi-Z pyramid bind after depth encode
+        var bLevels: Int32 = 0, bViews: Int32 = 0, bBound: Int32 = 0
+        _ = engine_depth_hiz_bind_execute(w < 2 ? 2 : w, h < 2 ? 2 : h, nil, 0,
+                                          &bLevels, &bViews, &bBound)
+        _ = w; _ = h; _ = writeDepth; _ = bLevels; _ = bViews; _ = bBound
     }
 
     /// Clear + draw world with mirrored MVP into waterReflectTexture, then resolve/mips.
@@ -489,9 +493,37 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 _ = engine_water_reflect_ent_sample_studio_tex(0, 0.3, 0.7, &srgba)
                 _ = srgba
             }
+            // Depth prepass → Hi-Z pyramid bind (encode order + texture views)
+            var dhNeed: Int32 = 0, dhSteps: Int32 = 0
+            var dhViews: UInt32 = 0
+            _ = engine_depth_hiz_bind_plan(64, 64, &dhNeed, &dhSteps, &dhViews)
+            var depthStub = [Float](repeating: 1.0, count: 64 * 64)
+            for y in 20..<44 { for x in 20..<44 { depthStub[y * 64 + x] = 0.2 } }
+            var dhLevels: Int32 = 0, dhV2: Int32 = 0, dhBound: Int32 = 0
+            _ = engine_depth_hiz_bind_execute(64, 64, &depthStub, UInt32(depthStub.count),
+                                              &dhLevels, &dhV2, &dhBound)
+            var mmVis: Int32 = 0, mmOcc: Int32 = 0, mmMip: Int32 = 0
+            var mmZ: Float = 0
+            _ = engine_mdl_hiz_vis_query_multi_mip(0.4, 0.4, 0.6, 0.6, 0.8,
+                                                   &mmVis, &mmOcc, &mmZ, &mmMip)
+            // Portal winding + recursive reflect views
+            _ = engine_portal_winding_make_rect(0, 0, 32, 0, 1, 0, 32, 48)
+            _ = engine_portal_winding_clip_water()
+            var prv: UInt32 = 0, prd: UInt32 = 0
+            _ = engine_water_reflect_recursive_plan(0, 0, 64, 3, &prv, &prd)
+            // Fixture MDL skin pages into water RT
+            _ = engine_mdl_skin_pages_build(4)
+            if studioCount > 0 {
+                _ = engine_water_reflect_ent_bind_skin_page(0, 0)
+                var pageRgba = [Float](repeating: 0, count: 4)
+                _ = engine_water_reflect_ent_sample_skin_page(0, 0.25, 0.75, &pageRgba)
+                _ = pageRgba
+            }
             _ = ec; _ = mc; _ = res2; _ = dw2; _ = clr2; _ = rw2; _ = rh2; _ = studioCount
             _ = hvVis; _ = hvOcc; _ = hvZ; _ = hvMip; _ = plod; _ = pissue; _ = pocc; _ = ppx
             _ = portalMvp
+            _ = dhNeed; _ = dhSteps; _ = dhViews; _ = dhLevels; _ = dhV2; _ = dhBound
+            _ = mmVis; _ = mmOcc; _ = mmZ; _ = mmMip; _ = prv; _ = prd
         }
         // GPU studio LOD draw path: select LOD by camera distance and issue draw.
         var lod: Int32 = 0, issue: Int32 = 0

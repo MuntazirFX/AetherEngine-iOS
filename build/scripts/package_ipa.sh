@@ -85,3 +85,31 @@ log "Done ✔"
 # Linux/CI host: cannot produce IPA; verify_host.sh remains the gate here.
 # Sideload: AltStore / Sideloadly / TrollStore / ideviceinstaller — no Apple ID
 # signing baked into this unsigned IPA path.
+
+
+# ==========================================================================
+# UNSIGNED IPA DRY-RUN (Actions macos-14) — clear checklist
+# ==========================================================================
+# This Linux/CI host NEVER builds the IPA. Use GitHub Actions macos-14:
+#
+# A) From GitHub UI
+#    1. Actions → "Build AetherEngine IPA" → Run workflow
+#    2. Inputs: version (e.g. v0.1.15), publish_release=false for dry-run
+#    3. Wait for job "Unsigned IPA (dispatch only)" on runner macos-14
+#    4. Download artifact AetherEngine-<version> (retention 30 days)
+#
+# B) From CLI (gh)
+#    gh workflow run build-arm64.yml -f version=v0.1.15 -f publish_release=false
+#    gh run list --workflow=build-arm64.yml --limit 3
+#    gh run download <run-id> -n AetherEngine-v0.1.15
+#
+# C) Local macOS (same scripts Actions uses)
+#    ./build/scripts/build_ios.sh && ./build/scripts/package_ipa.sh
+#    test -f build/out/AetherEngine.ipa && ls -lh build/out/AetherEngine.ipa
+#
+# D) Sideload unsigned Payload zip
+#    AltStore / Sideloadly / TrollStore / ideviceinstaller
+#    No Apple Developer signing is baked into this path.
+#
+# PR/push events only run verify_host on macos-14 (no IPA). IPA is
+# workflow_dispatch-only — see .github/workflows/build-arm64.yml.

@@ -4455,3 +4455,166 @@ int engine_scoreboard_get_event_ex(int index, int *out_kind, unsigned *out_id,
     }
     return 1;
 }
+
+
+/* ---- Batch depth→hiz bind / portal winding / mdl skin pages / weapon hitgroup ---- */
+
+static aether_depth_hiz_bind_plan_t g_depth_hiz_plan;
+static aether_portal_winding_t g_portal_wind;
+static aether_portal_reflect_plan_t g_portal_reflect_plan;
+static aether_mdl_skin_page_set_t g_skin_pages;
+static int g_skin_pages_ready = 0;
+
+int engine_depth_hiz_bind_plan(unsigned mip0_w, unsigned mip0_h,
+                               int *out_needed, int *out_steps, unsigned *out_views) {
+    aether_depth_prepass_t *d = NULL;
+    /* Use bridge depth prepass if available via ensure pattern — recreate local. */
+    static aether_depth_prepass_t s_dp;
+    static int s_dp_init = 0;
+    if (!s_dp_init) { aether_depth_prepass_init(&s_dp); aether_depth_prepass_ensure(&s_dp, 128, 128); s_dp_init = 1; }
+    d = &s_dp;
+    int ok = aether_depth_hiz_bind_plan_encode(d, mip0_w, mip0_h, &g_depth_hiz_plan);
+    if (out_needed) *out_needed = g_depth_hiz_plan.needed ? 1 : 0;
+    if (out_steps) *out_steps = (int)g_depth_hiz_plan.encode_steps;
+    if (out_views) *out_views = g_depth_hiz_plan.mip_view_count;
+    return ok;
+}
+
+int engine_depth_hiz_bind_execute(unsigned mip0_w, unsigned mip0_h,
+                                  const float *depth_samples, unsigned count,
+                                  int *out_levels, int *out_views, int *out_bound) {
+    ensure_hiz_pyr();
+    static aether_depth_prepass_t s_dp;
+    static int s_dp_init = 0;
+    if (!s_dp_init) { aether_depth_prepass_init(&s_dp); s_dp_init = 1; }
+    aether_depth_prepass_ensure(&s_dp, mip0_w > 0 ? mip0_w : 64, mip0_h > 0 ? mip0_h : 64);
+    aether_depth_hiz_bind_plan_encode(&s_dp, mip0_w, mip0_h, &g_depth_hiz_plan);
+    aether_mdl_hiz_bind_result_t br;
+    u32 levels = aether_mdl_hiz_bind_from_depth(&g_hiz_pyr, depth_samples, count,
+                                                mip0_w, mip0_h, &br);
+    u32 vw[8], vh[8], vo[8];
+    u32 vc = aether_mdl_hiz_pyramid_texture_views(&g_hiz_pyr, vw, vh, vo, 8);
+    aether_depth_hiz_bind_plan_fill_views(&g_depth_hiz_plan, vw, vh, vo, vc);
+    aether_depth_hiz_bind_plan_mark_bound(&g_depth_hiz_plan);
+    if (out_levels) *out_levels = (int)levels;
+    if (out_views) *out_views = (int)vc;
+    if (out_bound) *out_bound = aether_depth_hiz_bind_plan_was_bound(&g_depth_hiz_plan) ? 1 : 0;
+    return (int)levels;
+}
+
+int engine_mdl_hiz_vis_query_at_mip(float x0, float y0, float x1, float y1,
+                                    float obj_depth, int mip,
+                                    int *out_visible, int *out_occluded, float *out_hiz) {
+    ensure_hiz_pyr();
+    aether_mdl_hiz_vis_query_t q;
+    int vis = aether_mdl_hiz_vis_query_at_mip(&g_hiz_pyr, x0, y0, x1, y1, obj_depth, mip, &q);
+    if (out_visible) *out_visible = q.visible ? 1 : 0;
+    if (out_occluded) *out_occluded = q.occluded ? 1 : 0;
+    if (out_hiz) *out_hiz = q.nearest_hiz;
+    return vis;
+}
+
+int engine_mdl_hiz_vis_query_multi_mip(float x0, float y0, float x1, float y1,
+                                       float obj_depth,
+                                       int *out_visible, int *out_occluded,
+                                       float *out_hiz, int *out_mip) {
+    ensure_hiz_pyr();
+    aether_mdl_hiz_vis_query_t q;
+    int vis = aether_mdl_hiz_vis_query_multi_mip(&g_hiz_pyr, x0, y0, x1, y1, obj_depth, &q);
+    if (out_visible) *out_visible = q.visible ? 1 : 0;
+    if (out_occluded) *out_occluded = q.occluded ? 1 : 0;
+    if (out_hiz) *out_hiz = q.nearest_hiz;
+    if (out_mip) *out_mip = q.mip_used;
+    return vis;
+}
+
+int engine_portal_winding_make_rect(float cx, float cy, float cz,
+                                    float nx, float ny, float nz,
+                                    float half_w, float half_h) {
+    f32 c[3] = {cx, cy, cz};
+    f32 n[3] = {nx, ny, nz};
+    return aether_portal_winding_make_rect(&g_portal_wind, c, n, half_w, half_h);
+}
+
+int engine_portal_winding_clip_water(void) {
+    aether_water_t *w = bridge_water();
+    f32 eye[3] = {0, 0, 64};
+    aether_water_reflect_t r;
+    aether_water_reflect_compute(w, eye, &r);
+    aether_portal_winding_t clipped;
+    u32 n = aether_portal_winding_clip(&g_portal_wind, r.clip_plane, &clipped);
+    if (n >= 3) g_portal_wind = clipped;
+    return (int)n;
+}
+
+unsigned engine_water_reflect_recursive_plan(float eye_x, float eye_y, float eye_z,
+                                             unsigned max_depth,
+                                             unsigned *out_views, unsigned *out_max_depth) {
+    aether_water_t *w = bridge_water();
+    f32 eye[3] = {eye_x, eye_y, eye_z};
+    if (!g_portal_wind.valid) {
+        f32 c[3] = {0, 0, 32}; f32 n[3] = {0, 1, 0};
+        aether_portal_winding_make_rect(&g_portal_wind, c, n, 32.f, 48.f);
+    }
+    u32 vc = aether_water_reflect_recursive_plan(w, eye, &g_portal_wind, max_depth,
+                                                 &g_portal_reflect_plan);
+    if (out_views) *out_views = vc;
+    if (out_max_depth) *out_max_depth = g_portal_reflect_plan.max_depth;
+    return vc;
+}
+
+int engine_mdl_skin_pages_build(unsigned page_count) {
+    u32 n = aether_mdl_skin_pages_build_fixture(&g_skin_pages, page_count);
+    g_skin_pages_ready = (n > 0) ? 1 : 0;
+    return (int)n;
+}
+
+int engine_mdl_skin_pages_sample(unsigned group, unsigned tex, float u, float v,
+                                 float *out_rgba4) {
+    if (!g_skin_pages_ready) engine_mdl_skin_pages_build(4);
+    return aether_mdl_skin_pages_sample(&g_skin_pages, (u8)group, (u8)tex, u, v, out_rgba4);
+}
+
+int engine_water_reflect_ent_bind_skin_page(unsigned ent_index, unsigned page_index) {
+    ensure_reflect_ents();
+    if (!g_skin_pages_ready) engine_mdl_skin_pages_build(4);
+    if (page_index >= g_skin_pages.count) return 0;
+    return aether_water_reflect_ent_bind_skin_page(&g_reflect_ents, ent_index,
+                                                   &g_skin_pages.pages[page_index]);
+}
+
+int engine_water_reflect_ent_sample_skin_page(unsigned ent_index, float u, float v,
+                                              float *out_rgba4) {
+    ensure_reflect_ents();
+    return aether_water_reflect_ent_sample_skin_page(&g_reflect_ents, ent_index, u, v, out_rgba4);
+}
+
+int engine_game_weapon_hit_auth_hitgroup(unsigned weapon_id, float now,
+                                         float ox, float oy, float oz,
+                                         float dx, float dy, float dz,
+                                         unsigned killer_id, unsigned victim_id,
+                                         int force_hit, unsigned hitgroup,
+                                         int *out_fired, int *out_queued, int *out_died,
+                                         int *out_registered, float *out_damage,
+                                         int *out_headshot) {
+    if (!g_game_manager) return 0;
+    if (!engine_game_has_auth_server()) engine_game_bind_auth_server_demo();
+    aether_weapon_state_t ws;
+    aether_weapon_state_init(&ws, (aether_weapon_id_t)weapon_id);
+    if (ws.def && ws.def->clip_size > 0) ws.clip_ammo = ws.def->clip_size;
+    aether_player_inventory_t inv;
+    memset(&inv, 0, sizeof inv);
+    aether_game_weapon_auth_result_t r;
+    u32 kills = aether_game_weapon_hit_auth_hitgroup(g_game_manager, &ws, &inv, now,
+                                                     ox, oy, oz, dx, dy, dz,
+                                                     killer_id, victim_id, force_hit != 0,
+                                                     (u8)hitgroup, &r);
+    if (out_fired) *out_fired = r.fired ? 1 : 0;
+    if (out_queued) *out_queued = r.queued ? 1 : 0;
+    if (out_died) *out_died = r.died ? 1 : 0;
+    if (out_registered) *out_registered = r.registered_kill ? 1 : 0;
+    if (out_damage) *out_damage = r.damage;
+    if (out_headshot) *out_headshot = r.headshot ? 1 : 0;
+    (void)kills;
+    return r.registered_kill ? 1 : (r.queued ? 1 : 0);
+}

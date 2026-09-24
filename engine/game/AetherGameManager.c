@@ -400,3 +400,39 @@ u32 aether_game_weapon_hit_auth(aether_game_manager_t *m,
     }
     return kills;
 }
+
+
+u32 aether_game_weapon_hit_auth_hitgroup(aether_game_manager_t *m,
+                                         aether_weapon_state_t *ws,
+                                         aether_player_inventory_t *inv,
+                                         f32 now,
+                                         f32 ox, f32 oy, f32 oz,
+                                         f32 dx, f32 dy, f32 dz,
+                                         u32 killer_id, u32 victim_id,
+                                         bool force_hit, u8 hitgroup,
+                                         aether_game_weapon_auth_result_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!m || !ws) return 0;
+    aether_vec3_t origin = {ox, oy, oz};
+    aether_vec3_t dir = {dx, dy, dz};
+    aether_weapon_combat_hit_t hit;
+    u32 q = aether_weapon_fire_combat_auth_hitgroup(ws, inv, now, origin, dir,
+                                                    killer_id, victim_id, force_hit,
+                                                    hitgroup, game_auth_queue_cb, m, &hit);
+    aether_game_auth_tick_result_t ar;
+    u32 kills = 0;
+    if (q) kills = aether_game_tick_auth(m, 0.f, &ar);
+    else memset(&ar, 0, sizeof ar);
+    if (out) {
+        out->fired = hit.fired;
+        out->hit = hit.hit;
+        out->queued = hit.queued;
+        out->died = ar.died;
+        out->registered_kill = ar.registered_kill;
+        out->damage = hit.damage;
+        out->pellets = hit.pellets;
+        out->hitgroup = hit.hitgroup;
+        out->headshot = hit.headshot;
+    }
+    return kills;
+}

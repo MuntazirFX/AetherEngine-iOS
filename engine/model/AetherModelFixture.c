@@ -1802,3 +1802,209 @@ i32 aether_mdl_lod_hiz_pyramid_gate(const aether_mdl_lod_table_t *table,
     if (culled || occ) return -1;
     return lod;
 }
+
+
+/* ---------- Depth → Hi-Z bind + mip-explicit / multi-mip vis ---------- */
+u32 aether_mdl_hiz_bind_from_depth(aether_mdl_hiz_pyramid_t *pyr,
+                                   const f32 *depth_samples, u32 count,
+                                   u32 mip0_w, u32 mip0_h,
+                                   aether_mdl_hiz_bind_result_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!pyr) return 0;
+    aether_mdl_hiz_pyramid_reset(pyr, mip0_w, mip0_h);
+    u32 filled = 0;
+    if (depth_samples && count > 0)
+        filled = aether_mdl_hiz_pyramid_fill_mip0(pyr, depth_samples, count);
+    else {
+        /* Empty depth → far plane (fully visible). */
+        filled = pyr->mip0_w * pyr->mip0_h;
+    }
+    u32 levels = aether_mdl_hiz_build_pyramid(pyr);
+    aether_mdl_hiz_pyramid_set_gpu_hooks(pyr, true);
+    if (out) {
+        out->filled = (filled > 0);
+        out->built = pyr->built;
+        out->mip0_filled = filled;
+        out->levels = levels;
+        out->view_count = levels;
+        out->views_ready = (levels > 0);
+    }
+    return levels;
+}
+
+u32 aether_mdl_hiz_pyramid_texture_views(const aether_mdl_hiz_pyramid_t *pyr,
+                                         u32 *out_w, u32 *out_h, u32 *out_off,
+                                         u32 max_levels) {
+    if (!pyr || !pyr->built || max_levels == 0) return 0;
+    u32 n = pyr->levels < max_levels ? pyr->levels : max_levels;
+    for (u32 i = 0; i < n; ++i) {
+        if (out_w) out_w[i] = pyr->level_w[i];
+        if (out_h) out_h[i] = pyr->level_h[i];
+        if (out_off) out_off[i] = pyr->level_offset[i];
+    }
+    return n;
+}
+
+int aether_mdl_hiz_vis_query_at_mip(const aether_mdl_hiz_pyramid_t *pyr,
+                                    f32 x0, f32 y0, f32 x1, f32 y1,
+                                    f32 object_depth, i32 mip,
+                                    aether_mdl_hiz_vis_query_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!pyr || !pyr->built || mip < 0 || (u32)mip >= pyr->levels) {
+        if (out) { out->visible = true; out->valid = false; }
+        return 0;
+    }
+    if (x0 > x1) { f32 t = x0; x0 = x1; x1 = t; }
+    if (y0 > y1) { f32 t = y0; y0 = y1; y1 = t; }
+    if (x0 < 0.f) x0 = 0.f; if (y0 < 0.f) y0 = 0.f;
+    if (x1 > 1.f) x1 = 1.f; if (y1 > 1.f) y1 = 1.f;
+    u32 lw = pyr->level_w[mip], lh = pyr->level_h[mip];
+    if (lw == 0 || lh == 0) return 0;
+    i32 ix0 = (i32)(x0 * (f32)lw); if (ix0 < 0) ix0 = 0;
+    i32 iy0 = (i32)(y0 * (f32)lh); if (iy0 < 0) iy0 = 0;
+    i32 ix1 = (i32)(x1 * (f32)lw); if (ix1 >= (i32)lw) ix1 = (i32)lw - 1;
+    i32 iy1 = (i32)(y1 * (f32)lh); if (iy1 >= (i32)lh) iy1 = (i32)lh - 1;
+    if (ix1 < ix0) ix1 = ix0;
+    if (iy1 < iy0) iy1 = iy0;
+    const f32 *src = &pyr->depth[pyr->level_offset[mip]];
+    f32 nearest = 1.f;
+    for (i32 y = iy0; y <= iy1; ++y)
+        for (i32 x = ix0; x <= ix1; ++x) {
+            f32 v = src[(u32)y * lw + (u32)x];
+            if (v < nearest) nearest = v;
+        }
+    f32 od = object_depth < 0.f ? 0.f : (object_depth > 1.f ? 1.f : object_depth);
+    bool occ = (nearest + 0.01f < od);
+    if (out) {
+        out->screen_x0 = x0; out->screen_y0 = y0;
+        out->screen_x1 = x1; out->screen_y1 = y1;
+        out->object_depth = od;
+        out->nearest_hiz = nearest;
+        out->mip_used = mip;
+        out->occluded = occ;
+        out->visible = !occ;
+        out->valid = true;
+    }
+    return occ ? 0 : 1;
+}
+
+int aether_mdl_hiz_vis_query_multi_mip(const aether_mdl_hiz_pyramid_t *pyr,
+                                       f32 x0, f32 y0, f32 x1, f32 y1,
+                                       f32 object_depth,
+                                       aether_mdl_hiz_vis_query_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!pyr || !pyr->built) {
+        if (out) { out->visible = true; out->valid = false; }
+        return 0;
+    }
+    bool any_occ = false;
+    f32 nearest = 1.f;
+    i32 used = 0;
+    u32 max_check = pyr->levels < 4 ? pyr->levels : 4;
+    for (u32 m = 0; m < max_check; ++m) {
+        aether_mdl_hiz_vis_query_t q;
+        aether_mdl_hiz_vis_query_at_mip(pyr, x0, y0, x1, y1, object_depth, (i32)m, &q);
+        if (!q.valid) continue;
+        if (q.nearest_hiz < nearest) { nearest = q.nearest_hiz; used = (i32)m; }
+        if (q.occluded) any_occ = true;
+    }
+    f32 od = object_depth < 0.f ? 0.f : (object_depth > 1.f ? 1.f : object_depth);
+    if (out) {
+        out->screen_x0 = x0; out->screen_y0 = y0;
+        out->screen_x1 = x1; out->screen_y1 = y1;
+        out->object_depth = od;
+        out->nearest_hiz = nearest;
+        out->mip_used = used;
+        out->occluded = any_occ;
+        out->visible = !any_occ;
+        out->valid = true;
+    }
+    return any_occ ? 0 : 1;
+}
+
+/* ---------- Fixture skin pages ---------- */
+void aether_mdl_skin_pages_init(aether_mdl_skin_page_set_t *set) {
+    if (!set) return;
+    memset(set, 0, sizeof(*set));
+}
+
+static void skin_page_fill(aether_mdl_skin_page_t *page, u8 group, u8 tex) {
+    memset(page, 0, sizeof(*page));
+    page->width = AETHER_MDL_SKIN_PAGE_W;
+    page->height = AETHER_MDL_SKIN_PAGE_H;
+    page->group = group;
+    page->tex = tex;
+    page->valid = true;
+    for (u32 y = 0; y < page->height; ++y) {
+        for (u32 x = 0; x < page->width; ++x) {
+            u32 i = (y * page->width + x) * 4u;
+            int on = ((x / 2) ^ (y / 2)) & 1;
+            /* Distinct tint per group/tex (clean-room, not HL skins). */
+            u8 r = (u8)(40 + group * 50 + (on ? 80 : 0) + tex * 10);
+            u8 g = (u8)(50 + tex * 45 + (on ? 60 : 20) + group * 8);
+            u8 b = (u8)(70 + ((group + tex) & 3) * 40 + (on ? 30 : 90));
+            page->rgba[i+0] = r;
+            page->rgba[i+1] = g;
+            page->rgba[i+2] = b;
+            page->rgba[i+3] = 255;
+        }
+    }
+}
+
+u32 aether_mdl_skin_pages_build_fixture(aether_mdl_skin_page_set_t *set, u32 page_count) {
+    if (!set) return 0;
+    aether_mdl_skin_pages_init(set);
+    if (page_count == 0) page_count = 2;
+    if (page_count > AETHER_MDL_SKIN_PAGE_MAX) page_count = AETHER_MDL_SKIN_PAGE_MAX;
+    for (u32 i = 0; i < page_count; ++i) {
+        u8 g = (u8)(i / 2);
+        u8 t = (u8)(i % 2);
+        skin_page_fill(&set->pages[i], g, t);
+    }
+    set->count = page_count;
+    return page_count;
+}
+
+i32 aether_mdl_skin_pages_find(const aether_mdl_skin_page_set_t *set, u8 group, u8 tex) {
+    if (!set) return -1;
+    for (u32 i = 0; i < set->count; ++i)
+        if (set->pages[i].valid && set->pages[i].group == group && set->pages[i].tex == tex)
+            return (i32)i;
+    return -1;
+}
+
+int aether_mdl_skin_page_sample(const aether_mdl_skin_page_t *page,
+                                f32 u, f32 v, f32 out_rgba[4]) {
+    if (out_rgba) { out_rgba[0]=out_rgba[1]=out_rgba[2]=0.f; out_rgba[3]=1.f; }
+    if (!page || !page->valid || !out_rgba) return 0;
+    f32 uu = u - floorf(u);
+    f32 vv = v - floorf(v);
+    if (uu < 0.f) uu += 1.f;
+    if (vv < 0.f) vv += 1.f;
+    u32 x = (u32)(uu * (f32)page->width); if (x >= page->width) x = page->width - 1;
+    u32 y = (u32)(vv * (f32)page->height); if (y >= page->height) y = page->height - 1;
+    const u8 *p = &page->rgba[(y * page->width + x) * 4u];
+    out_rgba[0] = p[0] / 255.f;
+    out_rgba[1] = p[1] / 255.f;
+    out_rgba[2] = p[2] / 255.f;
+    out_rgba[3] = p[3] / 255.f;
+    return 1;
+}
+
+int aether_mdl_skin_pages_sample(const aether_mdl_skin_page_set_t *set,
+                                 u8 group, u8 tex, f32 u, f32 v, f32 out_rgba[4]) {
+    i32 idx = aether_mdl_skin_pages_find(set, group, tex);
+    if (idx < 0) {
+        /* Fallback: first page or procedural tint. */
+        if (set && set->count > 0)
+            return aether_mdl_skin_page_sample(&set->pages[0], u, v, out_rgba);
+        if (out_rgba) {
+            out_rgba[0] = 0.4f + group * 0.1f;
+            out_rgba[1] = 0.3f + tex * 0.15f;
+            out_rgba[2] = 0.5f;
+            out_rgba[3] = 1.f;
+        }
+        return 0;
+    }
+    return aether_mdl_skin_page_sample(&set->pages[idx], u, v, out_rgba);
+}
