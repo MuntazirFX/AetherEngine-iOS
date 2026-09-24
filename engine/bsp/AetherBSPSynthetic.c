@@ -63,8 +63,9 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
         {-256.f,  256.f, 128.f},
     };
 
-    /* Render planes 0..6; clip planes 7..18 (Quake n·p - dist, front = +). */
-    aether_bsp_plane_t planes[19];
+    /* Render planes 0..6; clip planes 7..21 (Quake n·p - dist, front = +).
+     * Ledge: world box x[80..256] y[±256] z[0..16] (16u step ≤ STEPSIZE 18). */
+    aether_bsp_plane_t planes[22];
     memset(planes, 0, sizeof planes);
     planes[0].normal[2] =  1.f; planes[0].dist =    0.f; planes[0].type = 2; /* floor +Z */
     planes[1].normal[2] = -1.f; planes[1].dist = -128.f; planes[1].type = 2; /* ceiling -Z */
@@ -87,6 +88,10 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     planes[16].normal[1] = 1.f; planes[16].dist =  240.f; planes[16].type = 1;
     planes[17].normal[2] = 1.f; planes[17].dist =    0.f; planes[17].type = 2;
     planes[18].normal[2] = 1.f; planes[18].dist =  128.f; planes[18].type = 2;
+    /* Ledge extras: top z=16; standing face x=64 (=80-16); point face x=80. */
+    planes[19].normal[2] = 1.f; planes[19].dist =   16.f; planes[19].type = 2;
+    planes[20].normal[0] = 1.f; planes[20].dist =   64.f; planes[20].type = 0;
+    planes[21].normal[0] = 1.f; planes[21].dist =   80.f; planes[21].type = 0;
 
     aether_bsp_edge_t edges[12] = {
         {0, 1}, {1, 2}, {2, 3}, {3, 0}, /* 0..3 floor ring */
@@ -171,26 +176,44 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     leaves[2].num_marksurfaces = 4;
 
     /* Clipnodes: Quake/GoldSrc layout — children[0]=front(+), children[1]=back(-);
-     * negative child = contents (EMPTY=-1, SOLID=-2). Three box hulls × 6 nodes. */
+     * negative child = contents (EMPTY=-1, SOLID=-2).
+     * 3 room AABB hulls × 6 + 3 solid ledge boxes × 6 = 36 nodes.
+     * Room interior child points at the ledge solid-box subtree. */
     #pragma pack(push, 1)
     typedef struct { i32 plane; i16 children[2]; } synth_clipnode_t;
     #pragma pack(pop)
     enum { SYNTH_CN_EMPTY = -1, SYNTH_CN_SOLID = -2 };
-    synth_clipnode_t clipnodes[18];
+    synth_clipnode_t clipnodes[36];
     memset(clipnodes, 0, sizeof clipnodes);
-    /* Helper: append one AABB hull; returns root index. */
-    #define SYNTH_BOX_HULL(base, pL, pR, pY0, pY1, pZ0, pZ1) do { \
+    /* Room AABB: interior leaf = `interior` (ledge root or EMPTY). */
+    #define SYNTH_BOX_HULL(base, pL, pR, pY0, pY1, pZ0, pZ1, interior) do { \
         clipnodes[(base)+0].plane = (pL);  clipnodes[(base)+0].children[0] = (i16)((base)+1); clipnodes[(base)+0].children[1] = SYNTH_CN_SOLID; \
         clipnodes[(base)+1].plane = (pR);  clipnodes[(base)+1].children[0] = SYNTH_CN_SOLID;   clipnodes[(base)+1].children[1] = (i16)((base)+2); \
         clipnodes[(base)+2].plane = (pY0); clipnodes[(base)+2].children[0] = (i16)((base)+3); clipnodes[(base)+2].children[1] = SYNTH_CN_SOLID; \
         clipnodes[(base)+3].plane = (pY1); clipnodes[(base)+3].children[0] = SYNTH_CN_SOLID;   clipnodes[(base)+3].children[1] = (i16)((base)+4); \
         clipnodes[(base)+4].plane = (pZ0); clipnodes[(base)+4].children[0] = (i16)((base)+5); clipnodes[(base)+4].children[1] = SYNTH_CN_SOLID; \
-        clipnodes[(base)+5].plane = (pZ1); clipnodes[(base)+5].children[0] = SYNTH_CN_SOLID;   clipnodes[(base)+5].children[1] = SYNTH_CN_EMPTY; \
+        clipnodes[(base)+5].plane = (pZ1); clipnodes[(base)+5].children[0] = SYNTH_CN_SOLID;   clipnodes[(base)+5].children[1] = (i16)(interior); \
     } while (0)
-    SYNTH_BOX_HULL(0,  7,  8,  9, 10, 11, 12); /* hull 0 / point — exact room */
-    SYNTH_BOX_HULL(6, 13, 14, 15, 16, 17, 18); /* hull 1 standing — XY inset 16 */
-    SYNTH_BOX_HULL(12,13, 14, 15, 16, 17, 18); /* hull 2 crouch — same AABB (stub) */
+    /* Solid obstacle AABB: outside → EMPTY, inside all faces → SOLID. */
+    #define SYNTH_SOLID_BOX(base, pL, pR, pY0, pY1, pZ0, pZ1) do { \
+        clipnodes[(base)+0].plane = (pL);  clipnodes[(base)+0].children[0] = (i16)((base)+1); clipnodes[(base)+0].children[1] = SYNTH_CN_EMPTY; \
+        clipnodes[(base)+1].plane = (pR);  clipnodes[(base)+1].children[0] = SYNTH_CN_EMPTY;   clipnodes[(base)+1].children[1] = (i16)((base)+2); \
+        clipnodes[(base)+2].plane = (pY0); clipnodes[(base)+2].children[0] = (i16)((base)+3); clipnodes[(base)+2].children[1] = SYNTH_CN_EMPTY; \
+        clipnodes[(base)+3].plane = (pY1); clipnodes[(base)+3].children[0] = SYNTH_CN_EMPTY;   clipnodes[(base)+3].children[1] = (i16)((base)+4); \
+        clipnodes[(base)+4].plane = (pZ0); clipnodes[(base)+4].children[0] = (i16)((base)+5); clipnodes[(base)+4].children[1] = SYNTH_CN_EMPTY; \
+        clipnodes[(base)+5].plane = (pZ1); clipnodes[(base)+5].children[0] = SYNTH_CN_EMPTY;   clipnodes[(base)+5].children[1] = SYNTH_CN_SOLID; \
+    } while (0)
+    /* Room hulls → ledge subtrees at 18 / 24 / 30. */
+    SYNTH_BOX_HULL(0,  7,  8,  9, 10, 11, 12, 18); /* hull 0 / point */
+    SYNTH_BOX_HULL(6, 13, 14, 15, 16, 17, 18, 24); /* hull 1 standing */
+    SYNTH_BOX_HULL(12,13, 14, 15, 16, 17, 18, 30); /* hull 2 crouch (stub) */
+    /* Point ledge: x[80..256] y[±256] z[0..16] */
+    SYNTH_SOLID_BOX(18, 21,  8,  9, 10, 11, 19);
+    /* Standing/crouch ledge: x[64..240] y[±240] z[0..16] (XY inset 16) */
+    SYNTH_SOLID_BOX(24, 20, 14, 15, 16, 17, 19);
+    SYNTH_SOLID_BOX(30, 20, 14, 15, 16, 17, 19);
     #undef SYNTH_BOX_HULL
+    #undef SYNTH_SOLID_BOX
 
     aether_bsp_model_t model;
     memset(&model, 0, sizeof model);

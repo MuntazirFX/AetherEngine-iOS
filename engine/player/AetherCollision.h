@@ -33,13 +33,20 @@ bool aether_collision_point_in_solid(const aether_collision_t *c,
                                      aether_vec3_t point,
                                      i32 hull_index);
 
+/* Quake/GoldSrc default auto-step height (units). */
+#define AETHER_DEFAULT_STEP_HEIGHT  18.0f
+
 /* Try to move from `from` to `to`. Returns corrected position after
- * resolving collisions along each axis. If out_on_ground is non-NULL,
- * sets it to true if the downward motion was blocked (player is on floor). */
+ * resolving collisions along each axis (move-and-slide).
+ * If horizontal motion is blocked but a ledge ≤ max_step would clear,
+ * attempts Quake-style up → forward → down step-up.
+ * max_step <= 0 disables step-up. If out_on_ground is non-NULL, sets it
+ * when downward motion was blocked (player is on floor). */
 aether_vec3_t aether_collision_move(aether_collision_t *c,
                                      aether_vec3_t from,
                                      aether_vec3_t to,
                                      i32 hull_index,
+                                     f32 max_step,
                                      bool *out_on_ground);
 
 /* Diagnostics / bridge */
