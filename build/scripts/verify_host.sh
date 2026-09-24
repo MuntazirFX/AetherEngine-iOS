@@ -375,3 +375,17 @@ bash build/scripts/package_ipa.sh --dry-run --sign-check >/dev/null || fail "pac
 ok "batch hiz-gpu-downsample/portal-windings/mdl-skinref/ipa-sign API symbols present"
 
 
+
+
+info "batch hiz-gpu-encode / portal-clip / studio-skinref-remap / ipa-dispatch"
+grep -q "aether_mdl_hiz_encode_from_depth\|aether_mdl_hiz_live_encode_plan\|aether_mdl_hiz_live_encode_was_encoded" engine/model/AetherModelFixture.h || fail "missing Hi-Z live encode from depth"
+grep -q "aether_depth_hiz_live_encode_plan\|aether_depth_hiz_live_encode_needed" engine/render/AetherDepthPrepass.h || fail "missing depth Hi-Z live encode plan"
+grep -q "aether_portal_winding_clip_reflect_planes\|aether_portal_winding_clip_planes\|aether_water_reflect_portal_clip_plan" engine/render/AetherWater.h || fail "missing portal clip reflect planes"
+grep -q "aether_mdl_skinref_remap_draw\|aether_mdl_skinref_remap_uv\|aether_mdl_skinref_remap_sample" engine/model/AetherModelFixture.h || fail "missing skinref remap draw"
+grep -q "dry_run_validate\|gh workflow run\|workflow_dispatch" .github/workflows/build-arm64.yml README.md || fail "missing IPA dry-run dispatch docs/inputs"
+grep -q "aether_hiz_encode_from_depth\|aether_portal_winding_reflect_clip_fragment\|aether_mdl_skinref_remap_fragment" ios/AetherApp/Shaders.metal || fail "missing Metal live encode/portal clip/skinref remap"
+grep -q "engine_mdl_hiz_encode_from_depth\|engine_portal_winding_clip_reflect_planes\|engine_mdl_skinref_remap_draw\|engine_water_reflect_portal_clip_plan" ios/AetherApp/EngineBridge.h || fail "missing bridge batch18"
+grep -q "engine_mdl_hiz_encode_from_depth\|engine_portal_winding_clip_reflect_planes\|engine_mdl_skinref_remap_draw\|engine_depth_hiz_live_encode_plan" ios/AetherApp/MetalRenderer.swift || fail "missing metal batch18 encode"
+grep -q "hiz-gpu-encode\|portal-clip\|skinref-remap\|~80%" README.md || fail "missing batch18 README"
+grep -q "smoke_batch_hiz_gpu_encode_portal_clip_studio_skinref_remap_ipa_dispatch" tests/host_smoke.c || fail "missing batch18 smoke"
+ok "batch hiz-gpu-encode/portal-clip/studio-skinref-remap/ipa-dispatch API symbols present"

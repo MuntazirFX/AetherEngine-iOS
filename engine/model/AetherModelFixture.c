@@ -2429,3 +2429,129 @@ u32 aether_mdl_write_skinref_fixture(u8 *out, u32 cap) {
     return need;
 }
 
+
+
+/* ===== Live Hi-Z encode from depth + skinref remap (batch18) ===== */
+
+void aether_mdl_hiz_live_encode_plan_init(aether_mdl_hiz_live_encode_plan_t *plan) {
+    if (!plan) return;
+    memset(plan, 0, sizeof(*plan));
+}
+
+u32 aether_mdl_hiz_encode_from_depth(aether_mdl_hiz_pyramid_t *pyr,
+                                     aether_mdl_hiz_array_t *arr,
+                                     aether_mdl_hiz_array_downsample_t *ds,
+                                     const f32 *depth_lin, u32 depth_count,
+                                     u32 w, u32 h,
+                                     aether_mdl_hiz_live_encode_plan_t *plan) {
+    if (plan) aether_mdl_hiz_live_encode_plan_init(plan);
+    if (!pyr || !arr || !ds || !depth_lin || w == 0 || h == 0) return 0;
+    if (depth_count < w * h) return 0;
+
+    aether_mdl_hiz_pyramid_reset(pyr, w, h);
+    u32 written = 0;
+    for (u32 y = 0; y < h; ++y) {
+        for (u32 x = 0; x < w; ++x) {
+            f32 z = depth_lin[y * w + x];
+            if (z < 0.f) z = 0.f;
+            if (z > 1.f) z = 1.f;
+            aether_mdl_hiz_pyramid_write(pyr, x, y, z);
+            written++;
+        }
+    }
+    /* Build remaining mips via host 2x2 min (mirrors Metal downsample). */
+    aether_mdl_hiz_build_pyramid(pyr);
+
+    u32 slices = aether_mdl_hiz_array_downsample_chain(pyr, arr, ds);
+    if (slices == 0) return 0;
+
+    if (plan) {
+        plan->fill_mip0_from_depth = true;
+        plan->downsample_chain = (ds->compute_passes > 0);
+        plan->from_depth_texture = true;
+        plan->needed = true;
+        plan->mip0_w = w;
+        plan->mip0_h = h;
+        plan->slices = slices;
+        plan->encode_passes = 1u + (ds->compute_passes > 0 ? ds->compute_passes : 0);
+        if (plan->encode_passes < 1) plan->encode_passes = 1;
+        plan->depth_samples = written;
+        plan->encoded = false;
+    }
+    return slices;
+}
+
+void aether_mdl_hiz_live_encode_mark(aether_mdl_hiz_live_encode_plan_t *plan) {
+    if (!plan) return;
+    plan->encoded = plan->needed && plan->fill_mip0_from_depth && plan->slices > 0;
+}
+
+bool aether_mdl_hiz_live_encode_was_encoded(const aether_mdl_hiz_live_encode_plan_t *plan) {
+    return plan && plan->encoded;
+}
+
+void aether_mdl_skinref_remap_init(aether_mdl_skinref_remap_t *r) {
+    if (!r) return;
+    memset(r, 0, sizeof(*r));
+    r->uv_scale[0] = 1.f; r->uv_scale[1] = 1.f;
+    r->atlas[2] = 1.f; r->atlas[3] = 1.f;
+}
+
+int aether_mdl_skinref_remap_draw(const aether_mdl_skinref_table_t *t,
+                                  u32 draw_slot,
+                                  aether_mdl_skinref_remap_t *out) {
+    if (!out) return 0;
+    aether_mdl_skinref_remap_init(out);
+    u32 fam = 0, ref = 0; u8 g = 0, tx = 0; u16 skin = 0;
+    if (!aether_mdl_skinref_resolve(t, &fam, &ref, &g, &tx, &skin)) return 0;
+    out->family = fam;
+    out->ref = ref;
+    out->group = g;
+    out->tex = tx;
+    out->skin_index = skin;
+    out->draw_slot = draw_slot;
+    /* Atlas cell from family/ref grid (2x2 families×refs for fixture). */
+    f32 cell_u = 0.5f;
+    f32 cell_v = 0.5f;
+    out->atlas[0] = (f32)(ref & 1u) * cell_u;
+    out->atlas[1] = (f32)(fam & 1u) * cell_v;
+    out->atlas[2] = out->atlas[0] + cell_u;
+    out->atlas[3] = out->atlas[1] + cell_v;
+    out->uv_scale[0] = cell_u;
+    out->uv_scale[1] = cell_v;
+    out->uv_offset[0] = out->atlas[0];
+    out->uv_offset[1] = out->atlas[1];
+    out->valid = true;
+    return 1;
+}
+
+void aether_mdl_skinref_remap_uv(const aether_mdl_skinref_remap_t *r,
+                                 f32 u, f32 v, f32 out_uv[2]) {
+    if (!out_uv) return;
+    if (!r || !r->valid) {
+        out_uv[0] = u; out_uv[1] = v;
+        return;
+    }
+    f32 uu = u - floorf(u); if (uu < 0.f) uu += 1.f;
+    f32 vv = v - floorf(v); if (vv < 0.f) vv += 1.f;
+    out_uv[0] = r->uv_offset[0] + uu * r->uv_scale[0];
+    out_uv[1] = r->uv_offset[1] + vv * r->uv_scale[1];
+}
+
+int aether_mdl_skinref_remap_sample(const aether_mdl_skinref_remap_t *r,
+                                    const aether_mdl_skin_page_set_t *pages,
+                                    f32 u, f32 v, f32 out_rgba[4]) {
+    if (!r || !r->valid || !out_rgba) return 0;
+    f32 uv[2];
+    aether_mdl_skinref_remap_uv(r, u, v, uv);
+    if (pages && pages->count > 0)
+        return aether_mdl_skin_pages_sample(pages, r->group, r->tex, uv[0], uv[1], out_rgba);
+    /* Procedural tint when pages absent. */
+    f32 fam = (f32)r->family * 0.3f;
+    f32 rf  = (f32)r->ref * 0.15f;
+    out_rgba[0] = 0.40f + fam + uv[0] * 0.1f;
+    out_rgba[1] = 0.50f + rf + uv[1] * 0.1f;
+    out_rgba[2] = 0.45f + 0.08f * (f32)r->tex;
+    out_rgba[3] = 1.f;
+    return 1;
+}

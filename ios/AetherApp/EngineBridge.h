@@ -905,5 +905,27 @@ int  engine_mdl_skinref_resolve(unsigned *out_family, unsigned *out_ref,
                                 unsigned *out_skin_index);
 int  engine_mdl_skinref_sample(float u, float v, float *out_rgba4);
 
-#endif /* ENGINE_BRIDGE_H */
+/* ---------- Batch: hiz-gpu-encode / portal-clip / skinref-remap / ipa-dispatch ---------- */
+int  engine_mdl_hiz_encode_from_depth(unsigned w, unsigned h,
+                                      unsigned *out_slices, unsigned *out_passes,
+                                      unsigned *out_samples, int *out_needed);
+int  engine_mdl_hiz_live_encode_mark(void);
+int  engine_mdl_hiz_live_encode_was_encoded(void);
+int  engine_depth_hiz_live_encode_plan(unsigned mip0_w, unsigned mip0_h, unsigned slices,
+                                       unsigned *out_passes, int *out_needed);
 
+int  engine_portal_winding_clip_reflect_planes(unsigned *out_verts,
+                                               unsigned *out_planes_applied);
+unsigned engine_water_reflect_portal_clip_plan(float eye_x, float eye_y, float eye_z,
+                                               unsigned max_depth,
+                                               unsigned *out_views,
+                                               unsigned *out_clip_verts);
+
+int  engine_mdl_skinref_remap_draw(unsigned draw_slot,
+                                   unsigned *out_family, unsigned *out_ref,
+                                   unsigned *out_group, unsigned *out_tex,
+                                   unsigned *out_skin, unsigned *out_slot);
+int  engine_mdl_skinref_remap_uv(float u, float v, float *out_u, float *out_v);
+int  engine_mdl_skinref_remap_sample(float u, float v, float *out_rgba4);
+
+#endif /* ENGINE_BRIDGE_H */

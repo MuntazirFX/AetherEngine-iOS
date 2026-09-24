@@ -282,3 +282,43 @@ bool aether_depth_hiz_downsample_vis_ready(const aether_depth_hiz_downsample_bin
     return b && b->bound && b->vis_query_bound;
 }
 
+
+
+/* ===== Live Hi-Z encode from depth prepass (batch18) ===== */
+
+void aether_depth_hiz_live_encode_init(aether_depth_hiz_live_encode_t *e) {
+    if (!e) return;
+    memset(e, 0, sizeof(*e));
+}
+
+int aether_depth_hiz_live_encode_plan(const aether_depth_prepass_t *d,
+                                      u32 mip0_w, u32 mip0_h, u32 slices,
+                                      aether_depth_hiz_live_encode_t *out) {
+    if (!out) return 0;
+    aether_depth_hiz_live_encode_init(out);
+    if (!d || !d->enabled) return 0;
+    if (mip0_w == 0 || mip0_h == 0) return 0;
+    out->depth_ready = (d->width > 0 && d->height > 0) || d->recorded;
+    out->encode_from_depth = true;
+    out->downsample_after = true;
+    out->needed = true;
+    out->mip0_w = mip0_w;
+    out->mip0_h = mip0_h;
+    out->slices = slices ? slices : 4;
+    /* fill + (slices-1) downsample passes */
+    out->encode_passes = 1u + (out->slices > 1 ? out->slices - 1 : 0);
+    return 1;
+}
+
+void aether_depth_hiz_live_encode_mark(aether_depth_hiz_live_encode_t *e) {
+    if (!e) return;
+    e->encoded = e->needed && e->encode_from_depth && e->slices > 0;
+}
+
+bool aether_depth_hiz_live_encode_was_encoded(const aether_depth_hiz_live_encode_t *e) {
+    return e && e->encoded;
+}
+
+bool aether_depth_hiz_live_encode_needed(const aether_depth_hiz_live_encode_t *e) {
+    return e && e->needed;
+}

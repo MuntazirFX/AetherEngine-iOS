@@ -175,4 +175,25 @@ void aether_depth_hiz_downsample_bind_mark(aether_depth_hiz_downsample_bind_t *b
 bool aether_depth_hiz_downsample_bind_was_bound(const aether_depth_hiz_downsample_bind_t *b);
 bool aether_depth_hiz_downsample_vis_ready(const aether_depth_hiz_downsample_bind_t *b);
 
+/* ---------- Live Hi-Z encode plan from depth prepass (Metal frame path) ---------- */
+typedef struct aether_depth_hiz_live_encode {
+    bool depth_ready;          /* depth prepass ensure/record ready */
+    bool encode_from_depth;    /* fill mip0 from depth texture */
+    bool downsample_after;     /* chain downsample after fill */
+    bool needed;
+    bool encoded;
+    u32  mip0_w, mip0_h;
+    u32  encode_passes;
+    u32  slices;
+} aether_depth_hiz_live_encode_t;
+
+void aether_depth_hiz_live_encode_init(aether_depth_hiz_live_encode_t *e);
+/* Plan live Metal encode: depth → mip0 → downsample when prepass needed. */
+int  aether_depth_hiz_live_encode_plan(const aether_depth_prepass_t *d,
+                                       u32 mip0_w, u32 mip0_h, u32 slices,
+                                       aether_depth_hiz_live_encode_t *out);
+void aether_depth_hiz_live_encode_mark(aether_depth_hiz_live_encode_t *e);
+bool aether_depth_hiz_live_encode_was_encoded(const aether_depth_hiz_live_encode_t *e);
+bool aether_depth_hiz_live_encode_needed(const aether_depth_hiz_live_encode_t *e);
+
 #endif /* AETHER_DEPTH_PREPASS_H */
