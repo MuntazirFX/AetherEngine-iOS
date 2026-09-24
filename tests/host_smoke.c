@@ -33,6 +33,9 @@
 #include "AetherEntityBase.h"
 #include "AetherEntitySpawn.h"
 #include "AetherWorld.h"
+#include "AetherCollision.h"
+#include "AetherPlayer.h"
+#include "AetherInput.h"
 #include "AetherMath.h"
 
 /* Host stubs for Metal backend entry points (Swift provides these on iOS). */
@@ -243,7 +246,7 @@ int main(void) {
         expect(aether_bsp_vertex_count(bsp) == 8u, "bsp_synthetic_verts");
         expect(aether_bsp_face_count(bsp) == 6u, "bsp_synthetic_faces");
         expect(aether_bsp_edge_count(bsp) == 12u, "bsp_synthetic_edges");
-        expect(aether_bsp_plane_count(bsp) == 7u, "bsp_synthetic_planes"); /* +X=0 split */
+        expect(aether_bsp_plane_count(bsp) == 19u, "bsp_synthetic_planes"); /* render 7 + clip 12 */
         expect(aether_bsp_node_count(bsp) == 1u, "bsp_synthetic_nodes");
         expect(aether_bsp_leaf_count(bsp) == 3u, "bsp_synthetic_leaves"); /* solid + west + east */
 
@@ -326,6 +329,75 @@ int main(void) {
             free(idx);
             printf("  VIS cull: full=%u faces, leaf-only west=%u faces/%u idx (before=%u indices)\n",
                    st_pvs.visible_faces, st_w.visible_faces, n_w, mesh->index_count);
+        }
+
+        /* Clipnodes / collision: floor soak + wall block (feeds player move). */
+        {
+            u32 clip_sz = aether_bsp_lump_size(bsp, AETHER_BSP_LUMP_CLIPNODES);
+            expect(clip_sz >= 18u * 8u, "bsp_synthetic_clipnodes_lump"); /* 18 × sizeof(clipnode)=8 */
+            aether_collision_t *col = aether_collision_build(bsp);
+            expect(col != NULL, "collision_build");
+            expect(aether_collision_clipnode_count(col) == 18u, "collision_clipnode_count");
+            expect(aether_collision_hull_root(col, 1) == 6, "collision_hull1_root");
+            expect(aether_collision_hull_root(col, 2) == 12, "collision_hull2_root");
+
+            /* Interior empty, below floor solid, outside wall solid. */
+            expect(!aether_collision_point_in_solid(col, (aether_vec3_t){0, 0, 40}, 1),
+                   "collision_interior_empty");
+            expect(aether_collision_point_in_solid(col, (aether_vec3_t){0, 0, -1}, 1),
+                   "collision_below_floor_solid");
+            expect(aether_collision_point_in_solid(col, (aether_vec3_t){250, 0, 40}, 1),
+                   "collision_past_wall_solid"); /* standing inset → |x|>240 solid */
+            expect(!aether_collision_point_in_solid(col, (aether_vec3_t){200, 0, 40}, 1),
+                   "collision_inside_wall_margin_empty");
+
+            /* Trace down onto floor → on_ground, z settles near 0. */
+            bool on_ground = false;
+            aether_vec3_t landed = aether_collision_move(
+                col, (aether_vec3_t){0, 0, 40}, (aether_vec3_t){0, 0, -10}, 1, &on_ground);
+            expect(on_ground, "collision_trace_hits_floor");
+            expect(landed.z >= -0.05f && landed.z <= 0.05f, "collision_land_z_near_0");
+
+            /* Walk into +X wall → X clamped, Y free. */
+            on_ground = false;
+            aether_vec3_t slid = aether_collision_move(
+                col, (aether_vec3_t){200, 0, 40}, (aether_vec3_t){300, 50, 40}, 1, &on_ground);
+            expect(slid.x < 241.f && slid.x > 200.f - 1.f, "collision_wall_blocks_x");
+            expect(fabsf(slid.y - 50.f) < 1e-2f, "collision_wall_allows_slide_y");
+
+            /* Player gravity soak: fall from spawn height onto floor. */
+            aether_player_t ply;
+            aether_player_init(&ply);
+            aether_player_set_position(&ply, (aether_vec3_t){0, 0, 70});
+            aether_input_t *in = aether_input_create();
+            expect(in != NULL, "collision_player_input");
+            for (int i = 0; i < 180; ++i) {
+                aether_input_begin_frame(in);
+                aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                aether_input_end_frame(in);
+            }
+            expect(ply.on_ground, "player_lands_on_ground");
+            expect(ply.position.z >= -0.1f && ply.position.z <= 2.0f, "player_feet_on_floor");
+
+            /* Holding forward into wall does not tunnel. */
+            aether_player_set_position(&ply, (aether_vec3_t){220, 0, 1});
+            ply.on_ground = true;
+            for (int i = 0; i < 60; ++i) {
+                aether_input_begin_frame(in);
+                aether_input_set_move(in, 1.f, 0.f); /* +X wish via right when yaw=0 → actually move_x */
+                /* yaw=0 → forward=+X in player? forward = (cy*cp, sy*cp, sp) with yaw=0 → (+1,0,0)
+                   wish uses move_y for forward, move_x for right.
+                   Touch "forward" is typically move_y. Push +X with yaw facing +Y so right=+X. */
+                ply.yaw = 1.5707963f; /* +90° → forward=+Y, right=+X */
+                aether_input_set_move(in, 1.f, 0.f);
+                aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                aether_input_end_frame(in);
+            }
+            expect(ply.position.x < 241.f, "player_cannot_walk_through_wall");
+            aether_input_destroy(in);
+            aether_collision_free(col);
+            printf("  collision: floor land z=%.3f, wall slide ok, player ground=%d z=%.3f\n",
+                   landed.z, ply.on_ground ? 1 : 0, ply.position.z);
         }
 
         /* Lightmap stub: procedural atlas + mesh LUV (feeds Metal sample). */

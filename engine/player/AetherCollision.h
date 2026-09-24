@@ -42,7 +42,9 @@ aether_vec3_t aether_collision_move(aether_collision_t *c,
                                      i32 hull_index,
                                      bool *out_on_ground);
 
-/* Diagnostics */
+/* Diagnostics / bridge */
+u32 aether_collision_clipnode_count(const aether_collision_t *c);
+i32 aether_collision_hull_root(const aether_collision_t *c, i32 hull_index);
 void aether_collision_dump(const aether_collision_t *c);
 
 #ifdef __cplusplus

@@ -275,6 +275,35 @@ void engine_player_set_position(float x, float y, float z) {
 void  engine_player_set_angles(float y, float p) { g_player.yaw = y; g_player.pitch = p; }
 float engine_player_get_yaw(void)   { return g_player.yaw; }
 float engine_player_get_pitch(void) { return g_player.pitch; }
+int engine_player_on_ground(void)   { return g_player.on_ground ? 1 : 0; }
+
+/* ---------- Collision ---------- */
+int engine_collision_ready(void) {
+    return (g_collision && aether_collision_clipnode_count(g_collision) > 0) ? 1 : 0;
+}
+int engine_collision_clipnode_count(void) {
+    return g_collision ? (int)aether_collision_clipnode_count(g_collision) : 0;
+}
+int engine_collision_hull_root(int hull_index) {
+    return g_collision ? (int)aether_collision_hull_root(g_collision, hull_index) : -1;
+}
+int engine_collision_point_in_solid(float x, float y, float z, int hull_index) {
+    if (!g_collision) return 0;
+    aether_vec3_t p = { x, y, z };
+    return aether_collision_point_in_solid(g_collision, p, hull_index) ? 1 : 0;
+}
+int engine_collision_move(float from_x, float from_y, float from_z,
+                          float to_x, float to_y, float to_z,
+                          int hull_index, float out_xyz[3]) {
+    aether_vec3_t from = { from_x, from_y, from_z };
+    aether_vec3_t to   = { to_x, to_y, to_z };
+    bool on_ground = false;
+    aether_vec3_t r = to;
+    if (g_collision)
+        r = aether_collision_move(g_collision, from, to, hull_index, &on_ground);
+    if (out_xyz) { out_xyz[0] = r.x; out_xyz[1] = r.y; out_xyz[2] = r.z; }
+    return on_ground ? 1 : 0;
+}
 
 /* ---------- HUD ---------- */
 float engine_hud_health(void) { return aether_player_health_get(&g_player_health); }

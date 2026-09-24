@@ -105,14 +105,38 @@ bool aether_collision_point_in_solid(const aether_collision_t *c,
               + pl->normal[2]*point.z
               - pl->dist;
 
-        /* GoldSrc convention: negative d → solid side. */
-        idx = (d < 0.0f) ? cn->children[0] : cn->children[1];
+        /* Quake/GoldSrc: children[0]=front (d>=0), children[1]=back (d<0). */
+        idx = (d < 0.0f) ? cn->children[1] : cn->children[0];
     }
-    /* Reached a leaf. Leaf content is (idx) as a negative enum. */
+    /* Reached a leaf. Negative idx is contents (EMPTY=-1, SOLID=-2, …). */
     return (idx == AETHER_CONTENTS_SOLID);
 }
 
-/* ---------- Axis-separated movement ---------- */
+/* Binary-search the farthest non-solid point along one axis from `base`. */
+static f32 collision_slide_axis(const aether_collision_t *c,
+                                aether_vec3_t base,
+                                i32 axis,
+                                f32 dest,
+                                i32 hull_index) {
+    aether_vec3_t t = base;
+    f32 *comp = (axis == 0) ? &t.x : (axis == 1) ? &t.y : &t.z;
+    *comp = dest;
+    if (!aether_collision_point_in_solid(c, t, hull_index)) return dest;
+
+    f32 lo = (axis == 0) ? base.x : (axis == 1) ? base.y : base.z;
+    f32 hi = dest;
+    for (int i = 0; i < 12; ++i) {
+        f32 mid = 0.5f * (lo + hi);
+        *comp = mid;
+        if (aether_collision_point_in_solid(c, t, hull_index))
+            hi = mid;
+        else
+            lo = mid;
+    }
+    return lo;
+}
+
+/* ---------- Axis-separated movement (move-and-slide) ---------- */
 aether_vec3_t aether_collision_move(aether_collision_t *c,
                                      aether_vec3_t from,
                                      aether_vec3_t to,
@@ -123,28 +147,29 @@ aether_vec3_t aether_collision_move(aether_collision_t *c,
 
     aether_vec3_t result = from;
 
-    /* --- Move X --- */
-    if (to.x != from.x) {
-        aether_vec3_t t = result; t.x = to.x;
-        if (!aether_collision_point_in_solid(c, t, hull_index)) result.x = t.x;
-    }
-    /* --- Move Y --- */
-    if (to.y != from.y) {
-        aether_vec3_t t = result; t.y = to.y;
-        if (!aether_collision_point_in_solid(c, t, hull_index)) result.y = t.y;
-    }
-    /* --- Move Z --- */
+    if (to.x != from.x)
+        result.x = collision_slide_axis(c, result, 0, to.x, hull_index);
+    if (to.y != from.y)
+        result.y = collision_slide_axis(c, result, 1, to.y, hull_index);
     if (to.z != from.z) {
-        aether_vec3_t t = result; t.z = to.z;
-        if (!aether_collision_point_in_solid(c, t, hull_index)) {
-            result.z = t.z;
-        } else if (to.z < from.z && out_on_ground) {
-            /* Downward motion blocked → landed on ground. */
+        f32 nz = collision_slide_axis(c, result, 2, to.z, hull_index);
+        if (to.z < from.z && nz > to.z + 1e-3f && out_on_ground) {
+            /* Downward motion clipped → landed on ground. */
             *out_on_ground = true;
         }
+        result.z = nz;
     }
 
     return result;
+}
+
+u32 aether_collision_clipnode_count(const aether_collision_t *c) {
+    return c ? c->clipnode_count : 0;
+}
+
+i32 aether_collision_hull_root(const aether_collision_t *c, i32 hull_index) {
+    if (!c || hull_index < 0 || hull_index > 2) return -1;
+    return c->hull_root[hull_index];
 }
 
 void aether_collision_dump(const aether_collision_t *c) {
