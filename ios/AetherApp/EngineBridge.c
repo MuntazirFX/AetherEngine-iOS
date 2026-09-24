@@ -251,6 +251,17 @@ void engine_player_tick(float dt) {
     aether_player_update(&g_player, st, g_collision, dt);
     aether_input_end_frame(g_input);
 
+    /* Enter/exit water splash → particle burst at mid-body. */
+    {
+        int splash = aether_player_take_splash_event(&g_player);
+        if (splash == AETHER_SPLASH_ENTER || splash == AETHER_SPLASH_EXIT) {
+            float sx = g_player.position.x;
+            float sy = g_player.position.y;
+            float sz = g_player.position.z + g_player.eye_height * 0.5f;
+            (void)engine_particles_spawn_burst(sx, sy, sz, 24);
+        }
+    }
+
     if (g_hud_health) aether_hud_health_tick(g_hud_health, dt);
     if (g_hud_ammo) aether_hud_ammo_tick(g_hud_ammo, dt);
     if (g_hud_crosshair) aether_hud_crosshair_tick(g_hud_crosshair, dt);
@@ -299,6 +310,25 @@ void engine_player_set_crouching(bool crouching) {
 int engine_player_hull_index(void) { return (int)g_player.hull_index; }
 float engine_player_eye_height(void) { return g_player.eye_height; }
 int engine_player_in_water(void) { return g_player.in_water ? 1 : 0; }
+int engine_player_waterlevel(void) { return (int)aether_player_waterlevel(&g_player); }
+int engine_player_eye_underwater(void) {
+    return aether_player_eye_underwater(&g_player) ? 1 : 0;
+}
+float engine_player_air(void) { return aether_player_air(&g_player); }
+float engine_player_air_max(void) { return g_player.air_max; }
+int engine_player_is_drowning(void) {
+    return aether_player_is_drowning(&g_player) ? 1 : 0;
+}
+int engine_player_take_splash(void) {
+    return (int)aether_player_take_splash_event(&g_player);
+}
+void engine_player_trigger_splash(int splash_kind) {
+    aether_player_trigger_splash(&g_player, splash_kind);
+}
+int engine_player_splash_burst(float x, float y, float z, int count) {
+    if (count <= 0) count = 24;
+    return engine_particles_spawn_burst(x, y, z, count);
+}
 
 /* ---------- Collision ---------- */
 int engine_collision_ready(void) {

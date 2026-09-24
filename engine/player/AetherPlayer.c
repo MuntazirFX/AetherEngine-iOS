@@ -1,4 +1,4 @@
-/* AetherPlayer.c — Player movement with gravity + collision + swim.
+/* AetherPlayer.c — Player movement with gravity + collision + swim + waterlevel.
  * AetherEngine-iOS · Clean-room.
  */
 #include "AetherPlayer.h"
@@ -22,6 +22,66 @@
 #define WATER_GRAVITY_SCALE 0.25f
 #define WATER_BUOYANCY      220.0f    /* upward accel while submerged */
 #define SWIM_VERT_SPEED     180.0f
+#define AIR_RECOVER_SCALE   2.0f      /* air refill rate vs drain */
+
+static bool point_in_water(const aether_collision_t *collision,
+                           aether_vec3_t point,
+                           i32 hull_index) {
+    if (!collision) return false;
+    return aether_collision_point_contents(collision, point, hull_index)
+        == AETHER_CONTENTS_WATER;
+}
+
+i32 aether_player_sample_waterlevel(const aether_collision_t *collision,
+                                    aether_vec3_t feet,
+                                    f32 eye_height,
+                                    i32 hull_index) {
+    if (!collision) return AETHER_WATERLEVEL_DRY;
+    if (eye_height < 1.0f) eye_height = DEFAULT_EYE_HEIGHT;
+
+    aether_vec3_t eye = { feet.x, feet.y, feet.z + eye_height };
+    aether_vec3_t waist = { feet.x, feet.y, feet.z + eye_height * 0.5f };
+
+    /* Highest submerged sample wins (eye > waist > feet). */
+    if (point_in_water(collision, eye, hull_index))
+        return AETHER_WATERLEVEL_EYE;
+    if (point_in_water(collision, waist, hull_index))
+        return AETHER_WATERLEVEL_WAIST;
+    if (point_in_water(collision, feet, hull_index))
+        return AETHER_WATERLEVEL_FEET;
+    return AETHER_WATERLEVEL_DRY;
+}
+
+static void player_refresh_water(aether_player_t *p,
+                                 aether_collision_t *collision) {
+    i32 prev = p->waterlevel;
+    i32 lvl = aether_player_sample_waterlevel(collision, p->position,
+                                              p->eye_height, p->hull_index);
+    p->waterlevel = lvl;
+    p->in_water = (lvl >= AETHER_WATERLEVEL_FEET);
+
+    /* Enter/exit splash on dry <-> wet transitions (not tier changes). */
+    bool was_wet = (prev >= AETHER_WATERLEVEL_FEET);
+    bool now_wet = (lvl >= AETHER_WATERLEVEL_FEET);
+    if (!was_wet && now_wet)
+        p->splash_event = AETHER_SPLASH_ENTER;
+    else if (was_wet && !now_wet)
+        p->splash_event = AETHER_SPLASH_EXIT;
+}
+
+static void player_tick_air(aether_player_t *p, f32 dt) {
+    if (dt <= 0.0f) return;
+    bool eye_under = (p->waterlevel >= AETHER_WATERLEVEL_EYE);
+    if (eye_under) {
+        p->air -= dt;
+        if (p->air < 0.0f) p->air = 0.0f;
+        p->drowning = (p->air <= 0.0f);
+    } else {
+        p->air += dt * AIR_RECOVER_SCALE;
+        if (p->air > p->air_max) p->air = p->air_max;
+        p->drowning = false;
+    }
+}
 
 void aether_player_init(aether_player_t *p) {
     if (!p) return;
@@ -38,6 +98,11 @@ void aether_player_init(aether_player_t *p) {
     p->on_ground   = false;
     p->crouching   = false;
     p->in_water    = false;
+    p->waterlevel  = AETHER_WATERLEVEL_DRY;
+    p->air_max     = AETHER_PLAYER_AIR_MAX;
+    p->air         = AETHER_PLAYER_AIR_MAX;
+    p->drowning    = false;
+    p->splash_event = AETHER_SPLASH_NONE;
     p->hull_index  = 1;
     p->step_height = AETHER_DEFAULT_STEP_HEIGHT;
 }
@@ -47,6 +112,8 @@ void aether_player_set_position(aether_player_t *p, aether_vec3_t pos) {
     p->position = pos;
     p->velocity = (aether_vec3_t){ 0, 0, 0 };
     p->on_ground = false;
+    /* Position teleports clear pending splash; waterlevel re-sampled on update. */
+    p->splash_event = AETHER_SPLASH_NONE;
 }
 
 aether_vec3_t aether_player_eye_position(const aether_player_t *p) {
@@ -62,6 +129,35 @@ aether_vec3_t aether_player_forward(const aether_player_t *p) {
 aether_vec3_t aether_player_right(const aether_player_t *p) {
     f32 cy = cosf(p->yaw), sy = sinf(p->yaw);
     return (aether_vec3_t){ -sy, cy, 0 };
+}
+
+i32 aether_player_waterlevel(const aether_player_t *p) {
+    return p ? p->waterlevel : AETHER_WATERLEVEL_DRY;
+}
+
+bool aether_player_eye_underwater(const aether_player_t *p) {
+    return p && p->waterlevel >= AETHER_WATERLEVEL_EYE;
+}
+
+f32 aether_player_air(const aether_player_t *p) {
+    return p ? p->air : 0.0f;
+}
+
+bool aether_player_is_drowning(const aether_player_t *p) {
+    return p && p->drowning;
+}
+
+i32 aether_player_take_splash_event(aether_player_t *p) {
+    if (!p) return AETHER_SPLASH_NONE;
+    i32 ev = p->splash_event;
+    p->splash_event = AETHER_SPLASH_NONE;
+    return ev;
+}
+
+void aether_player_trigger_splash(aether_player_t *p, i32 splash_kind) {
+    if (!p) return;
+    if (splash_kind == AETHER_SPLASH_ENTER || splash_kind == AETHER_SPLASH_EXIT)
+        p->splash_event = splash_kind;
 }
 
 void aether_player_update(aether_player_t *p,
@@ -106,13 +202,9 @@ void aether_player_update(aether_player_t *p,
     f32 wl = aether_vec3_len(wish);
     if (wl > 1.0f) wish = aether_vec3_scale(wish, 1.0f / wl);
 
-    /* 3b. Water contents at feet --- */
-    bool in_water = false;
-    if (collision) {
-        i32 contents = aether_collision_point_contents(collision, p->position, p->hull_index);
-        in_water = (contents == AETHER_CONTENTS_WATER);
-    }
-    p->in_water = in_water;
+    /* 3b. Waterlevel at feet / waist / eye --- */
+    player_refresh_water(p, collision);
+    bool in_water = p->in_water;
 
     f32 speed = p->move_speed * (p->crouching ? CROUCH_SPEED_SCALE : 1.0f);
     if (in_water) speed *= WATER_SPEED_SCALE;
@@ -207,11 +299,9 @@ void aether_player_update(aether_player_t *p,
     p->position = final;
     p->on_ground = on_ground;
 
-    /* Re-sample water after move (may have exited/entered). */
-    if (collision) {
-        i32 contents = aether_collision_point_contents(collision, p->position, p->hull_index);
-        p->in_water = (contents == AETHER_CONTENTS_WATER);
-    }
+    /* Re-sample waterlevel after move (may have exited/entered). */
+    player_refresh_water(p, collision);
+    player_tick_air(p, dt);
 
     /* If blocked along an axis, kill velocity along it (basic) */
     if (fabsf(final.x - target.x) > 1e-3f) p->velocity.x = 0.0f;
