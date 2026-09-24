@@ -34,6 +34,9 @@ aether_result_t  aether_engine_stop (aether_engine_t *e);
 aether_result_t  aether_engine_run  (aether_engine_t *e);
 aether_result_t  aether_engine_step (aether_engine_t *e, f32 dt);
 
+/* Host/frame loop helper: clamp real_dt, update timebase, step subsystems once. */
+aether_result_t  aether_engine_host_frame(aether_engine_t *e, f32 real_dt);
+
 aether_result_t  aether_engine_register_subsystem(aether_engine_t *e, const aether_subsystem_t *sub);
 
 u32              aether_engine_subsystem_count(const aether_engine_t *e);
@@ -45,6 +48,11 @@ const char      *aether_engine_asset_path(const aether_engine_t *e);
 
 u64              aether_engine_frame_count(const aether_engine_t *e);
 f64              aether_engine_elapsed    (const aether_engine_t *e);
+f32              aether_engine_last_dt   (const aether_engine_t *e);
+bool             aether_engine_is_running(const aether_engine_t *e);
+
+void             aether_engine_set_fixed_dt(aether_engine_t *e, f32 dt);
+f32              aether_engine_fixed_dt    (const aether_engine_t *e);
 
 void             aether_engine_request_exit(aether_engine_t *e);
 

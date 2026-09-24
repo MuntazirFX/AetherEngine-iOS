@@ -2,6 +2,7 @@
 // STEP 2i: Synthetic BSP/world → Metal + lightmap + VIS leaf cull.
 
 import SwiftUI
+import UIKit
 
 struct DashboardView: View {
     @State private var alertTitle:   String = ""
@@ -13,6 +14,8 @@ struct DashboardView: View {
     @State private var showScoreboard: Bool = false
     @State private var showChat: Bool = false
     @State private var showConsole: Bool = false
+    @State private var selectedGameDir: String = "valve"
+    @State private var showSettings: Bool = false
 
     let games: [(name: String, dir: String, status: String)] = [
         ("Half-Life", "valve", "Ready"),
@@ -37,6 +40,18 @@ struct DashboardView: View {
                         Text("Classic FPS. Modern Engine.")
                             .font(.subheadline).foregroundColor(.gray)
                     }.padding(.top, 20)
+
+                    Button(action: { showSettings = true }) {
+                        HStack {
+                            Image(systemName: "gearshape.fill")
+                            Text("Settings").fontWeight(.semibold)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                        }
+                        .padding().background(Color.gray.opacity(0.45))
+                        .foregroundColor(.white).cornerRadius(12)
+                    }.padding(.horizontal)
+                    .sheet(isPresented: $showSettings) { SettingsView() }
 
                     // MARK: - Launch Game
                     Button(action: startGame) {
@@ -138,26 +153,44 @@ struct DashboardView: View {
                         .foregroundColor(.black).cornerRadius(12)
                     }.padding(.horizontal)
 
-                    // MARK: - Games list
+                    // MARK: - Games list (STEP 5: selection → launch)
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Text("Installed Games").font(.headline).foregroundColor(.white)
+                            Text("Games").font(.headline).foregroundColor(.white)
                             Spacer()
-                            Text("View All").font(.subheadline).foregroundColor(.blue)
+                            Text("selected: \(selectedGameDir)")
+                                .font(.caption).foregroundColor(.blue)
                         }.padding(.horizontal)
                         ForEach(games, id: \.dir) { g in
-                            HStack {
-                                Circle().fill(g.status == "Ready" ? Color.green : Color.red)
-                                    .frame(width: 10, height: 10)
-                                VStack(alignment: .leading) {
-                                    Text(g.name).foregroundColor(.white)
-                                    Text(g.dir).font(.caption).foregroundColor(.gray)
+                            Button(action: {
+                                selectedGameDir = g.dir
+                                _ = g.dir.withCString { engine_game_select($0) }
+                            }) {
+                                HStack {
+                                    Circle()
+                                        .fill(selectedGameDir == g.dir ? Color.blue : Color.green)
+                                        .frame(width: 10, height: 10)
+                                    VStack(alignment: .leading) {
+                                        Text(g.name).foregroundColor(.white)
+                                        Text(g.dir).font(.caption).foregroundColor(.gray)
+                                    }
+                                    Spacer()
+                                    Text(gameDataLabel(g.dir))
+                                        .font(.caption)
+                                        .foregroundColor(gameDataPresent(g.dir) ? .green : .orange)
+                                    if selectedGameDir == g.dir {
+                                        Image(systemName: "checkmark.circle.fill").foregroundColor(.blue)
+                                    }
                                 }
-                                Spacer()
-                                Text(g.status).font(.caption).foregroundColor(.green)
+                                .padding()
+                                .background(Color(UIColor.secondarySystemBackground))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(selectedGameDir == g.dir ? Color.blue : Color.clear, lineWidth: 2)
+                                )
+                                .cornerRadius(10)
                             }
-                            .padding().background(Color(UIColor.secondarySystemBackground))
-                            .cornerRadius(10).padding(.horizontal)
+                            .padding(.horizontal)
                         }
                     }
 
@@ -224,9 +257,14 @@ struct DashboardView: View {
 
     // MARK: - Actions
 
+    private func launchSelectedGame() {
+        selectedGameDir.withCString { engine_launch_game($0) }
+    }
+
+
     private func loadMapOnly() {
         isLoadingMap = true
-        "valve".withCString { engine_launch_game($0) }
+        launchSelectedGame()
         let ok = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build_or_synthetic($0) }
         isLoadingMap = false
         if ok == 1 {
@@ -249,7 +287,7 @@ struct DashboardView: View {
 
     private func startDemoWorld() {
         isLoadingMap = true
-        "valve".withCString { engine_launch_game($0) }
+        launchSelectedGame()
         let ok = engine_bsp_mesh_build_synthetic()
         isLoadingMap = false
         if ok == 1 {
@@ -265,8 +303,13 @@ struct DashboardView: View {
 
     private func startGame() {
         isLoadingMap = true
-        "valve".withCString { engine_launch_game($0) }
-        let ok = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build_or_synthetic($0) }
+        launchSelectedGame()
+        let mapBase: String = {
+            if let p = engine_game_start_map() { return String(cString: p) }
+            return "c0a0"
+        }()
+        let mapPath = "maps/\(mapBase).bsp"
+        let ok = mapPath.withCString { engine_bsp_mesh_build_or_synthetic($0) }
         isLoadingMap = false
         if ok == 1 {
             engine_vgui_show_main()
@@ -280,7 +323,7 @@ struct DashboardView: View {
     }
 
     private func inspectTextures() {
-        "valve".withCString { engine_launch_game($0) }
+        launchSelectedGame()
         var buffer = [CChar](repeating: 0, count: 8192)
         let result: Int32 = engine_texture_summary_text(&buffer, Int32(buffer.count))
         let output = String(cString: buffer)
@@ -290,7 +333,7 @@ struct DashboardView: View {
     }
 
     private func inspectMDL() {
-        "valve".withCString { engine_launch_game($0) }
+        launchSelectedGame()
         let candidates = [
             "models/barney.mdl", "models/scientist.mdl", "models/gman.mdl",
             "models/hgrunt.mdl", "models/zombie.mdl", "models/player.mdl"
@@ -308,7 +351,7 @@ struct DashboardView: View {
     }
 
     private func testMDLMesh() {
-        "valve".withCString { engine_launch_game($0) }
+        launchSelectedGame()
         let candidates = [
             "models/barney.mdl", "models/scientist.mdl", "models/gman.mdl",
             "models/hgrunt.mdl", "models/zombie.mdl", "models/player.mdl"
@@ -333,7 +376,7 @@ struct DashboardView: View {
 
     private func renderModel() {
         isLoadingMap = true
-        "valve".withCString { engine_launch_game($0) }
+        launchSelectedGame()
 
         // 1. Load map
         let mapOk = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build_or_synthetic($0) }
@@ -375,7 +418,7 @@ struct DashboardView: View {
     // MARK: - STEP 17A
     private func inspectEntities() {
         // Load a map first (this triggers entity parsing)
-        "valve".withCString { engine_launch_game($0) }
+        launchSelectedGame()
         let mapOk = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build_or_synthetic($0) }
 
         if mapOk != 1 {

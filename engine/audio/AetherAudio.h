@@ -44,6 +44,8 @@ aether_audio_t *aether_audio_create(void);
 void            aether_audio_destroy(aether_audio_t *a);
 aether_result_t aether_audio_init(aether_audio_t *a);
 aether_result_t aether_audio_shutdown(aether_audio_t *a);
+bool            aether_audio_is_ready(const aether_audio_t *a);
+aether_audio_state_t aether_audio_get_state(const aether_audio_t *a);
 
 /* Volume controls */
 void aether_audio_set_master_volume(aether_audio_t *a, f32 vol);   /* 0..1 */

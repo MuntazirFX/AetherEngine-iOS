@@ -1,5 +1,6 @@
 // SettingsView.swift
-// UIKit + SwiftUI settings panel matching AetherEngine's design.
+// Pushes UI values into C settings/cvars and persists aether.cfg.
+// AetherEngine-iOS · Clean-room.
 
 import SwiftUI
 
@@ -50,12 +51,44 @@ struct SettingsView: View {
                 }
 
                 Section(header: Text("About")) {
-                    HStack { Text("Engine"); Spacer(); Text("AetherEngine 0.1.0") }
+                    HStack { Text("Engine"); Spacer(); Text(String(cString: engine_version())) }
                     HStack { Text("Target"); Spacer(); Text("ARM64 · iOS") }
+                    HStack { Text("Running"); Spacer(); Text(engine_is_running() != 0 ? "yes" : "no") }
                 }
             }
             .navigationTitle("Settings")
+            .onAppear { pushAll() }
+            .onChange(of: fpsLimit) { _ in pushAll() }
+            .onChange(of: vsync) { _ in pushAll() }
+            .onChange(of: masterVolume) { _ in pushAll() }
+            .onChange(of: musicVolume) { _ in pushAll() }
+            .onChange(of: effectsVolume) { _ in pushAll() }
+            .onChange(of: muted) { _ in pushAll() }
+            .onChange(of: touchLayout) { _ in pushAll() }
+            .onChange(of: touchOpacity) { _ in pushAll() }
+            .onChange(of: lookSensitivity) { _ in pushAll() }
+            .onChange(of: invertY) { _ in pushAll() }
+            .onChange(of: showFPS) { _ in pushAll() }
+            .onDisappear { _ = engine_settings_save_default() }
         }
+    }
+
+    private func pushAll() {
+        "r_fps_limit".withCString { _ = engine_settings_set_int($0, Int32(fpsLimit)) }
+        "r_vsync".withCString { _ = engine_settings_set_bool($0, vsync) }
+        "s_master_volume".withCString { _ = engine_settings_set_float($0, Float(masterVolume)) }
+        "s_music_volume".withCString { _ = engine_settings_set_float($0, Float(musicVolume)) }
+        "s_effects_volume".withCString { _ = engine_settings_set_float($0, Float(effectsVolume)) }
+        "s_mute".withCString { _ = engine_settings_set_bool($0, muted) }
+        "touch_layout".withCString { _ = engine_settings_set_int($0, Int32(touchLayout)) }
+        "touch_opacity".withCString { _ = engine_settings_set_float($0, Float(touchOpacity)) }
+        "in_look_sensitivity".withCString { _ = engine_settings_set_float($0, Float(lookSensitivity)) }
+        "in_invert_y".withCString { _ = engine_settings_set_bool($0, invertY) }
+        "perf_show_fps".withCString { _ = engine_settings_set_bool($0, showFPS) }
+        AetherAudioiOS.shared.setMasterVolume(Float(masterVolume))
+        AetherAudioiOS.shared.setMuted(muted)
+        engine_settings_apply()
+        _ = engine_settings_save_default()
     }
 }
 

@@ -1,11 +1,11 @@
 // TouchControlsView.swift
-// Renders virtual joystick + action buttons on top of the game.
-// Publishes input to the C engine via EngineBridge.
+// Virtual joystick + holdable action buttons → EngineBridge.
+// AetherEngine-iOS · Clean-room.
 
 import SwiftUI
 
 struct TouchControlsView: View {
-    @AppStorage("touch_layout")  var touchLayout: Int = 0     // 0 = RH, 1 = LH
+    @AppStorage("touch_layout")  var touchLayout: Int = 0
     @AppStorage("touch_opacity") var touchOpacity: Double = 0.75
 
     @State private var joystickOffset: CGSize = .zero
@@ -14,14 +14,12 @@ struct TouchControlsView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                // Left-side joystick (RH) or right-side (LH)
                 JoystickView(offset: $joystickOffset, active: $joystickActive)
                     .frame(width: 140, height: 140)
                     .position(x: (touchLayout == 0 ? 0.22 : 0.78) * geo.size.width,
                               y: 0.75 * geo.size.height)
                     .opacity(touchOpacity)
 
-                // Action button cluster
                 ActionCluster(isLeftHanded: touchLayout == 1,
                               opacity: touchOpacity,
                               size: geo.size)
@@ -29,24 +27,24 @@ struct TouchControlsView: View {
             .background(Color.clear)
             .onChange(of: joystickOffset) { newValue in
                 let nx = Float(newValue.width  / 70.0)
-                let ny = Float(newValue.height / 70.0)
+                let ny = Float(-newValue.height / 70.0) // screen Y down → engine forward up
                 engine_input_set_move(nx, ny)
+            }
+            .onChange(of: joystickActive) { active in
+                if !active { engine_input_set_move(0, 0) }
             }
         }
     }
 }
 
-// MARK: - Virtual Joystick
 struct JoystickView: View {
     @Binding var offset: CGSize
     @Binding var active: Bool
 
     var body: some View {
         ZStack {
-            Circle()
-                .stroke(Color.white.opacity(0.35), lineWidth: 3)
-            Circle()
-                .fill(Color.white.opacity(0.10))
+            Circle().stroke(Color.white.opacity(0.35), lineWidth: 3)
+            Circle().fill(Color.white.opacity(0.10))
             Circle()
                 .fill(Color.blue.opacity(0.85))
                 .frame(width: 60, height: 60)
@@ -74,7 +72,6 @@ struct JoystickView: View {
     }
 }
 
-// MARK: - Action Button Cluster
 struct ActionCluster: View {
     let isLeftHanded: Bool
     let opacity: Double
@@ -85,40 +82,41 @@ struct ActionCluster: View {
         let cy = 0.78 * size.height
 
         ZStack {
-            actionButton(symbol: "flame.fill",    action: "fire",   x: cx,          y: cy - 50)
-            actionButton(symbol: "arrow.up",      action: "jump",   x: cx - 50,     y: cy)
-            actionButton(symbol: "arrow.down",    action: "duck",   x: cx + 45,     y: cy + 10)
-            actionButton(symbol: "hand.tap",      action: "use",    x: cx - 45,     y: cy - 50)
-            actionButton(symbol: "arrow.triangle.2.circlepath", action: "reload",
-                                                              x: cx + 10,     y: cy - 85)
+            holdButton(symbol: "flame.fill", action: "fire",   x: cx,      y: cy - 50)
+            holdButton(symbol: "arrow.up",   action: "jump",   x: cx - 50, y: cy)
+            holdButton(symbol: "arrow.down", action: "duck",   x: cx + 45, y: cy + 10)
+            holdButton(symbol: "hand.tap",   action: "use",    x: cx - 45, y: cy - 50)
+            holdButton(symbol: "arrow.triangle.2.circlepath", action: "reload",
+                       x: cx + 10, y: cy - 85)
         }
         .opacity(opacity)
     }
 
     @ViewBuilder
-    private func actionButton(symbol: String, action: String,
-                              x: CGFloat, y: CGFloat) -> some View {
-        Button(action: {
-            let pressed = !isHeld(action: action)
-            engine_input_set_action(action, pressed)
-        }) {
-            Image(systemName: symbol)
-                .font(.system(size: 22, weight: .bold))
-                .foregroundColor(.white)
-                .frame(width: 55, height: 55)
-                .background(Color.black.opacity(0.45))
-                .clipShape(Circle())
-                .overlay(Circle().stroke(Color.white.opacity(0.35), lineWidth: 1.5))
-        }
-        .position(x: x, y: y)
+    private func holdButton(symbol: String, action: String,
+                            x: CGFloat, y: CGFloat) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 22, weight: .bold))
+            .foregroundColor(.white)
+            .frame(width: 55, height: 55)
+            .background(Color.black.opacity(0.45))
+            .clipShape(Circle())
+            .overlay(Circle().stroke(Color.white.opacity(0.35), lineWidth: 1.5))
+            .position(x: x, y: y)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        action.withCString { engine_input_set_action($0, true) }
+                    }
+                    .onEnded { _ in
+                        action.withCString { engine_input_set_action($0, false) }
+                    }
+            )
     }
-
-    private func isHeld(action: String) -> Bool { return false }
 }
 
 struct TouchControlsView_Previews: PreviewProvider {
     static var previews: some View {
-        TouchControlsView()
-            .background(Color.black)
+        TouchControlsView().background(Color.black)
     }
 }

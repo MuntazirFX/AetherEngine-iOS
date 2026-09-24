@@ -12,10 +12,29 @@ extern "C" {
 /* ---------- Engine lifecycle ---------- */
 void engine_init(const char *base_path, const char *asset_path);
 void engine_shutdown(void);
+/* Host frame: tick engine subsystems (incl. game registry) + audio flush. */
+void engine_host_frame(float dt);
+int  engine_is_running(void);
+unsigned long long engine_frame_count(void);
+double engine_elapsed(void);
+float  engine_last_dt(void);
 
-/* ---------- Game lifecycle ---------- */
+/* ---------- Game lifecycle / 5-game selection ---------- */
 void engine_launch_game(const char *game_dir);
 void engine_stop_game(void);
+int  engine_game_count(void);
+/* Fill display/dir/start_map; returns 1 on success. */
+int  engine_game_info(int index, char *name, int name_cap,
+                      char *dir, int dir_cap, char *start_map, int map_cap);
+int  engine_game_select(const char *game_dir);
+const char *engine_game_active_dir(void);
+const char *engine_game_start_map(void);
+int  engine_game_state(void); /* see aether_game_state_t */
+int  engine_game_data_present(const char *game_dir);
+unsigned long long engine_game_run_frames(void);
+/* Load bundled/repo manifests (host path or Documents/manifests). Returns count. */
+int  engine_manifest_load_all(const char *dir_path);
+int  engine_manifest_count(void);
 
 /* ---------- Input ---------- */
 void engine_input_set_move(float x, float y);
@@ -90,15 +109,38 @@ void  engine_hud_set_crosshair_spread(float spread);
 float engine_hud_crosshair_spread(void);
 void  engine_hud_give_demo_loadout(void);
 
-/* ---------- Settings / Audio / Renderer ---------- */
+/* ---------- Settings / CVars / Audio / Renderer ---------- */
 void engine_settings_save(const char *filepath);
 void engine_settings_load(const char *filepath);
+/* Default path: <base>/aether.cfg — returns 1 on success. */
+int  engine_settings_save_default(void);
+int  engine_settings_load_default(void);
+void engine_settings_apply(void); /* push settings → audio/cvars/player look */
+int  engine_settings_set_float(const char *key, float v);
+int  engine_settings_set_int(const char *key, int v);
+int  engine_settings_set_bool(const char *key, bool v);
+float engine_settings_get_float(const char *key, float fallback);
+int   engine_settings_get_int(const char *key, int fallback);
+bool  engine_settings_get_bool(const char *key, bool fallback);
+
+int  engine_cvar_set(const char *name, const char *value);
+float engine_cvar_float(const char *name, float fallback);
+int   engine_cvar_int(const char *name, int fallback);
+bool  engine_cvar_bool(const char *name, bool fallback);
+
 void engine_audio_init(void);
 void engine_audio_shutdown(void);
+int  engine_audio_ready(void);
+void engine_audio_flush(void);
 void engine_audio_set_master_volume(float vol);
 void engine_audio_set_mute(bool muted);
 void engine_audio_play(const char *asset_path, float volume, bool loop);
 void engine_audio_stop_all(void);
+
+/* Filesystem diagnostics (no assets bundled). */
+int  engine_fs_root_count(void);
+int  engine_fs_root_at(int index, char *out, int out_cap);
+int  engine_fs_exists(const char *vpath);
 void engine_renderer_attach_metal(void *mtkView);
 void engine_renderer_resize(unsigned int width, unsigned int height);
 void engine_renderer_begin_frame(void);

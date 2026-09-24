@@ -30,20 +30,32 @@ CFLAGS=(
   -Iengine/client/hud -Iengine/client/menu -Iengine/vgui
 )
 
-info "1/5 Verify required paths"
+info "1/6 Verify required paths (STEPs 3–10)"
 REQUIRED=(
   engine/core/AetherCore.c
   engine/core/AetherEngine.c
   engine/game/AetherGameManager.c
   engine/game/AetherManifest.c
+  engine/fs/AetherFS.c
+  engine/audio/AetherAudio.c
+  engine/input/AetherInput.c
+  engine/config/AetherSettings.c
+  engine/console/AetherCVar.c
   engine/bsp/AetherBSP.c
   ios/AetherApp/EngineBridge.c
   ios/AetherApp/EngineBridge.h
   ios/AetherApp/AetherApp.swift
   ios/AetherApp/MetalRenderer.swift
   ios/AetherApp/AetherAudioIOS.swift
+  ios/AetherApp/SettingsView.swift
+  ios/AetherApp/TouchControlsView.swift
+  ios/AetherApp/DashboardView.swift
   build/CMakeLists.txt
   build/project.yml
+  build/scripts/build_ios.sh
+  build/scripts/cmake_host.sh
+  .github/workflows/verify.yml
+  .github/workflows/build-arm64.yml
   tests/host_smoke.c
 )
 for f in "${REQUIRED[@]}"; do
@@ -51,13 +63,13 @@ for f in "${REQUIRED[@]}"; do
   ok "$f"
 done
 
-info "2/5 Verify game manifests"
+info "2/6 Verify game manifests"
 for m in valve bshift gearbox cstrike czero; do
   [ -f "engine/game/manifests/$m.json" ] || fail "missing manifest $m.json"
   ok "manifest $m.json"
 done
 
-info "3/5 Compile all engine C sources"
+info "3/6 Compile all engine C sources"
 COUNT=0
 FAIL=0
 LIST_FILE="${OBJ_DIR}/sources.list"
@@ -76,12 +88,12 @@ ok "found $COUNT engine .c files"
 [ "$FAIL" -eq 0 ] || fail "one or more C sources failed to compile"
 ok "compiled $COUNT object files"
 
-info "4/5 Archive static library"
+info "4/6 Archive static library"
 # shellcheck disable=SC2086
 ar rcs "${LIB_DIR}/libaether_engine.a" ${OBJ_DIR}/*.o
 ok "libaether_engine.a"
 
-info "5/5 Link and run host smoke test"
+info "5/6 Link and run host smoke test"
 "${CC}" "${CFLAGS[@]}" \
   tests/host_smoke.c \
   "${LIB_DIR}/libaether_engine.a" \
@@ -89,5 +101,14 @@ info "5/5 Link and run host smoke test"
   -o "${BIN_DIR}/host_smoke"
 "${BIN_DIR}/host_smoke"
 ok "host smoke passed"
+
+info "6/6 API surface greps (bridge + host frame)"
+grep -q "aether_engine_host_frame" engine/core/AetherEngine.h || fail "missing aether_engine_host_frame"
+grep -q "aether_fs_setup_game" engine/fs/AetherFS.h || fail "missing aether_fs_setup_game"
+grep -q "engine_host_frame" ios/AetherApp/EngineBridge.h || fail "missing engine_host_frame"
+grep -q "engine_game_select" ios/AetherApp/EngineBridge.h || fail "missing engine_game_select"
+grep -q "engine_settings_apply" ios/AetherApp/EngineBridge.h || fail "missing engine_settings_apply"
+grep -q "aether_game_manager_as_subsystem" engine/game/AetherGameManager.h || fail "missing game subsystem glue"
+ok "STEP 3–7 API symbols present"
 
 info "All host verification checks passed."

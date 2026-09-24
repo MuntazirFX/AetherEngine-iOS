@@ -1,5 +1,5 @@
 # build-arm64.yml
-# Manual-triggered build only. Clean version tags.
+# workflow_dispatch → full unsigned IPA; pull_request → host verify on macos-14.
 # AetherEngine-iOS · Clean-room.
 
 name: Build AetherEngine IPA
@@ -16,13 +16,21 @@ on:
         required: true
         type: boolean
         default: false
+  # Optional: validate host side of the ARM64 pipeline on PRs (IPA still needs macos).
+  pull_request:
+    paths:
+      - 'engine/**'
+      - 'ios/**'
+      - 'build/**'
+      - '.github/workflows/build-arm64.yml'
+      - 'tests/**'
 
 permissions:
   contents: write
 
 jobs:
   build-ipa:
-    name: Build iOS IPA
+    name: ARM64 host verify + optional IPA
     runs-on: macos-14
     timeout-minutes: 60
 
@@ -62,70 +70,29 @@ jobs:
         run: |
           chmod +x build/scripts/build_ios.sh 2>/dev/null || true
           chmod +x build/scripts/package_ipa.sh 2>/dev/null || true
+          chmod +x build/scripts/verify_host.sh 2>/dev/null || true
+          chmod +x build/scripts/cmake_host.sh 2>/dev/null || true
 
       # ============================================================
-      # 3. SANITY COMPILE
+      # 3. HOST VERIFY (same as verify.yml — useful even on macOS)
       # ============================================================
-      - name: Sanity compile engine (host)
-        run: |
-          set -euo pipefail
-          mkdir -p /tmp/sanity
-          cd /tmp/sanity
-          for f in \
-            "$GITHUB_WORKSPACE/engine/core/AetherCore.c" \
-            "$GITHUB_WORKSPACE/engine/core/AetherEngine.c" \
-            "$GITHUB_WORKSPACE/engine/core/AetherMath.c" \
-            "$GITHUB_WORKSPACE/engine/core/AetherArray.c" \
-            "$GITHUB_WORKSPACE/engine/core/AetherEvent.c" \
-            "$GITHUB_WORKSPACE/engine/game/AetherGameManager.c" \
-            "$GITHUB_WORKSPACE/engine/game/AetherManifest.c" \
-            "$GITHUB_WORKSPACE/engine/input/AetherInput.c" \
-            "$GITHUB_WORKSPACE/engine/input/AetherTouch.c" \
-            "$GITHUB_WORKSPACE/engine/config/AetherSettings.c" \
-            "$GITHUB_WORKSPACE/engine/fs/AetherFS.c" \
-            "$GITHUB_WORKSPACE/engine/fs/AetherPak.c" \
-            "$GITHUB_WORKSPACE/engine/audio/AetherAudio.c" \
-            "$GITHUB_WORKSPACE/engine/render/AetherRender.c" \
-            "$GITHUB_WORKSPACE/engine/bsp/AetherBSP.c" \
-            "$GITHUB_WORKSPACE/engine/bsp/AetherBSPGeometry.c" \
-            "$GITHUB_WORKSPACE/engine/player/AetherPlayer.c" \
-            "$GITHUB_WORKSPACE/engine/player/AetherCollision.c" \
-            "$GITHUB_WORKSPACE/engine/texture/AetherTexture.c" \
-            "$GITHUB_WORKSPACE/engine/model/AetherMDL.c" \
-            "$GITHUB_WORKSPACE/engine/model/AetherMDLGeometry.c" \
-            "$GITHUB_WORKSPACE/engine/entity/AetherEntity.c" \
-            "$GITHUB_WORKSPACE/engine/entity/AetherEntityBase.c" \
-          ; do
-            if [ -f "$f" ]; then
-              echo "→ cc -c $(basename $f)"
-              cc -std=c11 -Wall -Wextra -Wno-unused-parameter \
-                -I"$GITHUB_WORKSPACE/engine/core" \
-                -I"$GITHUB_WORKSPACE/engine/game" \
-                -I"$GITHUB_WORKSPACE/engine/input" \
-                -I"$GITHUB_WORKSPACE/engine/config" \
-                -I"$GITHUB_WORKSPACE/engine/fs" \
-                -I"$GITHUB_WORKSPACE/engine/audio" \
-                -I"$GITHUB_WORKSPACE/engine/render" \
-                -I"$GITHUB_WORKSPACE/engine/bsp" \
-                -I"$GITHUB_WORKSPACE/engine/player" \
-                -I"$GITHUB_WORKSPACE/engine/texture" \
-                -I"$GITHUB_WORKSPACE/engine/model" \
-                -I"$GITHUB_WORKSPACE/engine/entity" \
-                -c "$f" -o "$(basename "$f" .c).o"
-            fi
-          done
-          echo "✔ Sanity compile passed"
+      - name: Host compile + smoke (verify_host.sh)
+        run: bash build/scripts/verify_host.sh
+
 
       # ============================================================
       # 4. BUILD IPA
       # ============================================================
       - name: Build iOS app (unsigned)
+        if: github.event_name == 'workflow_dispatch'
         run: bash build/scripts/build_ios.sh
 
       - name: Package unsigned IPA
+        if: github.event_name == 'workflow_dispatch'
         run: bash build/scripts/package_ipa.sh
 
       - name: Verify IPA
+        if: github.event_name == 'workflow_dispatch'
         run: |
           set -euo pipefail
           IPA_PATH="build/out/AetherEngine.ipa"
@@ -137,6 +104,7 @@ jobs:
       # 5. METADATA
       # ============================================================
       - name: Compute IPA metadata
+        if: github.event_name == 'workflow_dispatch'
         id: meta
         run: |
           IPA=build/out/AetherEngine.ipa
@@ -144,7 +112,7 @@ jobs:
           SHA=$(shasum -a 256 "$IPA" | awk '{print $1}')
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
-          VERSION="${{ github.event.inputs.version }}"
+          VERSION="${{ github.event.inputs.version || format('pr-{0}', github.event.pull_request.number) || github.sha }}"
           echo "size=$SIZE"       >> $GITHUB_OUTPUT
           echo "sha=$SHA"         >> $GITHUB_OUTPUT
           echo "short=$SHORT_SHA" >> $GITHUB_OUTPUT
@@ -155,6 +123,7 @@ jobs:
       # 6. UPLOAD ARTIFACT (IPA only, no static lib)
       # ============================================================
       - name: Upload IPA artifact
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: AetherEngine-${{ github.event.inputs.version }}
