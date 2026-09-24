@@ -246,7 +246,7 @@ int main(void) {
         expect(aether_bsp_vertex_count(bsp) == 8u, "bsp_synthetic_verts");
         expect(aether_bsp_face_count(bsp) == 6u, "bsp_synthetic_faces");
         expect(aether_bsp_edge_count(bsp) == 12u, "bsp_synthetic_edges");
-        expect(aether_bsp_plane_count(bsp) == 22u, "bsp_synthetic_planes"); /* render 7 + clip 12 + ledge 3 */
+        expect(aether_bsp_plane_count(bsp) == 30u, "bsp_synthetic_planes"); /* render 7 + clip + ledge + crouch/alcove */
         expect(aether_bsp_node_count(bsp) == 1u, "bsp_synthetic_nodes");
         expect(aether_bsp_leaf_count(bsp) == 3u, "bsp_synthetic_leaves"); /* solid + west + east */
 
@@ -334,10 +334,10 @@ int main(void) {
         /* Clipnodes / collision: floor, wall, 16u ledge + step-up (feeds player move). */
         {
             u32 clip_sz = aether_bsp_lump_size(bsp, AETHER_BSP_LUMP_CLIPNODES);
-            expect(clip_sz >= 36u * 8u, "bsp_synthetic_clipnodes_lump"); /* 36 × sizeof(clipnode)=8 */
+            expect(clip_sz >= 54u * 8u, "bsp_synthetic_clipnodes_lump"); /* 54 × sizeof(clipnode)=8 */
             aether_collision_t *col = aether_collision_build(bsp);
             expect(col != NULL, "collision_build");
-            expect(aether_collision_clipnode_count(col) == 36u, "collision_clipnode_count");
+            expect(aether_collision_clipnode_count(col) == 54u, "collision_clipnode_count");
             expect(aether_collision_hull_root(col, 1) == 6, "collision_hull1_root");
             expect(aether_collision_hull_root(col, 2) == 12, "collision_hull2_root");
 
@@ -400,7 +400,7 @@ int main(void) {
             aether_player_init(&ply);
             expect(fabsf(ply.step_height - AETHER_DEFAULT_STEP_HEIGHT) < 1e-3f,
                    "player_default_step_height");
-            aether_player_set_position(&ply, (aether_vec3_t){0, 0, 70});
+            aether_player_set_position(&ply, (aether_vec3_t){0, 0, 40});
             aether_input_t *in = aether_input_create();
             expect(in != NULL, "collision_player_input");
             for (int i = 0; i < 180; ++i) {
@@ -452,10 +452,82 @@ int main(void) {
             expect(ply.position.x < 65.f, "player_nostep_blocked_at_ledge");
             expect(ply.position.z < 2.0f, "player_nostep_stays_low");
 
+            /* --- Crouch hull (distinct Z) + jump ceiling + low alcove --- */
+            expect(!aether_collision_point_in_solid(col, (aether_vec3_t){0, 0, 40}, 1),
+                   "stand_open_room_z40_empty");
+            expect(aether_collision_point_in_solid(col, (aether_vec3_t){0, 0, 60}, 1),
+                   "stand_above_headroom_solid"); /* feet max 56 */
+            expect(!aether_collision_point_in_solid(col, (aether_vec3_t){0, 0, 60}, 2),
+                   "crouch_higher_headroom_empty"); /* crouch feet max 92 */
+            expect(aether_collision_point_in_solid(col, (aether_vec3_t){0, 0, 100}, 2),
+                   "crouch_above_headroom_solid");
+
+            /* Low alcove at x≈-180: standing blocked on floor, crouch fits. */
+            expect(aether_collision_point_in_solid(col, (aether_vec3_t){-180, 0, 0}, 1),
+                   "alcove_stand_blocked");
+            expect(!aether_collision_point_in_solid(col, (aether_vec3_t){-180, 0, 0}, 2),
+                   "alcove_crouch_fits");
+            expect(aether_collision_point_in_solid(col, (aether_vec3_t){-180, 0, 20}, 2),
+                   "alcove_crouch_too_tall_solid");
+
+            /* Jump / upward move clamps against standing ceiling (~56). */
+            bool ceil_ground = false;
+            aether_vec3_t jumped = aether_collision_move(
+                col, (aether_vec3_t){0, 0, 0}, (aether_vec3_t){0, 0, 200}, 1, 0.f, &ceil_ground);
+            expect(jumped.z < 57.f && jumped.z > 50.f, "jump_clamped_by_stand_ceiling");
+            aether_vec3_t crouch_up = aether_collision_move(
+                col, (aether_vec3_t){0, 0, 0}, (aether_vec3_t){0, 0, 200}, 2, 0.f, &ceil_ground);
+            expect(crouch_up.z > jumped.z + 10.f, "crouch_jump_higher_than_stand");
+            expect(crouch_up.z < 93.f && crouch_up.z > 85.f, "jump_clamped_by_crouch_ceiling");
+
+            /* Player duck toggle + stand-up blocked under alcove. */
+            aether_player_set_position(&ply, (aether_vec3_t){0, 0, 0});
+            ply.on_ground = true;
+            ply.crouching = false;
+            ply.hull_index = 1;
+            for (int i = 0; i < 10; ++i) {
+                aether_input_begin_frame(in);
+                aether_input_set_action(in, AETHER_ACTION_DUCK, true);
+                aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                aether_input_end_frame(in);
+            }
+            expect(ply.crouching && ply.hull_index == 2, "player_duck_sets_hull2");
+
+            /* Walk crouched into alcove, then release duck — stay crouched. */
+            aether_player_set_position(&ply, (aether_vec3_t){-180, 0, 0});
+            ply.on_ground = true;
+            ply.crouching = true;
+            ply.hull_index = 2;
+            ply.yaw = 3.14159265f; /* face -X */
+            for (int i = 0; i < 30; ++i) {
+                aether_input_begin_frame(in);
+                aether_input_set_action(in, AETHER_ACTION_DUCK, false);
+                aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                aether_input_end_frame(in);
+            }
+            expect(ply.crouching && ply.hull_index == 2, "player_standup_blocked_in_alcove");
+
+            /* Player jump hits standing ceiling and zeros upward vel. */
+            aether_player_set_position(&ply, (aether_vec3_t){0, 0, 0});
+            ply.on_ground = true;
+            ply.crouching = false;
+            ply.hull_index = 1;
+            ply.velocity = (aether_vec3_t){0, 0, 0};
+            float peak_z = 0.f;
+            for (int i = 0; i < 120; ++i) {
+                aether_input_begin_frame(in);
+                if (i == 0) aether_input_set_action(in, AETHER_ACTION_JUMP, true);
+                aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                aether_input_end_frame(in);
+                if (ply.position.z > peak_z) peak_z = ply.position.z;
+            }
+            expect(peak_z < 57.f, "player_jump_peak_under_stand_ceiling");
+            expect(peak_z > 20.f, "player_jump_got_airborne");
+
             aether_input_destroy(in);
             aether_collision_free(col);
-            printf("  collision: floor z=%.3f, ledge climb x=%.1f z=%.1f, wall still blocks\n",
-                   landed.z, climbed.x, climbed.z);
+            printf("  collision: floor z=%.3f, ledge climb x=%.1f z=%.1f, jump ceil~%.1f, alcove duck ok\n",
+                   landed.z, climbed.x, climbed.z, jumped.z);
         }
 
         /* Lightmap stub: procedural atlas + mesh LUV (feeds Metal sample). */

@@ -36,6 +36,10 @@ bool aether_collision_point_in_solid(const aether_collision_t *c,
 /* Quake/GoldSrc default auto-step height (units). */
 #define AETHER_DEFAULT_STEP_HEIGHT  18.0f
 
+/* Feet-origin player hull heights (GoldSrc-ish). Clip ceilings = room_z - these. */
+#define AETHER_HULL_STAND_HEIGHT   72.0f
+#define AETHER_HULL_CROUCH_HEIGHT  36.0f
+
 /* Try to move from `from` to `to`. Returns corrected position after
  * resolving collisions along each axis (move-and-slide).
  * If horizontal motion is blocked but a ledge ≤ max_step would clear,
