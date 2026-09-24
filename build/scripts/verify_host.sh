@@ -209,3 +209,18 @@ grep -q "engine_dynlights_fill_ubo_pvs" ios/AetherApp/EngineBridge.h || fail "mi
 ok "batch studio/vis/stereo API symbols present"
 
 info "All host verification checks passed."
+
+grep -q "aether_lightmap_sample_style_blend" engine/render/AetherLightmap.h || fail "missing style blend sample"
+grep -q "aether_lightmap_fill_style_blend_ubo" engine/render/AetherLightmap.h || fail "missing style blend ubo"
+grep -q "aether_weapon_view_copy_skinned" engine/game/weapons/AetherWeaponView.h || fail "missing skinned viewmodel"
+grep -q "aether_lagcomp_validate_hit" engine/net/AetherLagComp.h || fail "missing lagcomp validate"
+grep -q "aether_mdl_anim_rle_decode" engine/render/AetherMDLAnimation.h || fail "missing anim RLE"
+grep -q "aether_dyn_lights_cull_pvs_bleed" engine/render/AetherDynLight.h || fail "missing dynlight bleed"
+grep -q "aether_particles_spawn_viewmodel_fire" engine/render/AetherParticle.h || fail "missing vm fire particles"
+grep -q "aether_mdl_studio_events_fire" engine/model/AetherModelFixture.h || fail "missing studio events"
+grep -q "aether_postfx_bloom_encode_plan" engine/render/AetherPostFX.h || fail "missing bloom encode plan"
+grep -q "aether_fragment_style_blend" ios/AetherApp/Shaders.metal || fail "missing metal style blend"
+grep -q "aether_bloom_blur_h_fragment" ios/AetherApp/Shaders.metal || fail "missing metal bloom H"
+grep -q "engine_lagcomp_validate_hit" ios/AetherApp/EngineBridge.h || fail "missing bridge lagcomp validate"
+grep -q "engine_weapon_view_copy_skinned" ios/AetherApp/EngineBridge.h || fail "missing bridge skinned view"
+ok "batch metal-blend/studio-attach API symbols present"

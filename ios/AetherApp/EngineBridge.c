@@ -65,6 +65,7 @@
 #include "../../engine/net/AetherNetPredict.h"
 #include "../../engine/net/AetherNetCmd.h"
 #include "../../engine/net/AetherLagComp.h"
+#include "../../engine/game/weapons/AetherWeaponView.h"
 #include "../../engine/render/AetherMDLAnimation.h"
 #include "../../engine/console/AetherCVar.h"
 #include "../../engine/game/AetherManifest.h"
@@ -2644,7 +2645,6 @@ int engine_net_lagcomp_cmd_seq(unsigned player_id, float lag_ms) {
 /* ---------- Batch: seq skin / per-face styles / spatial / HUD / predict+clip ---------- */
 #include "../../engine/client/hud/AetherHUDLayout.h"
 #include "../../engine/game/weapons/AetherWeapon.h"
-#include "../../engine/game/weapons/AetherWeaponView.h"
 #include "../../engine/game/monsters/AetherMonsterAI.h"
 
 static aether_mdl_sequence_t g_seq;
@@ -2882,4 +2882,146 @@ int engine_particles_spawn_trail(float x0, float y0, float z0,
     if (!p) return 0;
     f32 a[3] = {x0,y0,z0}, b[3] = {x1,y1,z1};
     return (int)aether_particles_spawn_trail(p, a, b, count);
+}
+
+static aether_net_cmd_history_t g_lag_cmds;
+static int g_lag_cmds_init = 0;
+static aether_mdl_studio_event_t g_studio_evts[8];
+static u32 g_studio_evt_count = 0;
+static int g_studio_evt_loaded = 0;
+
+int engine_lightmap_fill_style_blend_ubo(float *out, unsigned max_floats) {
+    if (!g_active_mesh || !out) return 0;
+    ensure_lightstyles();
+    return (int)aether_lightmap_fill_style_blend_ubo(g_active_mesh, &g_lightstyles, out, max_floats);
+}
+
+int engine_lightmap_sample_style_blend(const float weights4[4],
+                                       const float base_rgb[3], float out_rgb[3]) {
+    if (!out_rgb) return 0;
+    aether_lightmap_sample_style_blend(weights4, base_rgb, out_rgb);
+    return 1;
+}
+
+int engine_weapon_view_copy_skinned(float frame, float *out_xyz_uv_rgba, int max_verts,
+                                    float *out_muzzle3, float *out_muzzle_fwd3) {
+    if (!out_xyz_uv_rgba || max_verts < 3) return 0;
+    aether_weapon_view_t v;
+    aether_weapon_view_init(&v, AETHER_WPN_GLOCK);
+    aether_weapon_view_play(&v, AETHER_VIEW_ANIM_FIRE);
+    aether_viewmodel_vertex_t tmp[64];
+    aether_weapon_view_attach_t att;
+    int cap = max_verts < 64 ? max_verts : 64;
+    u32 n = aether_weapon_view_copy_skinned(&v, frame, tmp, (u32)cap, &att);
+    for (u32 i = 0; i < n; ++i) {
+        float *d = out_xyz_uv_rgba + i * 9;
+        d[0]=tmp[i].x; d[1]=tmp[i].y; d[2]=tmp[i].z;
+        d[3]=tmp[i].u; d[4]=tmp[i].v;
+        d[5]=tmp[i].r; d[6]=tmp[i].g; d[7]=tmp[i].b; d[8]=tmp[i].a;
+    }
+    if (out_muzzle3) {
+        out_muzzle3[0]=att.muzzle_pos[0]; out_muzzle3[1]=att.muzzle_pos[1]; out_muzzle3[2]=att.muzzle_pos[2];
+    }
+    if (out_muzzle_fwd3) {
+        out_muzzle_fwd3[0]=att.muzzle_fwd[0]; out_muzzle_fwd3[1]=att.muzzle_fwd[1]; out_muzzle_fwd3[2]=att.muzzle_fwd[2];
+    }
+    return (int)n;
+}
+
+int engine_lagcomp_validate_hit(float now, float lag_ms,
+                                float eye_x, float eye_y, float eye_z, float max_dist,
+                                int *out_id, float *out_t) {
+    if (!g_lagcomp_init) return 0;
+    if (!g_lag_cmds_init) { aether_net_cmd_history_init(&g_lag_cmds); g_lag_cmds_init = 1; }
+    f32 eye[3] = {eye_x, eye_y, eye_z};
+    aether_lagcomp_hit_t hit;
+    if (!aether_lagcomp_validate_hit(&g_lagcomp, &g_lag_cmds, now, lag_ms, eye, max_dist, &hit))
+        return 0;
+    if (out_id) *out_id = (int)hit.id;
+    if (out_t) *out_t = hit.t;
+    return 1;
+}
+
+/* Push a demo attack cmd into lag cmd history (for bridge demos / smoke via C). */
+int engine_lagcomp_push_attack_cmd(float now, float yaw, float pitch, unsigned seq) {
+    if (!g_lag_cmds_init) { aether_net_cmd_history_init(&g_lag_cmds); g_lag_cmds_init = 1; }
+    aether_net_cmd_t cmd;
+    aether_net_cmd_from_move(&cmd, 0, 0, 0, yaw, pitch, 1u /* attack */, 0.016f, seq);
+    aether_net_cmd_history_push(&g_lag_cmds, &cmd, now);
+    return 1;
+}
+
+int engine_mdl_anim_rle_decode_fixture(float frame) {
+    u8 buf[24576];
+    u32 n = aether_mdl_write_studio_fixture_ex(buf, sizeof buf);
+    if (!n) return 0;
+    if (aether_mdl_anim_rle_decode(&g_studio_seq, buf, n) != AETHER_OK) return 0;
+    g_studio_seq_loaded = 1;
+    aether_mdl_skin_build_from_sequence(&g_skin, &g_studio_seq, frame);
+    g_studio_evt_count = aether_mdl_fixture_events(buf, n, g_studio_evts, 8);
+    g_studio_evt_loaded = 1;
+    return (int)g_studio_seq.frame_count;
+}
+
+int engine_dynlights_fill_ubo_pvs_bleed(float view_x, float view_y, float view_z,
+                                        float *out_array, int max_floats) {
+    if (!out_array || max_floats < 4) return 0;
+    if (!g_dynlights_init) { aether_dyn_lights_init(&g_dynlights); g_dynlights_init = 1; }
+    if (!g_active_bsp) return (int)aether_dyn_lights_fill_array(&g_dynlights, out_array, (u32)max_floats);
+    i32 leaf = aether_bsp_find_leaf(g_active_bsp, view_x, view_y, view_z);
+    return (int)aether_dyn_lights_fill_array_pvs_bleed(&g_dynlights, g_active_bsp, leaf,
+                                                       out_array, (u32)max_floats);
+}
+
+int engine_particles_spawn_viewmodel_fire(float mx, float my, float mz,
+                                          float fx, float fy, float fz,
+                                          unsigned muzzle_n, unsigned trail_n) {
+    aether_particles_t *p = bridge_particles();
+    if (!p) return 0;
+    f32 m[3]={mx,my,mz}, f[3]={fx,fy,fz};
+    return (int)aether_particles_spawn_viewmodel_fire(p, m, f, muzzle_n, trail_n);
+}
+
+int engine_mdl_studio_events_tick(float prev_frame, float frame,
+                                  int *out_event, char *out_opts, int opts_cap) {
+    if (!g_studio_evt_loaded) {
+        u8 buf[24576];
+        u32 n = aether_mdl_write_studio_fixture_ex(buf, sizeof buf);
+        g_studio_evt_count = aether_mdl_fixture_events(buf, n, g_studio_evts, 8);
+        g_studio_evt_loaded = 1;
+    }
+    aether_mdl_studio_event_t fired[8];
+    u32 n = aether_mdl_studio_events_fire(g_studio_evts, g_studio_evt_count,
+                                          prev_frame, frame, fired, 8);
+    if (n == 0) return 0;
+    if (out_event) *out_event = (int)fired[0].event;
+    if (out_opts && opts_cap > 0) {
+        strncpy(out_opts, fired[0].options, (size_t)opts_cap - 1);
+        out_opts[opts_cap - 1] = 0;
+    }
+    return (int)n;
+}
+
+int engine_audio_play_studio_cue(const char *cue, float volume) {
+    if (!g_audio) return 0;
+    return aether_audio_play_studio_cue(g_audio, cue, volume) == AETHER_OK ? 1 : 0;
+}
+
+int engine_postfx_bloom_encode_plan(unsigned *out_passes, unsigned *out_w, unsigned *out_h,
+                                    int *out_separable) {
+    ensure_postfx();
+    aether_postfx_bloom_plan_t plan;
+    aether_postfx_bloom_encode_plan(&g_postfx, &plan);
+    if (out_passes) *out_passes = plan.pass_count;
+    if (out_w) *out_w = plan.target_w;
+    if (out_h) *out_h = plan.target_h;
+    if (out_separable) *out_separable = plan.separable ? 1 : 0;
+    return plan.needed ? 1 : 0;
+}
+
+int engine_mdl_fixture_attachments_count(void) {
+    u8 buf[24576];
+    u32 n = aether_mdl_write_studio_fixture_ex(buf, sizeof buf);
+    aether_mdl_attachment_t atts[8];
+    return (int)aether_mdl_fixture_attachments(buf, n, atts, 8);
 }

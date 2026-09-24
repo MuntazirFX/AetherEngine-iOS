@@ -120,7 +120,6 @@ u32 aether_lightmap_fill_face_style_weights(const struct aether_mesh *mesh,
 #ifdef __cplusplus
 }
 #endif
-#endif /* AETHER_LIGHTMAP_H */
 
 /* Multi-style blend: pack 4 GPU weights per face from styles[0..3] × lightstyle values.
  * out_weights length >= max_faces*4. Unused style (255) → 0. Returns faces written. */
@@ -132,3 +131,16 @@ u32 aether_lightmap_fill_face_style_blend(const struct aether_mesh *mesh,
 u32 aether_lightmap_fill_face_style_blend_scalar(const struct aether_mesh *mesh,
                                                  const aether_lightstyles_t *ls,
                                                  f32 *out_weights, u32 max_faces);
+
+/* Metal multi-style sample: apply 4 blend weights to base LM RGB (sum-normalized). */
+void aether_lightmap_sample_style_blend(const f32 weights4[4],
+                                        const f32 base_rgb[3],
+                                        f32 out_rgb[3]);
+
+/* Pack FaceStyleBlendUniforms for Metal: count + pad3 + weights[face*4].
+ * Returns floats written (4 + faces*4). */
+u32 aether_lightmap_fill_style_blend_ubo(const struct aether_mesh *mesh,
+                                         const aether_lightstyles_t *ls,
+                                         f32 *out, u32 max_floats);
+
+#endif /* AETHER_LIGHTMAP_H */

@@ -258,3 +258,50 @@ aether_result_t aether_mdl_sequence_load_from_data(aether_mdl_sequence_t *seq,
     }
     return AETHER_ERR_NOT_FOUND;
 }
+
+aether_result_t aether_mdl_anim_rle_decode(aether_mdl_sequence_t *seq,
+                                           const u8 *data, u32 size) {
+    if (!seq || !data || size < 32) return AETHER_ERR_INVALID_ARG;
+    const i32 RLE_MAGIC = (i32)0xAE7E524C;
+    for (u32 off = 0; off + 16 < size; ++off) {
+        i32 mag = (i32)((u32)data[off] | ((u32)data[off+1]<<8) |
+                        ((u32)data[off+2]<<16) | ((u32)data[off+3]<<24));
+        if (mag != RLE_MAGIC) continue;
+        const u8 *s = data + off;
+        u32 frames = (u32)((u32)s[4]|((u32)s[5]<<8)|((u32)s[6]<<16)|((u32)s[7]<<24));
+        u32 bones  = (u32)((u32)s[8]|((u32)s[9]<<8)|((u32)s[10]<<16)|((u32)s[11]<<24));
+        u32 payload = (u32)((u32)s[12]|((u32)s[13]<<8)|((u32)s[14]<<16)|((u32)s[15]<<24));
+        if (frames < 2 || frames > AETHER_MDL_MAX_SEQ_FRAMES) return AETHER_ERR_INVALID_ARG;
+        if (bones == 0 || bones > AETHER_MDL_MAX_BONES) return AETHER_ERR_INVALID_ARG;
+        if (off + 16 + payload > size) return AETHER_ERR_INVALID_ARG;
+        memset(seq, 0, sizeof(*seq));
+        seq->frame_count = frames;
+        seq->bone_count = bones;
+        seq->fps = 12.f;
+        seq->loop = true;
+        const u8 *p = s + 16;
+        u32 poff = 0;
+        for (u32 b = 0; b < bones; ++b) {
+            for (u32 ch = 0; ch < 6; ++ch) {
+                u32 fi = 0;
+                while (fi < frames) {
+                    if (poff >= payload) return AETHER_ERR_INVALID_ARG;
+                    u8 run = p[poff++];
+                    if (run == 0) return AETHER_ERR_INVALID_ARG;
+                    if (poff + 4 > payload) return AETHER_ERR_INVALID_ARG;
+                    u32 u = (u32)p[poff]|((u32)p[poff+1]<<8)|((u32)p[poff+2]<<16)|((u32)p[poff+3]<<24);
+                    poff += 4;
+                    f32 v; memcpy(&v, &u, 4);
+                    for (u8 r = 0; r < run && fi < frames; ++r, ++fi) {
+                        aether_mdl_seq_bone_key_t *dst = &seq->keys[fi][b];
+                        if (ch < 3) dst->pos[ch] = v;
+                        else dst->angles_deg[ch - 3] = v;
+                    }
+                }
+            }
+        }
+        return AETHER_OK;
+    }
+    /* Fallback to packed studio keys */
+    return aether_mdl_sequence_load_from_data(seq, data, size);
+}

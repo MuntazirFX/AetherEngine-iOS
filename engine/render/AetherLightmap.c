@@ -568,3 +568,43 @@ u32 aether_lightmap_fill_face_style_blend_scalar(const struct aether_mesh *mesh,
     }
     return n;
 }
+
+void aether_lightmap_sample_style_blend(const f32 weights4[4],
+                                        const f32 base_rgb[3],
+                                        f32 out_rgb[3]) {
+    if (!out_rgb) return;
+    if (!base_rgb) { out_rgb[0]=out_rgb[1]=out_rgb[2]=0.f; return; }
+    f32 wsum = 0.f;
+    if (weights4) {
+        for (int i = 0; i < 4; ++i) {
+            f32 w = weights4[i];
+            if (w > 0.f) wsum += w;
+        }
+    }
+    f32 scale = (wsum > 1e-6f) ? wsum : 1.f;
+    /* GoldSrc-ish: styles accumulate; clamp soft. */
+    if (scale > 4.f) scale = 4.f;
+    out_rgb[0] = base_rgb[0] * scale;
+    out_rgb[1] = base_rgb[1] * scale;
+    out_rgb[2] = base_rgb[2] * scale;
+}
+
+u32 aether_lightmap_fill_style_blend_ubo(const struct aether_mesh *mesh,
+                                         const aether_lightstyles_t *ls,
+                                         f32 *out, u32 max_floats) {
+    if (!out || max_floats < 8) return 0;
+    f32 w4[256 * 4];
+    u32 faces = aether_lightmap_fill_face_style_blend(mesh, ls, w4, 256);
+    if (faces == 0) {
+        out[0]=0; out[1]=0; out[2]=0; out[3]=0;
+        return 4;
+    }
+    u32 need = 4u + faces * 4u;
+    if (need > max_floats) {
+        faces = (max_floats - 4u) / 4u;
+        need = 4u + faces * 4u;
+    }
+    out[0] = (f32)faces; out[1]=0; out[2]=0; out[3]=0;
+    memcpy(out + 4, w4, faces * 4u * sizeof(f32));
+    return need;
+}

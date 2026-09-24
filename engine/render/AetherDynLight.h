@@ -84,7 +84,6 @@ void aether_dyn_lights_sample_rgb_ex(const aether_dyn_lights_t *dl,
 #ifdef __cplusplus
 }
 #endif
-#endif /* AETHER_DYN_LIGHT_H */
 
 /* PVS → dynlight cull: keep lights whose leaf is visible from view_leaf. */
 struct aether_bsp;
@@ -98,3 +97,16 @@ u32 aether_dyn_lights_fill_array_pvs(const aether_dyn_lights_t *dl,
                                      const struct aether_bsp *bsp,
                                      i32 view_leaf,
                                      f32 *out, u32 max_floats);
+
+/* PVS cull with leaf-radius bleed: keep lights whose sphere overlaps a visible leaf AABB. */
+u32 aether_dyn_lights_cull_pvs_bleed(const aether_dyn_lights_t *dl,
+                                     const struct aether_bsp *bsp,
+                                     i32 view_leaf,
+                                     aether_dyn_light_ubo_t *ubo);
+
+u32 aether_dyn_lights_fill_array_pvs_bleed(const aether_dyn_lights_t *dl,
+                                           const struct aether_bsp *bsp,
+                                           i32 view_leaf,
+                                           f32 *out, u32 max_floats);
+
+#endif /* AETHER_DYN_LIGHT_H */

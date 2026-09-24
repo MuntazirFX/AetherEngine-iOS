@@ -136,3 +136,39 @@ void aether_postfx_bloom_target_size(const aether_postfx_t *p, u32 *out_w, u32 *
     if (out_w) *out_w = w;
     if (out_h) *out_h = h;
 }
+
+void aether_postfx_bloom_encode_plan(const aether_postfx_t *p,
+                                     aether_postfx_bloom_plan_t *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    out->threshold = 0.8f;
+    out->blur_radius = 2.f;
+    if (!p) return;
+    out->needed = aether_postfx_bloom_encode_needed(p);
+    out->threshold = p->bloom_threshold > 0.f ? p->bloom_threshold : 0.8f;
+    out->intensity = p->bloom_intensity;
+    out->blur_radius = p->bloom_blur_radius > 0.f ? p->bloom_blur_radius : 2.f;
+    aether_postfx_bloom_target_size(p, &out->target_w, &out->target_h);
+    out->separable = true;
+    out->pass_count = out->needed ? 4u : 0u; /* bright + H + V + combine */
+}
+
+void aether_postfx_bloom_bright_sample(const aether_postfx_t *p,
+                                       const f32 rgb_in[3], f32 rgb_out[3]) {
+    if (!rgb_out) return;
+    if (!rgb_in) { rgb_out[0]=rgb_out[1]=rgb_out[2]=0; return; }
+    f32 thr = (p && p->bloom_threshold > 0.f) ? p->bloom_threshold : 0.8f;
+    f32 lum = 0.2126f*rgb_in[0] + 0.7152f*rgb_in[1] + 0.0722f*rgb_in[2];
+    /* Soft knee */
+    f32 knee = thr + 0.15f;
+    f32 m = 0.f;
+    if (lum <= thr) m = 0.f;
+    else if (lum >= knee) m = 1.f;
+    else {
+        f32 t = (lum - thr) / (knee - thr);
+        m = t * t * (3.f - 2.f * t);
+    }
+    rgb_out[0] = rgb_in[0] * m;
+    rgb_out[1] = rgb_in[1] * m;
+    rgb_out[2] = rgb_in[2] * m;
+}

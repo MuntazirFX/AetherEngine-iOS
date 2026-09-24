@@ -494,7 +494,6 @@ int  engine_postfx_bloom_encode_needed(void);
 #ifdef __cplusplus
 }
 #endif
-#endif /* ENGINE_BRIDGE_H */
 
 /* ---------- Batch: studio anim / multi-style / stereo / lagcomp / pvs-lights ---------- */
 int  engine_mdl_write_studio_fixture(const char *filepath);
@@ -515,3 +514,28 @@ int  engine_particles_spawn_muzzle(float ox, float oy, float oz,
                                    float fx, float fy, float fz, unsigned count);
 int  engine_particles_spawn_trail(float x0, float y0, float z0,
                                   float x1, float y1, float z1, unsigned count);
+
+/* ---------- Batch: metal blend / studio attach / lagcomp hit / RLE ---------- */
+int  engine_lightmap_fill_style_blend_ubo(float *out, unsigned max_floats);
+int  engine_lightmap_sample_style_blend(const float weights4[4],
+                                        const float base_rgb[3], float out_rgb[3]);
+int  engine_weapon_view_copy_skinned(float frame, float *out_xyz_uv_rgba, int max_verts,
+                                     float *out_muzzle3, float *out_muzzle_fwd3);
+int  engine_lagcomp_validate_hit(float now, float lag_ms,
+                                 float eye_x, float eye_y, float eye_z, float max_dist,
+                                 int *out_id, float *out_t);
+int  engine_mdl_anim_rle_decode_fixture(float frame); /* load RLE→skin */
+int  engine_dynlights_fill_ubo_pvs_bleed(float view_x, float view_y, float view_z,
+                                         float *out_array, int max_floats);
+int  engine_particles_spawn_viewmodel_fire(float mx, float my, float mz,
+                                           float fx, float fy, float fz,
+                                           unsigned muzzle_n, unsigned trail_n);
+int  engine_mdl_studio_events_tick(float prev_frame, float frame,
+                                   int *out_event, char *out_opts, int opts_cap);
+int  engine_audio_play_studio_cue(const char *cue, float volume);
+int  engine_postfx_bloom_encode_plan(unsigned *out_passes, unsigned *out_w, unsigned *out_h,
+                                     int *out_separable);
+int  engine_mdl_fixture_attachments_count(void);
+int  engine_lagcomp_push_attack_cmd(float now, float yaw, float pitch, unsigned seq);
+
+#endif /* ENGINE_BRIDGE_H */

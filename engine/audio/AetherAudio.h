@@ -133,7 +133,6 @@ aether_result_t aether_audio_play_wav_at(aether_audio_t *a,
 #ifdef __cplusplus
 }
 #endif
-#endif /* AETHER_AUDIO_H */
 
 /* Stereo pan → L/R gains (constant-power-ish). pan -1..1. */
 void aether_audio_spatial_stereo_gains(f32 pan, f32 *out_left, f32 *out_right);
@@ -147,3 +146,9 @@ aether_result_t aether_audio_play_beep_stereo(aether_audio_t *a, f32 freq_hz,
 aether_result_t aether_audio_play_beep_stereo_at(aether_audio_t *a, f32 freq_hz,
                                                  f32 duration_sec, f32 volume,
                                                  f32 src_x, f32 src_y, f32 src_z);
+
+/* Studio sound-cue stub: play a short beep tagged with cue name (host/smoke). */
+aether_result_t aether_audio_play_studio_cue(aether_audio_t *a, const char *cue,
+                                             f32 volume);
+
+#endif /* AETHER_AUDIO_H */

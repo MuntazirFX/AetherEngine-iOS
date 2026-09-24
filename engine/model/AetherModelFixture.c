@@ -550,3 +550,224 @@ bool aether_mdl_hitbox_trace(const aether_mdl_hitbox_t *boxes, u32 count,
     if (out_point) { out_point[0]=best_pt[0]; out_point[1]=best_pt[1]; out_point[2]=best_pt[2]; }
     return true;
 }
+
+#define AETHER_ATTACH_MAGIC  ((i32)0xAE7E4154) /* ATT */
+#define AETHER_EVENT_MAGIC   ((i32)0xAE7E4556) /* EV */
+#define AETHER_RLE_MAGIC     ((i32)0xAE7E524C) /* RLE */
+
+static void wr_name32(u8 *p, const char *s) {
+    memset(p, 0, 32);
+    if (!s) return;
+    size_t n = strlen(s);
+    if (n > 31) n = 31;
+    memcpy(p, s, n);
+}
+
+u32 aether_mdl_write_studio_fixture_ex(u8 *out, u32 cap) {
+    /* Base studio (packed keys + hitboxes) then append RLE + attachments + events. */
+    u32 n = aether_mdl_write_studio_fixture(out, cap);
+    if (!n || !out) return 0;
+    const u32 frames = 4, bones = 2;
+    /* RLE block: for each bone×channel(6), store runs of (count:u8, value:f32).
+     * Encode each channel's 4 frames as RLE. */
+    u32 rle_est = 16 + bones * 6 * (1 + 4 * 5); /* generous */
+    u32 att_bytes = 16 + 2 * (4 + 12 + 12 + 32); /* 2 attachments */
+    u32 evt_bytes = 16 + 2 * (4 + 4 + 64);
+    if (cap < n + rle_est + att_bytes + evt_bytes + 64) return 0;
+
+    u8 *rle = out + n;
+    wr_i32(rle + 0, AETHER_RLE_MAGIC);
+    wr_i32(rle + 4, (i32)frames);
+    wr_i32(rle + 8, (i32)bones);
+    wr_i32(rle + 12, 0); /* payload size filled later */
+    u8 *payload = rle + 16;
+    u32 poff = 0;
+    for (u32 b = 0; b < bones; ++b) {
+        for (u32 ch = 0; ch < 6; ++ch) {
+            /* Build 4 values matching studio packed keys */
+            f32 vals[4];
+            for (u32 f = 0; f < frames; ++f) {
+                f32 t = (f32)f / (f32)(frames - 1);
+                f32 swing = sinf(t * 3.14159265f * 2.f) * 30.f;
+                if (ch < 3) {
+                    /* pos */
+                    if (ch == 2) vals[f] = (b == 0) ? 0.f : (10.f + 3.f * sinf(t * 6.2831853f));
+                    else vals[f] = 0.f;
+                } else {
+                    /* angles: yaw on channel 4 (index 1 of angles) */
+                    int ai = (int)ch - 3;
+                    if (ai == 1) vals[f] = (b == 0) ? swing : (-swing * 0.6f);
+                    else vals[f] = 0.f;
+                }
+            }
+            /* Simple RLE */
+            u32 i = 0;
+            while (i < frames) {
+                u32 j = i + 1;
+                while (j < frames && fabsf(vals[j] - vals[i]) < 1e-4f) j++;
+                u8 run = (u8)(j - i);
+                payload[poff++] = run;
+                wr_f32(payload + poff, vals[i]);
+                poff += 4;
+                i = j;
+            }
+        }
+    }
+    wr_i32(rle + 12, (i32)poff);
+    u32 rle_total = 16 + poff;
+    /* Align */
+    while ((rle_total & 3u) && (n + rle_total) < cap) {
+        out[n + rle_total] = 0;
+        rle_total++;
+    }
+
+    u8 *att = out + n + rle_total;
+    wr_i32(att + 0, AETHER_ATTACH_MAGIC);
+    wr_i32(att + 4, 2); /* count */
+    wr_i32(att + 8, 0);
+    wr_i32(att + 12, 0);
+    /* attachment 0: muzzle on bone 1 */
+    wr_i32(att + 16 + 0, 1); /* bone */
+    wr_f32(att + 16 + 4, 0.f);
+    wr_f32(att + 16 + 8, 18.f);
+    wr_f32(att + 16 + 12, 4.f);
+    wr_f32(att + 16 + 16, 0.f);
+    wr_f32(att + 16 + 20, 0.f);
+    wr_f32(att + 16 + 24, 0.f);
+    wr_name32(att + 16 + 28, "muzzle");
+    /* attachment 1: shell on bone 0 */
+    wr_i32(att + 16 + 60 + 0, 0);
+    wr_f32(att + 16 + 60 + 4, 4.f);
+    wr_f32(att + 16 + 60 + 8, 2.f);
+    wr_f32(att + 16 + 60 + 12, 8.f);
+    wr_f32(att + 16 + 60 + 16, 0.f);
+    wr_f32(att + 16 + 60 + 20, 90.f);
+    wr_f32(att + 16 + 60 + 24, 0.f);
+    wr_name32(att + 16 + 60 + 28, "shell");
+    u32 att_total = 16 + 2 * 60;
+
+    u8 *ev = att + att_total;
+    wr_i32(ev + 0, AETHER_EVENT_MAGIC);
+    wr_i32(ev + 4, 2);
+    wr_i32(ev + 8, 0);
+    wr_i32(ev + 12, 0);
+    /* event 0: muzzle flash at frame 0.5 */
+    wr_f32(ev + 16 + 0, 0.5f);
+    wr_i32(ev + 16 + 4, 5001);
+    memset(ev + 16 + 8, 0, 64);
+    memcpy(ev + 16 + 8, "muzzle", 6);
+    /* event 1: sound cue at frame 1.0 */
+    wr_f32(ev + 16 + 72 + 0, 1.0f);
+    wr_i32(ev + 16 + 72 + 4, 5004);
+    memset(ev + 16 + 72 + 8, 0, 64);
+    memcpy(ev + 16 + 72 + 8, "weapons/generic_shot.wav", 24);
+    u32 ev_total = 16 + 2 * 72;
+
+    /* Also stamp attachment count into MDL header slots (212/216). */
+    wr_i32(out + 212, 2);
+    wr_i32(out + 216, (i32)(n + rle_total));
+
+    return n + rle_total + att_total + ev_total;
+}
+
+u32 aether_mdl_fixture_attachments(const u8 *data, u32 size,
+                                   aether_mdl_attachment_t *out, u32 max_out) {
+    if (!data || !out || max_out == 0 || size < 32) return 0;
+    for (u32 off = 0; off + 16 < size; ++off) {
+        if (rd_i32_le(data + off) != AETHER_ATTACH_MAGIC) continue;
+        i32 count = rd_i32_le(data + off + 4);
+        if (count <= 0 || count > (i32)AETHER_MDL_FIXTURE_MAX_ATTACHMENTS) return 0;
+        u32 need = (u32)count * 60u;
+        if (off + 16 + need > size) return 0;
+        u32 n = (u32)count;
+        if (n > max_out) n = max_out;
+        for (u32 i = 0; i < n; ++i) {
+            const u8 *a = data + off + 16 + i * 60u;
+            out[i].bone = rd_i32_le(a + 0);
+            out[i].origin[0] = rd_f32_le(a + 4);
+            out[i].origin[1] = rd_f32_le(a + 8);
+            out[i].origin[2] = rd_f32_le(a + 12);
+            out[i].angles_deg[0] = rd_f32_le(a + 16);
+            out[i].angles_deg[1] = rd_f32_le(a + 20);
+            out[i].angles_deg[2] = rd_f32_le(a + 24);
+            memset(out[i].name, 0, sizeof out[i].name);
+            memcpy(out[i].name, a + 28, 31);
+        }
+        return n;
+    }
+    return 0;
+}
+
+i32 aether_mdl_attachment_find(const aether_mdl_attachment_t *atts, u32 count,
+                               const char *name) {
+    if (!atts || !name) return -1;
+    for (u32 i = 0; i < count; ++i) {
+        if (strncmp(atts[i].name, name, 31) == 0) return (i32)i;
+    }
+    return -1;
+}
+
+bool aether_mdl_attachment_transform(const aether_mdl_attachment_t *att,
+                                     const f32 *bone_mats, u32 bone_count,
+                                     f32 out_pos[3], f32 out_forward[3]) {
+    if (!att || !out_pos) return false;
+    f32 lx = att->origin[0], ly = att->origin[1], lz = att->origin[2];
+    if (bone_mats && bone_count > 0 && att->bone >= 0 && (u32)att->bone < bone_count) {
+        const f32 *m = bone_mats + (u32)att->bone * 16u;
+        /* column-major 4x4 */
+        out_pos[0] = m[0]*lx + m[4]*ly + m[8]*lz  + m[12];
+        out_pos[1] = m[1]*lx + m[5]*ly + m[9]*lz  + m[13];
+        out_pos[2] = m[2]*lx + m[6]*ly + m[10]*lz + m[14];
+        if (out_forward) {
+            out_forward[0] = m[0]; out_forward[1] = m[1]; out_forward[2] = m[2];
+        }
+    } else {
+        out_pos[0]=lx; out_pos[1]=ly; out_pos[2]=lz;
+        if (out_forward) { out_forward[0]=1; out_forward[1]=0; out_forward[2]=0; }
+    }
+    return true;
+}
+
+u32 aether_mdl_fixture_events(const u8 *data, u32 size,
+                              aether_mdl_studio_event_t *out, u32 max_out) {
+    if (!data || !out || max_out == 0 || size < 32) return 0;
+    for (u32 off = 0; off + 16 < size; ++off) {
+        if (rd_i32_le(data + off) != AETHER_EVENT_MAGIC) continue;
+        i32 count = rd_i32_le(data + off + 4);
+        if (count <= 0 || count > (i32)AETHER_MDL_FIXTURE_MAX_EVENTS) return 0;
+        u32 need = (u32)count * 72u;
+        if (off + 16 + need > size) return 0;
+        u32 n = (u32)count;
+        if (n > max_out) n = max_out;
+        for (u32 i = 0; i < n; ++i) {
+            const u8 *e = data + off + 16 + i * 72u;
+            out[i].frame = rd_f32_le(e + 0);
+            out[i].event = rd_i32_le(e + 4);
+            memset(out[i].options, 0, sizeof out[i].options);
+            memcpy(out[i].options, e + 8, 63);
+        }
+        return n;
+    }
+    return 0;
+}
+
+u32 aether_mdl_studio_events_fire(const aether_mdl_studio_event_t *evts, u32 count,
+                                  f32 prev_frame, f32 frame,
+                                  aether_mdl_studio_event_t *out_fired, u32 max_out) {
+    if (!evts || count == 0) return 0;
+    u32 n = 0;
+    for (u32 i = 0; i < count; ++i) {
+        f32 ef = evts[i].frame;
+        int crossed = 0;
+        if (frame >= prev_frame) {
+            crossed = (ef > prev_frame && ef <= frame);
+        } else {
+            /* loop wrap */
+            crossed = (ef > prev_frame || ef <= frame);
+        }
+        if (!crossed) continue;
+        if (out_fired && n < max_out) out_fired[n] = evts[i];
+        n++;
+    }
+    return n;
+}

@@ -114,3 +114,47 @@ bool aether_lagcomp_trace(const aether_lagcomp_history_t *h, f32 time,
 u32 aether_lagcomp_frame_count(const aether_lagcomp_history_t *h) {
     return h ? h->count : 0;
 }
+
+#include "AetherNetCmd.h"
+
+void aether_lagcomp_look_dir(f32 yaw_deg, f32 pitch_deg, f32 out_dir[3]) {
+    if (!out_dir) return;
+    const f32 deg2rad = 0.01745329252f;
+    f32 yaw = yaw_deg * deg2rad;
+    f32 pitch = pitch_deg * deg2rad;
+    f32 cp = cosf(pitch), sp = sinf(pitch);
+    f32 cy = cosf(yaw), sy = sinf(yaw);
+    /* GoldSrc: X=forward, Y=right, Z=up → forward = (cp*cy, cp*sy, -sp) */
+    out_dir[0] = cp * cy;
+    out_dir[1] = cp * sy;
+    out_dir[2] = -sp;
+}
+
+bool aether_lagcomp_validate_hit(const aether_lagcomp_history_t *h,
+                                 const struct aether_net_cmd_history *cmds,
+                                 f32 now, f32 lag_ms,
+                                 const f32 eye_origin[3], f32 max_dist,
+                                 aether_lagcomp_hit_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!h || !cmds || !eye_origin || max_dist <= 0.f) return false;
+    const aether_net_cmd_t *cmd = aether_net_cmd_history_at_lag(cmds, now, lag_ms);
+    if (!cmd) return false;
+    /* Only validate when attack button set (bit 1). */
+    if ((cmd->buttons & 1u) == 0) return false;
+    f32 rewind = now - (lag_ms * 0.001f);
+    if (rewind < 0.f) rewind = 0.f;
+    f32 dir[3];
+    aether_lagcomp_look_dir(cmd->yaw_deg, cmd->pitch_deg, dir);
+    i32 id = -1; f32 t = 0; f32 pt[3] = {0,0,0};
+    if (!aether_lagcomp_trace(h, rewind, eye_origin, dir, max_dist, &id, &t, pt))
+        return false;
+    if (out) {
+        out->id = id;
+        out->t = t;
+        out->point[0]=pt[0]; out->point[1]=pt[1]; out->point[2]=pt[2];
+        out->rewind_time = rewind;
+        out->cmd_seq = cmd->seq;
+        out->valid = true;
+    }
+    return true;
+}

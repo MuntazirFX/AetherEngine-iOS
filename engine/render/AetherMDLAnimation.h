@@ -73,8 +73,14 @@ u32 aether_mdl_skin_mesh(const aether_mdl_skin_state_t *sk,
 #ifdef __cplusplus
 }
 #endif
-#endif
 
 /* Load sequence keys from studio fixture bytes (magic 0xAE7E5E02). Returns AETHER_OK. */
 aether_result_t aether_mdl_sequence_load_from_data(aether_mdl_sequence_t *seq,
                                                    const u8 *data, u32 size);
+
+/* GoldSrc-ish anim RLE decode into sequence keys (magic 0xAE7E524C).
+ * Falls back to aether_mdl_sequence_load_from_data if no RLE block. */
+aether_result_t aether_mdl_anim_rle_decode(aether_mdl_sequence_t *seq,
+                                           const u8 *data, u32 size);
+
+#endif

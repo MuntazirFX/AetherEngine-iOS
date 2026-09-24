@@ -55,7 +55,6 @@ u32 aether_weapon_view_copy_stub(const aether_weapon_view_t *v,
 #ifdef __cplusplus
 }
 #endif
-#endif /* AETHER_WEAPON_VIEW_H */
 
 /* Map MDL fixture mesh into view-space gun verts (pos scaled/offset). Returns vert count. */
 struct aether_model_mesh;
@@ -67,3 +66,21 @@ u32 aether_weapon_view_copy_mdl(const aether_weapon_view_t *v,
  * Returns vertex count written (0 on failure). */
 u32 aether_weapon_view_copy_mdl_fixture(const aether_weapon_view_t *v,
                                         aether_viewmodel_vertex_t *out, u32 max_verts);
+
+/* Skinned viewmodel from studio sequence frame + attachments. */
+typedef struct aether_weapon_view_attach {
+    f32 muzzle_pos[3];
+    f32 muzzle_fwd[3];
+    f32 shell_pos[3];
+    bool has_muzzle;
+    bool has_shell;
+    u32  vert_count;
+} aether_weapon_view_attach_t;
+
+/* Build skinned viewmodel verts from studio fixture at `frame`. Fills attach outs.
+ * Returns vertex count. */
+u32 aether_weapon_view_copy_skinned(const aether_weapon_view_t *v, f32 frame,
+                                    aether_viewmodel_vertex_t *out, u32 max_verts,
+                                    aether_weapon_view_attach_t *out_attach);
+
+#endif /* AETHER_WEAPON_VIEW_H */

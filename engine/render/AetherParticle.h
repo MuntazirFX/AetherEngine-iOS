@@ -44,7 +44,6 @@ u32 aether_particles_active_count(const aether_particles_t *p);
 u32 aether_particles_copy_render(const aether_particles_t *p,
                                  aether_particle_vertex_t *out,
                                  u32 max_out);
-#endif
 
 /* Weapon-linked stubs: muzzle flash burst + tracer trail between two points. */
 u32 aether_particles_spawn_muzzle(aether_particles_t *p,
@@ -53,3 +52,15 @@ u32 aether_particles_spawn_muzzle(aether_particles_t *p,
 u32 aether_particles_spawn_trail(aether_particles_t *p,
                                  const f32 from[3], const f32 to[3],
                                  u32 count);
+
+/* Spawn muzzle FX at an attachment point (view/world). */
+u32 aether_particles_spawn_at_attachment(aether_particles_t *p,
+                                         const f32 origin[3], const f32 forward[3],
+                                         u32 count);
+
+/* Viewmodel fire helper: muzzle burst + short trail along forward. */
+u32 aether_particles_spawn_viewmodel_fire(aether_particles_t *p,
+                                          const f32 muzzle[3], const f32 forward[3],
+                                          u32 muzzle_count, u32 trail_count);
+
+#endif
