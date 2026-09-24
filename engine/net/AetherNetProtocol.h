@@ -48,6 +48,7 @@ typedef enum aether_net_msg {
     AETHER_MSG_PLAYER_JOIN       = 0x14,
     AETHER_MSG_PLAYER_LEAVE      = 0x15,
     AETHER_MSG_SERVER_INFO       = 0x16,
+    AETHER_MSG_SERVER_DELTA      = 0x17,   /* delta snapshot vs baseline */
     /* Query */
     AETHER_MSG_QUERY             = 0x20,
     AETHER_MSG_QUERY_RESPONSE    = 0x21,

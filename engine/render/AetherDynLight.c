@@ -138,3 +138,39 @@ u32 aether_dyn_lights_fill_ubo(const aether_dyn_lights_t *dl, aether_dyn_light_u
     ubo->count = n;
     return n;
 }
+
+
+u32 aether_dyn_lights_fill_array(const aether_dyn_lights_t *dl,
+                                 f32 *out, u32 max_floats) {
+    if (!out || max_floats < 4) return 0;
+    aether_dyn_light_ubo_t ubo;
+    u32 n = aether_dyn_lights_fill_ubo(dl, &ubo);
+    /* Need 4 + n*8 floats */
+    u32 need = 4u + n * 8u;
+    if (need > max_floats) {
+        n = (max_floats - 4u) / 8u;
+        need = 4u + n * 8u;
+    }
+    out[0] = (f32)n; out[1] = 0; out[2] = 0; out[3] = 0;
+    for (u32 i = 0; i < n; ++i) {
+        f32 *d = out + 4u + i * 8u;
+        d[0] = ubo.lights[i].x; d[1] = ubo.lights[i].y; d[2] = ubo.lights[i].z;
+        d[3] = ubo.lights[i].radius;
+        d[4] = ubo.lights[i].r; d[5] = ubo.lights[i].g; d[6] = ubo.lights[i].b;
+        d[7] = ubo.lights[i].intensity;
+    }
+    return need;
+}
+
+void aether_dyn_lights_sample_rgb_ex(const aether_dyn_lights_t *dl,
+                                     f32 x, f32 y, f32 z,
+                                     f32 ambient, f32 out_rgb[3]) {
+    if (!out_rgb) return;
+    if (ambient < 0.f) ambient = 0.f;
+    aether_dyn_lights_sample_rgb(dl, x, y, z, out_rgb);
+    out_rgb[0] += ambient;
+    out_rgb[1] += ambient;
+    out_rgb[2] += ambient;
+    /* Soft quadratic falloff polish already in sample; clamp HDR-ish. */
+    for (int i = 0; i < 3; ++i) if (out_rgb[i] > 2.f) out_rgb[i] = 2.f;
+}

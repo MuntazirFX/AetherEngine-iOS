@@ -60,6 +60,9 @@
 #include "../../engine/net/AetherNetScoreboard.h"
 #include "../../engine/net/AetherNetChat.h"
 #include "../../engine/net/AetherNetSnapshot.h"
+#include "../../engine/net/AetherNetDelta.h"
+#include "../../engine/net/AetherNetInterp.h"
+#include "../../engine/net/AetherNetPredict.h"
 #include "../../engine/console/AetherCVar.h"
 #include "../../engine/game/AetherManifest.h"
 
@@ -2399,4 +2402,116 @@ int engine_interact_trace(float eye_x, float eye_y, float eye_z,
         aether_str_copy(out_classname, (size_t)classname_cap, hit.classname);
     }
     return (int)hit.kind;
+}
+
+
+/* ---------- Batch: postfx offscreen / lightmap pingpong / delta+predict ---------- */
+static aether_net_interp_t g_net_interp;
+static aether_net_predict_t g_net_predict;
+static int g_net_interp_init = 0;
+static int g_net_predict_init = 0;
+static aether_net_snapshot_t g_delta_state;
+
+static void ensure_net_interp(void) {
+    if (!g_net_interp_init) { aether_net_interp_init(&g_net_interp); g_net_interp_init = 1; }
+}
+static void ensure_net_predict(void) {
+    if (!g_net_predict_init) { aether_net_predict_init(&g_net_predict, 1); g_net_predict_init = 1; }
+}
+
+int engine_postfx_ensure_offscreen(int width, int height) {
+    ensure_postfx();
+    if (width <= 0 || height <= 0) return 0;
+    return aether_postfx_ensure_offscreen(&g_postfx, (u32)width, (u32)height) == AETHER_OK ? 1 : 0;
+}
+int engine_postfx_has_offscreen(void) {
+    ensure_postfx();
+    return aether_postfx_has_offscreen(&g_postfx) ? 1 : 0;
+}
+int engine_postfx_fill_uniforms(float *out4) {
+    ensure_postfx();
+    if (!out4) return 0;
+    aether_postfx_uniforms_t u;
+    aether_postfx_fill_uniforms(&g_postfx, &u);
+    out4[0] = u.brightness; out4[1] = u.gamma; out4[2] = u.exposure; out4[3] = u.enabled;
+    return 4;
+}
+int engine_lightmap_capture_base(void) {
+    aether_lightmap_t *lm = bridge_lightmap();
+    if (!lm) return 0;
+    return aether_lightmap_capture_base(lm) == AETHER_OK ? 1 : 0;
+}
+int engine_lightmap_apply_style_pingpong(unsigned style_index) {
+    ensure_lightstyles();
+    aether_lightmap_t *lm = bridge_lightmap();
+    if (!lm) return 0;
+    return aether_lightmap_apply_style_pingpong(lm, &g_lightstyles, style_index) == AETHER_OK ? 1 : 0;
+}
+int engine_lightmap_has_base(void) {
+    aether_lightmap_t *lm = bridge_lightmap();
+    return lm && aether_lightmap_has_base(lm) ? 1 : 0;
+}
+int engine_dynlights_fill_array(float *out, int max_floats) {
+    if (!out || max_floats < 4) return 0;
+    return (int)aether_dyn_lights_fill_array(&g_dynlights, out, (u32)max_floats);
+}
+int engine_decals_clip_to_world(float *out_xyz_uv_fade_rgba, int max_verts) {
+    aether_decals_t *d = bridge_decals();
+    if (!d || !g_active_mesh || !out_xyz_uv_fade_rgba || max_verts < 3) return 0;
+    return (int)aether_decals_clip_to_world(d, g_active_mesh,
+        (aether_decal_quad_vertex_t *)out_xyz_uv_fade_rgba, (u32)max_verts);
+}
+int engine_net_delta_encode(const void *baseline_snap, const void *current_snap,
+                            unsigned char *out, int cap) {
+    if (!current_snap || !out || cap <= 0) return 0;
+    return (int)aether_net_delta_encode((const aether_net_snapshot_t *)baseline_snap,
+                                        (const aether_net_snapshot_t *)current_snap,
+                                        out, (u32)cap);
+}
+int engine_net_delta_apply(const unsigned char *data, int size) {
+    if (!data || size <= 0) return 0;
+    return aether_net_delta_apply(data, (u32)size, &g_delta_state) == AETHER_OK ? 1 : 0;
+}
+int engine_net_interp_push_demo(unsigned tick, float time, float frac) {
+    ensure_net_interp();
+    aether_net_snapshot_t snap;
+    aether_net_snapshot_make_demo(&snap, tick, time);
+    aether_net_interp_push(&g_net_interp, &snap);
+    aether_net_interp_set_fraction(&g_net_interp, frac);
+    return 1;
+}
+int engine_net_interp_origin(unsigned player_id, float out[3]) {
+    ensure_net_interp();
+    if (!out) return 0;
+    return aether_net_interp_origin(&g_net_interp, player_id, out);
+}
+int engine_net_predict_local_step(float forward, float side, float yaw_deg, float dt) {
+    ensure_net_predict();
+    aether_net_predict_cmd_t cmd;
+    memset(&cmd, 0, sizeof cmd);
+    cmd.forward = forward; cmd.side = side; cmd.yaw_deg = yaw_deg; cmd.dt = dt;
+    cmd.seq = g_net_predict.cmd_seq + 1;
+    aether_net_predict_apply_cmd(&g_net_predict, &cmd);
+    return 1;
+}
+int engine_net_predict_reconcile_demo(float blend) {
+    ensure_net_predict();
+    aether_net_snapshot_t snap;
+    aether_net_snapshot_make_demo(&snap, g_net_predict.last_ack_tick + 1, 0.f);
+    /* Force local player id 1 origin from demo player 0 or set id match */
+    if (snap.player_count > 0) {
+        snap.players[0].player_id = g_net_predict.local_id;
+    }
+    aether_net_predict_reconcile(&g_net_predict, &snap, blend);
+    return 1;
+}
+int engine_net_predict_get_origin(float out[3]) {
+    ensure_net_predict();
+    aether_net_predict_get_origin(&g_net_predict, out);
+    return 1;
+}
+int engine_mdl_fixture_extract_verts(void) {
+    char path[] = "/tmp/aether_fixture_bridge.mdl";
+    if (aether_mdl_write_fixture_file(path) == 0) return 0;
+    return engine_mdl_load_fixture_file(path);
 }

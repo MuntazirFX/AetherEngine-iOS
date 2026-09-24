@@ -459,11 +459,14 @@ fragment float4 aether_fragment_dynlights_world(BSPVertexOutW in [[stage_in]],
         float  rad  = max(DL.lights[i].pos_radius.w, 0.001);
         float3 Lcol = DL.lights[i].color_inten.xyz;
         float  inten= DL.lights[i].color_inten.w;
-        float dist = distance(in.world_pos, Lpos);
-        if (dist >= rad) continue;
+        float3 toL = Lpos - in.world_pos;
+        float dist = length(toL);
+        if (dist >= rad || dist < 1e-4) continue;
+        float3 Ldir = toL / dist;
+        float ndotl = max(dot(N, Ldir), 0.0);
         float attn = 1.0 - (dist / rad);
-        attn *= attn;
-        dyn += Lcol * (attn * inten);
+        attn = attn * attn; /* quadratic falloff */
+        dyn += Lcol * (attn * inten * (0.35 + 0.65 * ndotl));
     }
     return float4(clamp(base_color * diff + dyn, 0.0, 2.0), 1.0);
 }

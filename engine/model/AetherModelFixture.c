@@ -1,5 +1,6 @@
 /* AetherModelFixture.c — Procedural MDL/SPR fixtures (no HL assets).
  * AetherEngine-iOS · Clean-room.
+ * MDL fixture embeds 1 studio mesh = 1 triangle (3 verts) for Metal draw.
  */
 #include "AetherModelFixture.h"
 #include "AetherMDL.h"
@@ -10,6 +11,9 @@
 static void wr_i32(u8 *p, i32 v) {
     u32 u = (u32)v;
     p[0]=(u8)u; p[1]=(u8)(u>>8); p[2]=(u8)(u>>16); p[3]=(u8)(u>>24);
+}
+static void wr_u16(u8 *p, u16 v) {
+    p[0]=(u8)v; p[1]=(u8)(v>>8);
 }
 static void wr_f32(u8 *p, f32 f) {
     u32 u; memcpy(&u, &f, 4);
@@ -23,16 +27,27 @@ static void wr_name(u8 *p, size_t n, const char *s) {
     memcpy(p, s, L);
 }
 
-/* Layout: hdr(244) + bone(112) + bodypart(76) + model(112) + trivert/norm stubs.
- * Geometry extractor may find zero tris — that's OK for CI header path.
- * We still embed 3 simple verts for a potential future geom path. */
+/* Layout matching AetherMDLGeometry's on-disk structs:
+ *   hdr(244) + bone(112) + bodypart(76) + model(104) + mesh(20)
+ *   + verts(3*12) + norms(3*12) + tri_idx(3*u16)
+ * Geometry extractor reads model.vert_info_index as float3 positions.
+ */
 u32 aether_mdl_write_fixture(u8 *out, u32 cap) {
     if (!out) return 0;
-    const u32 HDR = 244, BONE = 112, BODY = 76, MODEL = 112;
-    const u32 bone_off = HDR;
-    const u32 body_off = bone_off + BONE;
+    const u32 HDR = 244, BONE = 112, BODY = 76, MODEL = 104, MESH = 20;
+    const u32 NVERTS = 3;
+    const u32 VERT_BYTES = NVERTS * 12;
+    const u32 NORM_BYTES = NVERTS * 12;
+    const u32 TRI_BYTES = 3 * 2; /* 1 tri × 3 × u16 */
+
+    const u32 bone_off  = HDR;
+    const u32 body_off  = bone_off + BONE;
     const u32 model_off = body_off + BODY;
-    const u32 total = model_off + MODEL + 64; /* padding / reserved */
+    const u32 mesh_off  = model_off + MODEL;
+    const u32 vert_off  = mesh_off + MESH;
+    const u32 norm_off  = vert_off + VERT_BYTES;
+    const u32 tri_off   = norm_off + NORM_BYTES;
+    const u32 total     = tri_off + TRI_BYTES + 16; /* pad */
     if (cap < total) return 0;
     memset(out, 0, total);
 
@@ -61,7 +76,7 @@ u32 aether_mdl_write_fixture(u8 *out, u32 cap) {
     /* Bone */
     u8 *b = out + bone_off;
     wr_name(b, 32, "root");
-    wr_i32(b + 32, -1); /* parent */
+    wr_i32(b + 32, -1);
 
     /* Bodypart → 1 model */
     u8 *bp = out + body_off;
@@ -70,26 +85,53 @@ u32 aether_mdl_write_fixture(u8 *out, u32 cap) {
     wr_i32(bp + 68, 0); /* base */
     wr_i32(bp + 72, (i32)model_off);
 
-    /* Model stub (mstudiomodel_t-ish) — name + zero counts */
+    /* Model — matches mdl_model_disk_t (104 bytes) used by geometry extract */
     u8 *md = out + model_off;
-    wr_name(md, 64, "fixture_mdl");
-    wr_i32(md + 64, 0); /* type */
-    wr_f32(md + 68, 0.f); /* boundingradius */
-    wr_i32(md + 72, 0); /* nummesh */
-    wr_i32(md + 76, 0); /* meshindex */
-    wr_i32(md + 80, 0); /* numverts */
-    wr_i32(md + 84, 0); /* vertinfoindex */
-    wr_i32(md + 88, 0); /* vertindex */
-    wr_i32(md + 92, 0); /* numnorms */
-    wr_i32(md + 96, 0);
-    wr_i32(md + 100, 0);
+    wr_name(md, 64, "fixture_tri");
+    wr_i32(md + 64, 0);                 /* type */
+    wr_f32(md + 68, 16.f);              /* boundingradius */
+    wr_i32(md + 72, 1);                 /* num_meshes */
+    wr_i32(md + 76, (i32)mesh_off);     /* mesh_index */
+    wr_i32(md + 80, (i32)NVERTS);       /* num_verts */
+    wr_i32(md + 84, (i32)vert_off);     /* vert_info_index → float3 positions */
+    wr_i32(md + 88, (i32)NVERTS);       /* num_norms */
+    wr_i32(md + 92, (i32)norm_off);     /* norm_info_index → float3 normals */
+    wr_i32(md + 96, 0);                 /* num_groups */
+    wr_i32(md + 100, 0);                /* group_index */
+
+    /* Mesh (20-byte stride used by extractor) */
+    u8 *ms = out + mesh_off;
+    wr_i32(ms + 0, 1);                  /* num_tris */
+    wr_i32(ms + 4, (i32)tri_off);       /* tri_indexes */
+    wr_i32(ms + 8, 0);                  /* skin_ref */
+    wr_i32(ms + 12, (i32)NVERTS);       /* num_verts */
+    wr_i32(ms + 16, 0);                 /* vert_info_index (unused) */
+
+    /* Clean-room triangle in XY plane, Z-up normal */
+    f32 verts[9] = {
+        -16.f, -16.f, 0.f,
+         16.f, -16.f, 0.f,
+          0.f,  16.f, 0.f
+    };
+    f32 norms[9] = {
+        0.f, 0.f, 1.f,
+        0.f, 0.f, 1.f,
+        0.f, 0.f, 1.f
+    };
+    for (u32 i = 0; i < 9; ++i) {
+        wr_f32(out + vert_off + i * 4, verts[i]);
+        wr_f32(out + norm_off + i * 4, norms[i]);
+    }
+    wr_u16(out + tri_off + 0, 0);
+    wr_u16(out + tri_off + 2, 1);
+    wr_u16(out + tri_off + 4, 2);
 
     return total;
 }
 
 u32 aether_mdl_write_fixture_file(const char *filepath) {
     if (!filepath) return 0;
-    u8 buf[1024];
+    u8 buf[2048];
     u32 n = aether_mdl_write_fixture(buf, sizeof buf);
     if (!n) return 0;
     FILE *f = fopen(filepath, "wb");
@@ -105,28 +147,27 @@ u32 aether_mdl_write_fixture_file(const char *filepath) {
 
 u32 aether_sprite_write_fixture(u8 *out, u32 cap) {
     if (!out) return 0;
-    const u32 hdr = 40; /* id,ver,type,texfmt,bb,radius,w,h,nframes,beam,synctype */
-    const u32 frame_hdr = 16; /* originx,originy,w,h */
+    const u32 hdr = 40;
+    const u32 frame_hdr = 16;
     const u32 pix = 16 * 16;
-    const u32 pal = 2 + 256 * 3; /* short n + RGB */
+    const u32 pal = 2 + 256 * 3;
     const u32 total = hdr + frame_hdr + pix + pal;
     if (cap < total) return 0;
     memset(out, 0, total);
     wr_i32(out + 0, AETHER_SPR_ID);
-    wr_i32(out + 4, 2);   /* version */
-    wr_i32(out + 8, 0);   /* type VP_PARALLEL_UPRIGHT */
-    wr_i32(out + 12, 0);  /* tex format SPR_NORMAL */
-    wr_f32(out + 16, 8.f); /* boundingradius */
-    wr_i32(out + 20, 16); /* width */
-    wr_i32(out + 24, 16); /* height */
-    wr_i32(out + 28, 1);  /* numframes */
-    wr_f32(out + 32, 0.f); /* beamlength */
-    wr_i32(out + 36, 0);  /* synctype */
+    wr_i32(out + 4, 2);
+    wr_i32(out + 8, 0);
+    wr_i32(out + 12, 0);
+    wr_f32(out + 16, 8.f);
+    wr_i32(out + 20, 16);
+    wr_i32(out + 24, 16);
+    wr_i32(out + 28, 1);
+    wr_f32(out + 32, 0.f);
+    wr_i32(out + 36, 0);
 
     u8 *fr = out + hdr;
     wr_i32(fr + 0, -8); wr_i32(fr + 4, -8);
     wr_i32(fr + 8, 16); wr_i32(fr + 12, 16);
-    /* Indexed pixels: soft circle */
     u8 *px = fr + frame_hdr;
     for (int y = 0; y < 16; ++y) {
         for (int x = 0; x < 16; ++x) {
@@ -135,15 +176,13 @@ u32 aether_sprite_write_fixture(u8 *out, u32 cap) {
         }
     }
     u8 *palp = px + pix;
-    wr_i32(palp, 256); /* actually short in some docs — write 2 bytes */
-    palp[0] = 0; palp[1] = 1; /* n=256 as little short: write properly */
     {
         u16 n = 256;
         palp[0] = (u8)n; palp[1] = (u8)(n >> 8);
         u8 *rgb = palp + 2;
         memset(rgb, 0, 256 * 3);
-        rgb[0]=0; rgb[1]=0; rgb[2]=0;          /* index 0 transparent-ish */
-        rgb[3]=40; rgb[4]=220; rgb[5]=80;      /* index 1 green blob */
+        rgb[0]=0; rgb[1]=0; rgb[2]=0;
+        rgb[3]=40; rgb[4]=220; rgb[5]=80;
     }
     return total;
 }

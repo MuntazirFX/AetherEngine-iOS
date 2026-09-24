@@ -134,11 +134,37 @@ clean-room MDL/SPR fixtures, blob shadows, PostFX brightness/gamma, and use/inte
 
 ### Known gaps after GPU lights / decal clip / netplay batch
 - Dyn-light UBO uses world-pos vertex path; atlas-only maps still need full light entity binding polish
-- Decal clip is accept/reject per world tri (not full Sutherland–Hodgman polygon clip)
-- PostFX Metal pass is hooked but needs an offscreen color target to sample the scene
-- Lightstyle modulate currently rewrites atlas in-place (want base+style dual buffer for seamless loop)
-- Fixture MDL has valid header/bones/bodypart but zero studio meshes (geom extract may be empty)
-- Full multiplayer still needs prediction / delta compression beyond snapshot HUD
+- *(addressed in postfx/mdl/predict batch: SH decal clip, offscreen PostFX, ping-pong lightmaps, fixture tris, delta/predict)*
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+
+
+
+## PostFX / Lightmap ping-pong / MDL / Predict batch (`continue/batch-postfx-lightmap-mdl-predict`)
+
+One PR advances offscreen PostFX, dual lightmap styles, fixture studio mesh, client
+interp/delta/prediction stubs, dyn-light array uniforms, and world-clipped decals — still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Offscreen PostFX | **done** | Color+depth offscreen target; Metal PostFX pass samples scene with brightness/gamma uniforms |
+| 2 | Dual lightmap styles | **done** | `base_rgba` + `apply_style_pingpong` (copy base→rgba then modulate; no accum) |
+| 3 | MDL triangle fixture | **done** | Fixture embeds 1 studio mesh / 3 verts; geometry extract → Metal draw |
+| 4 | Client interp | **done** | `AetherNetInterp` prev/curr lerp of player origins |
+| 5 | Delta snapshots | **done** | `AetherNetDelta` encode/apply changed players only (`AETHER_MSG_SERVER_DELTA`) |
+| 6 | Prediction stub | **done** | `AetherNetPredict` local move + soft reconcile on snapshot |
+| 7 | Dyn-light array uniforms | **done / partial** | `fill_array` + fragment N·L attenuation polish |
+| 8 | World-clipped decals | **done** | Sutherland–Hodgman clip to decal square in tangent space |
+| 9 | Host smoke | **done** | postfx uniforms, MDL verts>0, delta+predict, pingpong, clip |
+| 10 | README + gaps | **done** | This table |
+
+### Known gaps after postfx/lightmap/mdl/predict batch
+- PostFX is brightness/gamma only (no bloom/DOF chain yet)
+- Lightstyle ping-pong still CPU-modulates atlas (GPU style weights next)
+- MDL fixture is a single flat triangle (no bones/seq skinning on GPU)
+- Delta/predict/interp are host-verified stubs — not yet driving live multiplayer movement
+- Decal clip is tangent-square SH (not full mesh silhouette / CSG)
+- IPA still requires macOS + Xcode via workflow_dispatch
 
 
 ## Build Status
