@@ -83,4 +83,51 @@ u32 aether_bsp_vis_apply_frustum(const aether_bsp_t *bsp,
 #ifdef __cplusplus
 }
 #endif
+
+/* ---------- Multi-portal leaf graph (adjacency from portals/leaves) + flood ---------- */
+#define AETHER_BSP_PORTAL_GRAPH_MAX_LEAVES  16
+#define AETHER_BSP_PORTAL_GRAPH_MAX_EDGES   64
+#define AETHER_BSP_PORTAL_GRAPH_MAX_FLOOD   16
+
+typedef struct aether_bsp_portal_edge {
+    u16 leaf_a;
+    u16 leaf_b;
+    f32 center[3];   /* portal mid-point stub */
+    f32 normal[3];
+    bool valid;
+} aether_bsp_portal_edge_t;
+
+typedef struct aether_bsp_portal_graph {
+    u32 leaf_count;
+    u32 edge_count;
+    u8  adj[AETHER_BSP_PORTAL_GRAPH_MAX_LEAVES][AETHER_BSP_PORTAL_GRAPH_MAX_LEAVES];
+    aether_bsp_portal_edge_t edges[AETHER_BSP_PORTAL_GRAPH_MAX_EDGES];
+    bool from_bsp;
+    bool multi_portal; /* >=2 portal edges */
+} aether_bsp_portal_graph_t;
+
+typedef struct aether_bsp_portal_flood {
+    u32 reached_count;
+    u16 reached[AETHER_BSP_PORTAL_GRAPH_MAX_FLOOD];
+    u16 parent[AETHER_BSP_PORTAL_GRAPH_MAX_FLOOD];
+    u16 depth[AETHER_BSP_PORTAL_GRAPH_MAX_FLOOD];
+    u16 start_leaf;
+    bool valid;
+} aether_bsp_portal_flood_t;
+
+void aether_bsp_portal_graph_init(aether_bsp_portal_graph_t *g);
+/* Build adjacency from BSP leaves (PVS neighbors + shared node children). */
+u32  aether_bsp_portal_graph_build_from_bsp(aether_bsp_portal_graph_t *g,
+                                            const aether_bsp_t *bsp);
+/* Synthetic multi-portal leaf graph (4 leaves, ring) for host smoke. */
+u32  aether_bsp_portal_graph_build_multi_fixture(aether_bsp_portal_graph_t *g);
+/* Add undirected edge; returns 1 if stored. */
+int  aether_bsp_portal_graph_add_edge(aether_bsp_portal_graph_t *g,
+                                      u16 a, u16 b,
+                                      const f32 center[3], const f32 normal[3]);
+/* BFS flood from start leaf through portal adjacency (for reflect reachability). */
+u32  aether_bsp_portal_graph_flood(const aether_bsp_portal_graph_t *g,
+                                   u16 start_leaf, u32 max_depth,
+                                   aether_bsp_portal_flood_t *out);
+
 #endif /* AETHER_BSP_VIS_H */

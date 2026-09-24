@@ -135,4 +135,23 @@ u32  aether_depth_hiz_bind_plan_fill_views(aether_depth_hiz_bind_plan_t *plan,
                                            const u32 *level_w, const u32 *level_h,
                                            const u32 *level_off, u32 levels);
 
+
+/* ---------- texture2d_array Hi-Z bind for Metal vis queries ---------- */
+typedef struct aether_depth_hiz_array_bind {
+    bool array_texture;     /* bind as texture2d_array (slice = mip) */
+    bool mip_chain;         /* mip chain also exposed */
+    bool vis_query_array;   /* vis query uses array mip on encode path */
+    bool bound;
+    u32  slice_count;
+    u32  mip0_w, mip0_h;
+} aether_depth_hiz_array_bind_t;
+
+void aether_depth_hiz_array_bind_init(aether_depth_hiz_array_bind_t *b);
+/* After pyramid bind plan: mark array/mip-chain path for Metal encode. */
+int  aether_depth_hiz_array_bind_encode(const aether_depth_hiz_bind_plan_t *plan,
+                                        u32 slice_count,
+                                        aether_depth_hiz_array_bind_t *out);
+void aether_depth_hiz_array_bind_mark_bound(aether_depth_hiz_array_bind_t *b);
+bool aether_depth_hiz_array_bind_was_bound(const aether_depth_hiz_array_bind_t *b);
+
 #endif /* AETHER_DEPTH_PREPASS_H */

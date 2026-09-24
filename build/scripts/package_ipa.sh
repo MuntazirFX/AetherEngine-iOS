@@ -45,6 +45,23 @@ zip -qry "${IPA_PATH}" Payload
 # ---------- 6. Report ----------
 IPA_SIZE=$(du -sh "${IPA_PATH}" | cut -f1)
 log "IPA created: ${IPA_PATH} (${IPA_SIZE})"
+
+# Write companion artifact notes for Actions upload (batch16)
+if [[ -f "${IPA_PATH}" ]]; then
+  NOTES="${OUT_DIR}/ARTIFACT_NOTES.txt"
+  {
+    echo "AetherEngine-iOS unsigned IPA artifact"
+    echo "ipa=$(basename "${IPA_PATH}")"
+    echo "size=${IPA_SIZE}"
+    echo "sha256=$(shasum -a 256 "${IPA_PATH}" | awk '{print $1}')"
+    echo "retention_days_default=30"
+    echo "upload=actions/upload-artifact@v4"
+    echo "compression_level=9"
+    echo "built_by=package_ipa.sh"
+  } > "${NOTES}"
+  log "Wrote ${NOTES}"
+fi
+
 log "Install via: AltStore / Sideloadly / TrollStore / ideviceinstaller"
 log "Done ✔"
 
@@ -113,3 +130,19 @@ log "Done ✔"
 #
 # PR/push events only run verify_host on macos-14 (no IPA). IPA is
 # workflow_dispatch-only — see .github/workflows/build-arm64.yml.
+
+
+# ---------- IPA artifact automation (batch16) ----------
+# Actions upload improvements (see .github/workflows/build-arm64.yml):
+#   - actions/upload-artifact@v4
+#   - retention-days: 30 (override via workflow input artifact_retention_days)
+#   - compression-level: 9 (smaller artifact upload)
+#   - if-no-files-found: error
+#   - Companion ARTIFACT_NOTES.txt uploaded beside the IPA (sha256, size, commit, retention)
+# Download:
+#   gh run download <run-id> -n AetherEngine-<version>
+#   # contains AetherEngine.ipa + ARTIFACT_NOTES.txt
+# Retention note: GitHub free/pro default artifact retention is 90d max; we pin 30d
+# unless workflow_dispatch input raises it (1..90). Expired artifacts are not recoverable.
+
+

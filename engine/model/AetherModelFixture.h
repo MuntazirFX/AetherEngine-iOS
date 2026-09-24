@@ -498,4 +498,81 @@ int  aether_mdl_skin_pages_sample(const aether_mdl_skin_page_set_t *set,
 /* Find page index by group/tex; -1 if missing. */
 i32  aether_mdl_skin_pages_find(const aether_mdl_skin_page_set_t *set, u8 group, u8 tex);
 
+
+/* ---------- Device Metal Hi-Z as texture2d_array / mip-chain slices ---------- */
+#define AETHER_MDL_HIZ_ARRAY_MAX_SLICES AETHER_MDL_HIZ_MIP_LEVELS
+
+typedef struct aether_mdl_hiz_array_slice {
+    u32 slice;          /* texture2d_array slice index (= mip) */
+    u32 width;
+    u32 height;
+    u32 texel_offset;   /* into pyramid depth[] */
+    bool valid;
+} aether_mdl_hiz_array_slice_t;
+
+typedef struct aether_mdl_hiz_array {
+    u32 slice_count;
+    u32 mip0_w, mip0_h;
+    bool bound;             /* Metal encode marked array bound */
+    bool gpu_array;         /* device texture2d_array path armed */
+    aether_mdl_hiz_array_slice_t slices[AETHER_MDL_HIZ_ARRAY_MAX_SLICES];
+} aether_mdl_hiz_array_t;
+
+void aether_mdl_hiz_array_init(aether_mdl_hiz_array_t *arr);
+/* Pack pyramid mips as texture2d_array slices (host descriptors for Metal). */
+u32  aether_mdl_hiz_bind_texture2d_array(const aether_mdl_hiz_pyramid_t *pyr,
+                                         aether_mdl_hiz_array_t *out);
+void aether_mdl_hiz_array_mark_bound(aether_mdl_hiz_array_t *arr);
+bool aether_mdl_hiz_array_was_bound(const aether_mdl_hiz_array_t *arr);
+void aether_mdl_hiz_array_set_gpu(aether_mdl_hiz_array_t *arr, bool armed);
+bool aether_mdl_hiz_array_gpu(const aether_mdl_hiz_array_t *arr);
+
+/* Vis query using a specific array mip/slice on the Metal encode path. */
+int  aether_mdl_hiz_vis_query_array_mip(const aether_mdl_hiz_pyramid_t *pyr,
+                                        const aether_mdl_hiz_array_t *arr,
+                                        f32 x0, f32 y0, f32 x1, f32 y1,
+                                        f32 object_depth, i32 array_mip,
+                                        aether_mdl_hiz_vis_query_t *out);
+
+/* ---------- Packed MDL skin lumps (user asset when present; fixture fallback) ---------- */
+#define AETHER_MDL_SKIN_LUMP_MAX       4
+#define AETHER_MDL_SKIN_LUMP_MAX_W     64
+#define AETHER_MDL_SKIN_LUMP_MAX_H     64
+#define AETHER_MDL_SKIN_LUMP_MAGIC     ((i32)0xAE7E0001)
+#define AETHER_MDL_SKIN_LUMP_MAX_RGBA  (AETHER_MDL_SKIN_LUMP_MAX_W * AETHER_MDL_SKIN_LUMP_MAX_H * 4)
+
+typedef struct aether_mdl_skin_lump {
+    char name[32];
+    u32  width;
+    u32  height;
+    u32  rgba_bytes;
+    u8   rgba[AETHER_MDL_SKIN_LUMP_MAX_RGBA];
+    bool from_asset;   /* true when parsed from MDL bytes */
+    bool valid;
+} aether_mdl_skin_lump_t;
+
+typedef struct aether_mdl_skin_lump_set {
+    u32 count;
+    bool used_fixture_fallback;
+    aether_mdl_skin_lump_t lumps[AETHER_MDL_SKIN_LUMP_MAX];
+} aether_mdl_skin_lump_set_t;
+
+void aether_mdl_skin_lumps_init(aether_mdl_skin_lump_set_t *set);
+/* Parse packed texture trailer / skin lumps from MDL bytes. Returns lump count. */
+u32  aether_mdl_skin_lumps_load(aether_mdl_skin_lump_set_t *set,
+                                const u8 *mdl_bytes, u32 size);
+/* Load from user asset path when present; else 0. */
+u32  aether_mdl_skin_lumps_load_file(aether_mdl_skin_lump_set_t *set, const char *path);
+/* Prefer asset lumps; on miss/empty build fixture pages → lumps. */
+u32  aether_mdl_skin_lumps_load_or_fixture(aether_mdl_skin_lump_set_t *set,
+                                           const u8 *mdl_bytes, u32 size,
+                                           u32 fixture_pages);
+int  aether_mdl_skin_lump_sample(const aether_mdl_skin_lump_t *lump,
+                                 f32 u, f32 v, f32 out_rgba[4]);
+int  aether_mdl_skin_lumps_sample(const aether_mdl_skin_lump_set_t *set,
+                                  u32 index, f32 u, f32 v, f32 out_rgba[4]);
+/* Copy lump 0 into a skin_page for water-RT bind (downscale/clamp to page size). */
+int  aether_mdl_skin_lump_to_page(const aether_mdl_skin_lump_t *lump,
+                                  aether_mdl_skin_page_t *out_page);
+
 #endif /* AETHER_MODEL_FIXTURE_H */

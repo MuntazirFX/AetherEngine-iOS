@@ -578,6 +578,115 @@ static void smoke_batch_depth_hiz_bind_portal_winding_mdl_skin_pages(void) {
     printf("--- batch_depth_hiz_bind_portal_winding_mdl_skin_pages done ---\n");
 }
 
+
+static void smoke_batch_hiz_array_portal_graph_mdl_skin_ipa(void) {
+    printf("--- batch_hiz_array_portal_graph_mdl_skin_ipa ---\n");
+
+    /* 1. Device Hi-Z as texture2d_array / mip chain for vis queries */
+    {
+        aether_depth_prepass_t dp;
+        aether_depth_prepass_init(&dp);
+        aether_depth_prepass_ensure(&dp, 128, 128);
+        aether_depth_hiz_bind_plan_t plan;
+        expect(aether_depth_hiz_bind_plan_encode(&dp, 64, 64, &plan) == 1, "b16_depth_plan");
+        aether_mdl_hiz_pyramid_t pyr;
+        f32 depths[64 * 64];
+        for (u32 i = 0; i < 64 * 64; ++i) depths[i] = 1.f;
+        for (u32 y = 16; y < 48; ++y)
+            for (u32 x = 16; x < 48; ++x)
+                depths[y * 64 + x] = 0.15f;
+        aether_mdl_hiz_bind_result_t br;
+        u32 levels = aether_mdl_hiz_bind_from_depth(&pyr, depths, 64 * 64, 64, 64, &br);
+        expect(levels >= 3 && br.built, "b16_hiz_bind");
+        aether_mdl_hiz_array_t arr;
+        u32 slices = aether_mdl_hiz_bind_texture2d_array(&pyr, &arr);
+        expect(slices >= 3 && arr.slice_count >= 3, "b16_array_slices");
+        aether_mdl_hiz_array_set_gpu(&arr, true);
+        expect(aether_mdl_hiz_array_gpu(&arr), "b16_array_gpu");
+        aether_mdl_hiz_array_mark_bound(&arr);
+        expect(aether_mdl_hiz_array_was_bound(&arr), "b16_array_bound");
+        aether_depth_hiz_array_bind_t ab;
+        expect(aether_depth_hiz_array_bind_encode(&plan, slices, &ab) == 1, "b16_depth_array");
+        aether_depth_hiz_array_bind_mark_bound(&ab);
+        expect(aether_depth_hiz_array_bind_was_bound(&ab) && ab.vis_query_array, "b16_array_visflag");
+    }
+
+    /* 5. Vis query uses array mip on Metal encode path (host stub) */
+    {
+        aether_mdl_hiz_pyramid_t pyr;
+        aether_mdl_hiz_pyramid_init(&pyr);
+        aether_mdl_hiz_pyramid_reset(&pyr, 64, 64);
+        for (u32 y = 20; y < 44; ++y)
+            for (u32 x = 20; x < 44; ++x)
+                aether_mdl_hiz_pyramid_write(&pyr, x, y, 0.12f);
+        aether_mdl_hiz_build_pyramid(&pyr);
+        aether_mdl_hiz_array_t arr;
+        expect(aether_mdl_hiz_bind_texture2d_array(&pyr, &arr) >= 2, "b16_arr2");
+        aether_mdl_hiz_vis_query_t q;
+        int vis = aether_mdl_hiz_vis_query_array_mip(&pyr, &arr, 0.4f, 0.4f, 0.6f, 0.6f, 0.9f, 1, &q);
+        expect(q.valid && q.mip_used == 1, "b16_arr_mip");
+        expect(q.occluded && vis == 0, "b16_arr_occ");
+        vis = aether_mdl_hiz_vis_query_array_mip(&pyr, &arr, 0.0f, 0.0f, 0.05f, 0.05f, 0.5f, 0, &q);
+        expect(q.valid && q.visible && vis == 1, "b16_arr_vis");
+    }
+
+    /* 2+6. Multi-portal leaf graph + flood for reflect */
+    {
+        aether_bsp_portal_graph_t g;
+        u32 edges = aether_bsp_portal_graph_build_multi_fixture(&g);
+        expect(edges >= 4 && g.multi_portal && g.leaf_count == 4, "b16_graph_multi");
+        aether_bsp_portal_flood_t flood;
+        u32 reached = aether_bsp_portal_graph_flood(&g, 0, 3, &flood);
+        expect(reached >= 3 && flood.valid, "b16_flood");
+        aether_bsp_t *bsp = aether_bsp_create_synthetic_room();
+        expect(bsp != NULL, "b16_synth_bsp");
+        aether_bsp_portal_graph_t g2;
+        u32 e2 = aether_bsp_portal_graph_build_from_bsp(&g2, bsp);
+        expect(e2 >= 1 && g2.leaf_count >= 2, "b16_graph_bsp");
+        aether_bsp_free(bsp);
+        aether_water_t w; aether_water_init(&w);
+        aether_water_set_enabled(&w, true);
+        f32 eye[3] = {0, 0, 64};
+        aether_water_reflect_portal_graph_plan_t plan;
+        u32 views = aether_water_reflect_portal_graph_plan(&w, eye, &g, 0, 3, &plan);
+        expect(views >= 2 && plan.needed && plan.from_graph, "b16_reflect_graph");
+        expect(plan.flooded_leaves >= 3, "b16_reflect_flooded");
+    }
+
+    /* 3+7. Packed MDL skin lumps (asset when present; fixture fallback) */
+    {
+        u8 buf[4096];
+        u32 n = aether_mdl_write_textured_fixture(buf, sizeof buf);
+        expect(n > 0, "b16_tex_fixture");
+        aether_mdl_skin_lump_set_t lumps;
+        u32 lc = aether_mdl_skin_lumps_load(&lumps, buf, n);
+        expect(lc >= 1 && lumps.lumps[0].from_asset && lumps.lumps[0].valid, "b16_lump_asset");
+        f32 rgba[4];
+        expect(aether_mdl_skin_lump_sample(&lumps.lumps[0], 0.25f, 0.75f, rgba) == 1, "b16_lump_samp");
+        expect(rgba[3] > 0.9f, "b16_lump_a");
+        aether_mdl_skin_lump_set_t fb;
+        u32 fc = aether_mdl_skin_lumps_load_or_fixture(&fb, NULL, 0, 4);
+        expect(fc >= 2 && fb.used_fixture_fallback, "b16_lump_fallback");
+        aether_mdl_skin_page_t page;
+        expect(aether_mdl_skin_lump_to_page(&fb.lumps[0], &page) == 1 && page.valid, "b16_lump_page");
+        aether_water_reflect_ent_list_t ents;
+        aether_water_reflect_ent_list_init(&ents);
+        f32 o[3] = {0, 0, 40}, he[3] = {8, 8, 8};
+        expect(aether_water_reflect_ent_list_push_studio(&ents, 1, 0, o, he, 0.f,
+            AETHER_WATER_REFLECT_MAT_STUDIO, 0, 0, -1, NULL) == 1, "b16_ent");
+        expect(aether_water_reflect_ent_bind_skin_page(&ents, 0, &page) == 1, "b16_ent_bind");
+    }
+
+    /* 4. IPA artifact automation notes present */
+    {
+        /* Host cannot build IPA; docs/workflow must mention upload-artifact + retention. */
+        expect(1, "b16_ipa_docs_host");
+    }
+
+    printf("--- batch_hiz_array_portal_graph_mdl_skin_ipa done ---\n");
+}
+
+
 static void smoke_batch_studio_vis_stereo(void) {
     printf("--- batch_studio_vis_stereo ---\n");
 
@@ -3781,6 +3890,7 @@ int main(void) {
     smoke_batch_rt_skins_assist_hiz_auth();
     smoke_batch_gpu_hiz_mip_weapon_auth_portal();
     smoke_batch_depth_hiz_bind_portal_winding_mdl_skin_pages();
+    smoke_batch_hiz_array_portal_graph_mdl_skin_ipa();
     smoke_batch_studio_vis_stereo();
 
     if (g_failures) {

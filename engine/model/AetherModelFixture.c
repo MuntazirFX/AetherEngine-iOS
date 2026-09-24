@@ -2008,3 +2008,212 @@ int aether_mdl_skin_pages_sample(const aether_mdl_skin_page_set_t *set,
     }
     return aether_mdl_skin_page_sample(&set->pages[idx], u, v, out_rgba);
 }
+
+
+/* ===== texture2d_array Hi-Z + packed skin lumps (batch hiz-array/portal-graph/skin-ipa) ===== */
+
+void aether_mdl_hiz_array_init(aether_mdl_hiz_array_t *arr) {
+    if (!arr) return;
+    memset(arr, 0, sizeof(*arr));
+}
+
+u32 aether_mdl_hiz_bind_texture2d_array(const aether_mdl_hiz_pyramid_t *pyr,
+                                        aether_mdl_hiz_array_t *out) {
+    if (!out) return 0;
+    aether_mdl_hiz_array_init(out);
+    if (!pyr || !pyr->built || pyr->levels == 0) return 0;
+    u32 n = pyr->levels;
+    if (n > AETHER_MDL_HIZ_ARRAY_MAX_SLICES) n = AETHER_MDL_HIZ_ARRAY_MAX_SLICES;
+    out->mip0_w = pyr->mip0_w;
+    out->mip0_h = pyr->mip0_h;
+    for (u32 i = 0; i < n; ++i) {
+        out->slices[i].slice = i;
+        out->slices[i].width = pyr->level_w[i];
+        out->slices[i].height = pyr->level_h[i];
+        out->slices[i].texel_offset = pyr->level_offset[i];
+        out->slices[i].valid = (pyr->level_w[i] > 0 && pyr->level_h[i] > 0);
+    }
+    out->slice_count = n;
+    out->gpu_array = true;
+    return n;
+}
+
+void aether_mdl_hiz_array_mark_bound(aether_mdl_hiz_array_t *arr) {
+    if (arr) arr->bound = (arr->slice_count > 0);
+}
+
+bool aether_mdl_hiz_array_was_bound(const aether_mdl_hiz_array_t *arr) {
+    return arr && arr->bound && arr->slice_count > 0;
+}
+
+void aether_mdl_hiz_array_set_gpu(aether_mdl_hiz_array_t *arr, bool armed) {
+    if (arr) arr->gpu_array = armed;
+}
+
+bool aether_mdl_hiz_array_gpu(const aether_mdl_hiz_array_t *arr) {
+    return arr && arr->gpu_array;
+}
+
+int aether_mdl_hiz_vis_query_array_mip(const aether_mdl_hiz_pyramid_t *pyr,
+                                       const aether_mdl_hiz_array_t *arr,
+                                       f32 x0, f32 y0, f32 x1, f32 y1,
+                                       f32 object_depth, i32 array_mip,
+                                       aether_mdl_hiz_vis_query_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!pyr || !pyr->built) {
+        if (out) { out->visible = true; out->valid = false; }
+        return 0;
+    }
+    i32 mip = array_mip;
+    if (arr && arr->slice_count > 0) {
+        if (mip < 0) mip = 0;
+        if ((u32)mip >= arr->slice_count) mip = (i32)arr->slice_count - 1;
+        if (!arr->slices[mip].valid) {
+            /* fall back to auto mip query */
+            return aether_mdl_hiz_vis_query_at_mip(pyr, x0, y0, x1, y1, object_depth, mip, out);
+        }
+    }
+    return aether_mdl_hiz_vis_query_at_mip(pyr, x0, y0, x1, y1, object_depth, mip, out);
+}
+
+void aether_mdl_skin_lumps_init(aether_mdl_skin_lump_set_t *set) {
+    if (!set) return;
+    memset(set, 0, sizeof(*set));
+}
+
+static int skin_lump_rd_i32_le(const u8 *p) {
+    return (int)((u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24));
+}
+
+u32 aether_mdl_skin_lumps_load(aether_mdl_skin_lump_set_t *set,
+                               const u8 *mdl_bytes, u32 size) {
+    if (!set) return 0;
+    aether_mdl_skin_lumps_init(set);
+    if (!mdl_bytes || size < 32) return 0;
+
+    /* Scan for clean-room texture trailer magic 0xAE7E0001 (textured fixture). */
+    for (u32 i = 0; i + 16 <= size; ++i) {
+        if (skin_lump_rd_i32_le(mdl_bytes + i) != (int)AETHER_MDL_SKIN_LUMP_MAGIC) continue;
+        if (i + 16 > size) break;
+        u32 tw = (u32)skin_lump_rd_i32_le(mdl_bytes + i + 4);
+        u32 th = (u32)skin_lump_rd_i32_le(mdl_bytes + i + 8);
+        u32 tex_off = (u32)skin_lump_rd_i32_le(mdl_bytes + i + 12);
+        if (tw == 0 || th == 0 || tw > AETHER_MDL_SKIN_LUMP_MAX_W || th > AETHER_MDL_SKIN_LUMP_MAX_H)
+            continue;
+        u32 need = tw * th * 4u;
+        if (tex_off >= size || tex_off + need > size) continue;
+        aether_mdl_skin_lump_t *L = &set->lumps[0];
+        memset(L, 0, sizeof(*L));
+        snprintf(L->name, sizeof L->name, "packed_skin0");
+        L->width = tw;
+        L->height = th;
+        L->rgba_bytes = need;
+        memcpy(L->rgba, mdl_bytes + tex_off, need);
+        L->from_asset = true;
+        L->valid = true;
+        set->count = 1;
+        return 1;
+    }
+    return 0;
+}
+
+u32 aether_mdl_skin_lumps_load_file(aether_mdl_skin_lump_set_t *set, const char *path) {
+    if (!set || !path) return 0;
+    aether_mdl_skin_lumps_init(set);
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return 0; }
+    long sz = ftell(f);
+    if (sz <= 0 || sz > 8 * 1024 * 1024) { fclose(f); return 0; }
+    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return 0; }
+    u8 *buf = (u8 *)malloc((size_t)sz);
+    if (!buf) { fclose(f); return 0; }
+    size_t n = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    u32 c = 0;
+    if (n == (size_t)sz) c = aether_mdl_skin_lumps_load(set, buf, (u32)n);
+    free(buf);
+    return c;
+}
+
+u32 aether_mdl_skin_lumps_load_or_fixture(aether_mdl_skin_lump_set_t *set,
+                                          const u8 *mdl_bytes, u32 size,
+                                          u32 fixture_pages) {
+    if (!set) return 0;
+    u32 n = aether_mdl_skin_lumps_load(set, mdl_bytes, size);
+    if (n > 0) return n;
+
+    /* Fixture fallback: promote skin pages → lumps. */
+    aether_mdl_skin_page_set_t pages;
+    u32 pc = aether_mdl_skin_pages_build_fixture(&pages, fixture_pages ? fixture_pages : 2);
+    aether_mdl_skin_lumps_init(set);
+    set->used_fixture_fallback = true;
+    u32 out = 0;
+    for (u32 i = 0; i < pc && out < AETHER_MDL_SKIN_LUMP_MAX; ++i) {
+        const aether_mdl_skin_page_t *pg = &pages.pages[i];
+        if (!pg->valid) continue;
+        aether_mdl_skin_lump_t *L = &set->lumps[out];
+        memset(L, 0, sizeof(*L));
+        snprintf(L->name, sizeof L->name, "fixture_g%u_t%u", (unsigned)pg->group, (unsigned)pg->tex);
+        L->width = pg->width;
+        L->height = pg->height;
+        L->rgba_bytes = pg->width * pg->height * 4u;
+        if (L->rgba_bytes > AETHER_MDL_SKIN_LUMP_MAX_RGBA)
+            L->rgba_bytes = AETHER_MDL_SKIN_LUMP_MAX_RGBA;
+        memcpy(L->rgba, pg->rgba, L->rgba_bytes);
+        L->from_asset = false;
+        L->valid = true;
+        ++out;
+    }
+    set->count = out;
+    return out;
+}
+
+int aether_mdl_skin_lump_sample(const aether_mdl_skin_lump_t *lump,
+                                f32 u, f32 v, f32 out_rgba[4]) {
+    if (out_rgba) { out_rgba[0]=out_rgba[1]=out_rgba[2]=0.f; out_rgba[3]=1.f; }
+    if (!lump || !lump->valid || !out_rgba || lump->width == 0 || lump->height == 0) return 0;
+    f32 uu = u - floorf(u); if (uu < 0.f) uu += 1.f;
+    f32 vv = v - floorf(v); if (vv < 0.f) vv += 1.f;
+    u32 x = (u32)(uu * (f32)lump->width); if (x >= lump->width) x = lump->width - 1;
+    u32 y = (u32)(vv * (f32)lump->height); if (y >= lump->height) y = lump->height - 1;
+    const u8 *p = &lump->rgba[(y * lump->width + x) * 4u];
+    out_rgba[0] = p[0] / 255.f;
+    out_rgba[1] = p[1] / 255.f;
+    out_rgba[2] = p[2] / 255.f;
+    out_rgba[3] = p[3] / 255.f;
+    return 1;
+}
+
+int aether_mdl_skin_lumps_sample(const aether_mdl_skin_lump_set_t *set,
+                                 u32 index, f32 u, f32 v, f32 out_rgba[4]) {
+    if (!set || index >= set->count) {
+        if (out_rgba) { out_rgba[0]=0.5f; out_rgba[1]=0.5f; out_rgba[2]=0.5f; out_rgba[3]=1.f; }
+        return 0;
+    }
+    return aether_mdl_skin_lump_sample(&set->lumps[index], u, v, out_rgba);
+}
+
+int aether_mdl_skin_lump_to_page(const aether_mdl_skin_lump_t *lump,
+                                 aether_mdl_skin_page_t *out_page) {
+    if (!out_page) return 0;
+    memset(out_page, 0, sizeof(*out_page));
+    if (!lump || !lump->valid) return 0;
+    out_page->width = AETHER_MDL_SKIN_PAGE_W;
+    out_page->height = AETHER_MDL_SKIN_PAGE_H;
+    out_page->group = 0;
+    out_page->tex = 0;
+    out_page->valid = true;
+    for (u32 y = 0; y < out_page->height; ++y) {
+        for (u32 x = 0; x < out_page->width; ++x) {
+            u32 sx = (x * lump->width) / out_page->width;
+            u32 sy = (y * lump->height) / out_page->height;
+            if (sx >= lump->width) sx = lump->width - 1;
+            if (sy >= lump->height) sy = lump->height - 1;
+            const u8 *s = &lump->rgba[(sy * lump->width + sx) * 4u];
+            u8 *d = &out_page->rgba[(y * out_page->width + x) * 4u];
+            d[0]=s[0]; d[1]=s[1]; d[2]=s[2]; d[3]=s[3];
+        }
+    }
+    return 1;
+}

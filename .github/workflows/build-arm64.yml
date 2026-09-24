@@ -16,6 +16,11 @@ on:
         required: true
         type: boolean
         default: false
+      artifact_retention_days:
+        description: 'IPA artifact retention days (1-90)'
+        required: false
+        type: number
+        default: 30
   pull_request:
     paths:
       - 'engine/**'
@@ -95,8 +100,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AetherEngine-${{ github.event.inputs.version }}
-          path: build/out/AetherEngine.ipa
-          retention-days: 30
+          path: |
+            build/out/AetherEngine.ipa
+            build/out/ARTIFACT_NOTES.txt
+          retention-days: ${{ github.event.inputs.artifact_retention_days || 30 }}
+          compression-level: 9
           if-no-files-found: error
       - name: Build release notes
         if: ${{ github.event.inputs.publish_release == 'true' }}
@@ -136,7 +144,7 @@ jobs:
           echo "### UNSIGNED IPA DRY-RUN checklist (macos-14)" >> $GITHUB_STEP_SUMMARY
           echo "1. workflow_dispatch with version + publish_release=false" >> $GITHUB_STEP_SUMMARY
           echo "2. Job runs on macos-14: build_ios.sh → package_ipa.sh" >> $GITHUB_STEP_SUMMARY
-          echo "3. Artifact AetherEngine-<version> via upload-artifact@v4 (30d)" >> $GITHUB_STEP_SUMMARY
+          echo "3. Artifact AetherEngine-<version> via upload-artifact@v4 (retention input, compression-level 9, +ARTIFACT_NOTES.txt)" >> $GITHUB_STEP_SUMMARY
           echo "4. gh run download <run-id> -n AetherEngine-<version>" >> $GITHUB_STEP_SUMMARY
           echo "5. Sideload unsigned IPA (no baked signing)" >> $GITHUB_STEP_SUMMARY
           echo "PR/push: verify_host only — IPA is dispatch-only." >> $GITHUB_STEP_SUMMARY

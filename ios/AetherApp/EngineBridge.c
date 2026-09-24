@@ -4618,3 +4618,151 @@ int engine_game_weapon_hit_auth_hitgroup(unsigned weapon_id, float now,
     (void)kills;
     return r.registered_kill ? 1 : (r.queued ? 1 : 0);
 }
+
+
+/* ---- batch: hiz texture2d_array / portal leaf graph / packed skin lumps ---- */
+static aether_mdl_hiz_array_t g_hiz_array;
+static aether_depth_hiz_array_bind_t g_depth_hiz_array;
+static aether_bsp_portal_graph_t g_portal_graph;
+static aether_mdl_skin_lump_set_t g_skin_lumps;
+static int g_skin_lumps_ready = 0;
+
+int engine_mdl_hiz_bind_texture2d_array(unsigned *out_slices, unsigned *out_mip0_w, unsigned *out_mip0_h) {
+    ensure_hiz_pyr();
+    if (!g_hiz_pyr.built) (void)aether_mdl_hiz_build_pyramid(&g_hiz_pyr);
+    u32 n = aether_mdl_hiz_bind_texture2d_array(&g_hiz_pyr, &g_hiz_array);
+    aether_mdl_hiz_array_set_gpu(&g_hiz_array, true);
+    if (out_slices) *out_slices = g_hiz_array.slice_count;
+    if (out_mip0_w) *out_mip0_w = g_hiz_array.mip0_w;
+    if (out_mip0_h) *out_mip0_h = g_hiz_array.mip0_h;
+    return n > 0 ? 1 : 0;
+}
+
+int engine_mdl_hiz_array_mark_bound(void) {
+    aether_mdl_hiz_array_mark_bound(&g_hiz_array);
+    return aether_mdl_hiz_array_was_bound(&g_hiz_array) ? 1 : 0;
+}
+
+int engine_mdl_hiz_array_was_bound(void) {
+    return aether_mdl_hiz_array_was_bound(&g_hiz_array) ? 1 : 0;
+}
+
+int engine_mdl_hiz_vis_query_array_mip(float x0, float y0, float x1, float y1,
+                                       float obj_depth, int array_mip,
+                                       int *out_visible, int *out_occluded,
+                                       float *out_hiz, int *out_mip) {
+    ensure_hiz_pyr();
+    if (g_hiz_array.slice_count == 0)
+        (void)aether_mdl_hiz_bind_texture2d_array(&g_hiz_pyr, &g_hiz_array);
+    aether_mdl_hiz_vis_query_t q;
+    int vis = aether_mdl_hiz_vis_query_array_mip(&g_hiz_pyr, &g_hiz_array,
+                                                 x0, y0, x1, y1, obj_depth, array_mip, &q);
+    if (out_visible) *out_visible = q.visible ? 1 : 0;
+    if (out_occluded) *out_occluded = q.occluded ? 1 : 0;
+    if (out_hiz) *out_hiz = q.nearest_hiz;
+    if (out_mip) *out_mip = q.mip_used;
+    return vis;
+}
+
+int engine_depth_hiz_array_bind(unsigned slice_count, int *out_slices, int *out_bound) {
+    if (!g_depth_hiz_plan.needed && !g_depth_hiz_plan.bound) {
+        static aether_depth_prepass_t s_dp;
+        static int s_init = 0;
+        if (!s_init) {
+            aether_depth_prepass_init(&s_dp);
+            aether_depth_prepass_ensure(&s_dp, 64, 64);
+            s_init = 1;
+        }
+        aether_depth_hiz_bind_plan_encode(&s_dp, 64, 64, &g_depth_hiz_plan);
+    }
+    int ok = aether_depth_hiz_array_bind_encode(&g_depth_hiz_plan, slice_count, &g_depth_hiz_array);
+    aether_depth_hiz_array_bind_mark_bound(&g_depth_hiz_array);
+    if (out_slices) *out_slices = (int)g_depth_hiz_array.slice_count;
+    if (out_bound) *out_bound = aether_depth_hiz_array_bind_was_bound(&g_depth_hiz_array) ? 1 : 0;
+    return ok;
+}
+
+int engine_bsp_portal_graph_build_multi(unsigned *out_leaves, unsigned *out_edges) {
+    u32 e = aether_bsp_portal_graph_build_multi_fixture(&g_portal_graph);
+    if (out_leaves) *out_leaves = g_portal_graph.leaf_count;
+    if (out_edges) *out_edges = e;
+    return g_portal_graph.multi_portal ? 1 : 0;
+}
+
+int engine_bsp_portal_graph_build_from_current(unsigned *out_leaves, unsigned *out_edges) {
+    aether_bsp_t *bsp = aether_bsp_create_synthetic_room();
+    u32 e = aether_bsp_portal_graph_build_from_bsp(&g_portal_graph, bsp);
+    if (bsp) aether_bsp_free(bsp);
+    if (out_leaves) *out_leaves = g_portal_graph.leaf_count;
+    if (out_edges) *out_edges = e;
+    return e > 0 ? 1 : 0;
+}
+
+int engine_bsp_portal_graph_flood(unsigned start_leaf, unsigned max_depth,
+                                  unsigned *out_reached, unsigned *out_depth_max) {
+    if (g_portal_graph.leaf_count == 0)
+        aether_bsp_portal_graph_build_multi_fixture(&g_portal_graph);
+    aether_bsp_portal_flood_t flood;
+    u32 n = aether_bsp_portal_graph_flood(&g_portal_graph, (u16)start_leaf, max_depth, &flood);
+    if (out_reached) *out_reached = n;
+    u16 dmax = 0;
+    for (u32 i = 0; i < flood.reached_count; ++i)
+        if (flood.depth[i] > dmax) dmax = flood.depth[i];
+    if (out_depth_max) *out_depth_max = dmax;
+    return n > 0 ? 1 : 0;
+}
+
+unsigned engine_water_reflect_portal_graph_plan(float eye_x, float eye_y, float eye_z,
+                                                unsigned eye_leaf, unsigned max_depth,
+                                                unsigned *out_views, unsigned *out_flooded) {
+    if (g_portal_graph.leaf_count == 0)
+        aether_bsp_portal_graph_build_multi_fixture(&g_portal_graph);
+    static aether_water_t s_w;
+    static int s_wi = 0;
+    if (!s_wi) {
+        aether_water_init(&s_w);
+        aether_water_set_enabled(&s_w, true);
+        s_wi = 1;
+    }
+    f32 eye[3] = {eye_x, eye_y, eye_z};
+    aether_water_reflect_portal_graph_plan_t plan;
+    u32 v = aether_water_reflect_portal_graph_plan(&s_w, eye, &g_portal_graph,
+                                                  (u16)eye_leaf, max_depth, &plan);
+    if (out_views) *out_views = plan.view_count;
+    if (out_flooded) *out_flooded = plan.flooded_leaves;
+    return v;
+}
+
+int engine_mdl_skin_lumps_load(const unsigned char *bytes, unsigned size,
+                               unsigned *out_count, int *out_from_asset) {
+    u32 n = aether_mdl_skin_lumps_load(&g_skin_lumps, bytes, size);
+    g_skin_lumps_ready = (n > 0) ? 1 : 0;
+    if (out_count) *out_count = n;
+    if (out_from_asset) *out_from_asset = (n > 0 && g_skin_lumps.lumps[0].from_asset) ? 1 : 0;
+    return n > 0 ? 1 : 0;
+}
+
+int engine_mdl_skin_lumps_load_or_fixture(const unsigned char *bytes, unsigned size,
+                                          unsigned fixture_pages,
+                                          unsigned *out_count, int *out_fallback) {
+    u32 n = aether_mdl_skin_lumps_load_or_fixture(&g_skin_lumps, bytes, size, fixture_pages);
+    g_skin_lumps_ready = (n > 0) ? 1 : 0;
+    if (out_count) *out_count = n;
+    if (out_fallback) *out_fallback = g_skin_lumps.used_fixture_fallback ? 1 : 0;
+    return n > 0 ? 1 : 0;
+}
+
+int engine_mdl_skin_lumps_sample(unsigned index, float u, float v, float *out_rgba4) {
+    if (!g_skin_lumps_ready)
+        (void)engine_mdl_skin_lumps_load_or_fixture(NULL, 0, 4, NULL, NULL);
+    return aether_mdl_skin_lumps_sample(&g_skin_lumps, index, u, v, out_rgba4);
+}
+
+int engine_mdl_skin_lump_bind_water_ent(unsigned ent_index, unsigned lump_index) {
+    if (!g_skin_lumps_ready)
+        (void)engine_mdl_skin_lumps_load_or_fixture(NULL, 0, 4, NULL, NULL);
+    if (lump_index >= g_skin_lumps.count) return 0;
+    aether_mdl_skin_page_t page;
+    if (!aether_mdl_skin_lump_to_page(&g_skin_lumps.lumps[lump_index], &page)) return 0;
+    return aether_water_reflect_ent_bind_skin_page(&g_reflect_ents, ent_index, &page);
+}

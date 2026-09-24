@@ -868,3 +868,55 @@ int aether_water_reflect_ent_sample_skin_page(const aether_water_reflect_ent_lis
     out_rgba[3] = base[3];
     return 1;
 }
+
+
+void aether_water_reflect_portal_graph_plan_init(aether_water_reflect_portal_graph_plan_t *plan) {
+    if (!plan) return;
+    memset(plan, 0, sizeof(*plan));
+}
+
+u32 aether_water_reflect_portal_graph_plan(const aether_water_t *water,
+                                           const f32 eye[3],
+                                           const aether_bsp_portal_graph_t *graph,
+                                           u16 eye_leaf,
+                                           u32 max_depth,
+                                           aether_water_reflect_portal_graph_plan_t *out) {
+    if (!out) return 0;
+    aether_water_reflect_portal_graph_plan_init(out);
+    if (!water || !graph || !eye) return 0;
+    if (max_depth == 0) max_depth = 3;
+    if (max_depth > AETHER_PORTAL_REFLECT_MAX_DEPTH)
+        max_depth = AETHER_PORTAL_REFLECT_MAX_DEPTH;
+
+    aether_bsp_portal_flood_t flood;
+    u32 reached = aether_bsp_portal_graph_flood(graph, eye_leaf, max_depth, &flood);
+    out->flooded_leaves = reached;
+    out->max_depth = max_depth;
+    out->from_graph = true;
+    if (reached == 0) return 0;
+
+    aether_water_reflect_t refl;
+    aether_water_reflect_compute(water, eye, &refl);
+
+    u32 views = 0;
+    for (u32 i = 0; i < reached && views < AETHER_PORTAL_REFLECT_MAX_VIEWS; ++i) {
+        aether_portal_reflect_view_t *v = &out->views[views];
+        memset(v, 0, sizeof(*v));
+        v->depth = flood.depth[i];
+        v->active = true;
+        v->eye[0]=eye[0]; v->eye[1]=eye[1]; v->eye[2]=eye[2];
+        v->eye_reflected[0]=refl.eye_reflected[0];
+        v->eye_reflected[1]=refl.eye_reflected[1];
+        v->eye_reflected[2]=refl.eye_reflected[2];
+        memcpy(v->mirror, refl.mirror, sizeof v->mirror);
+        memcpy(v->clip_plane, refl.clip_plane, sizeof v->clip_plane);
+        /* Offset clip slightly per flooded leaf for multi-portal distinction. */
+        v->clip_plane[3] -= (f32)flood.reached[i] * 0.01f;
+        v->clipped = (flood.depth[i] > 0);
+        v->winding_verts = 4;
+        ++views;
+    }
+    out->view_count = views;
+    out->needed = (views > 0);
+    return views;
+}

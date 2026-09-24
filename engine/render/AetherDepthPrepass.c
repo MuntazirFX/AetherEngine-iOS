@@ -216,3 +216,33 @@ u32 aether_depth_hiz_bind_plan_fill_views(aether_depth_hiz_bind_plan_t *plan,
     plan->texture_views = (n > 0);
     return n;
 }
+
+
+void aether_depth_hiz_array_bind_init(aether_depth_hiz_array_bind_t *b) {
+    if (!b) return;
+    memset(b, 0, sizeof(*b));
+}
+
+int aether_depth_hiz_array_bind_encode(const aether_depth_hiz_bind_plan_t *plan,
+                                       u32 slice_count,
+                                       aether_depth_hiz_array_bind_t *out) {
+    if (!out) return 0;
+    aether_depth_hiz_array_bind_init(out);
+    if (!plan || !plan->needed) return 0;
+    out->array_texture = true;
+    out->mip_chain = (plan->mip_view_count > 1) || (slice_count > 1);
+    out->vis_query_array = true;
+    out->slice_count = slice_count ? slice_count : plan->mip_view_count;
+    if (out->slice_count == 0) out->slice_count = 1;
+    out->mip0_w = plan->mip0_w;
+    out->mip0_h = plan->mip0_h;
+    return 1;
+}
+
+void aether_depth_hiz_array_bind_mark_bound(aether_depth_hiz_array_bind_t *b) {
+    if (b) b->bound = (b->array_texture && b->slice_count > 0);
+}
+
+bool aether_depth_hiz_array_bind_was_bound(const aether_depth_hiz_array_bind_t *b) {
+    return b && b->bound;
+}
