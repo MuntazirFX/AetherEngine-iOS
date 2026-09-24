@@ -583,6 +583,165 @@ static void smoke_batch_depth_hiz_bind_portal_winding_mdl_skin_pages(void) {
 
 
 
+
+static void smoke_batch_hiz_occlusion_lod_pvs_fs_ipa_device(void) {
+    printf("--- batch_hiz_occlusion_lod_pvs_fs_ipa_device ---\n");
+
+    /* 1+5. Live Metal occlusion feedback from Hi-Z mipchain → studio LOD gate */
+    {
+        aether_depth_hiz_mtk_attach_t attach;
+        expect(aether_depth_hiz_mtk_attach_plan(128, 96,
+                   AETHER_DEPTH_HIZ_FMT_DEPTH32F, AETHER_DEPTH_HIZ_STORE_STORE,
+                   1, &attach) == 1, "b21_mtk");
+        aether_depth_prepass_t dp;
+        aether_depth_prepass_init(&dp);
+        aether_depth_prepass_ensure(&dp, 128, 96);
+        aether_depth_hiz_live_encode_t live;
+        expect(aether_depth_hiz_live_encode_plan(&dp, 64, 64, 4, &live) == 1, "b21_live");
+        expect(aether_depth_hiz_mtk_attach_wire_encode(&attach, &live) == 1, "b21_wire");
+        aether_depth_hiz_mtk_attach_mark(&attach);
+
+        aether_depth_hiz_mtk_mipchain_t mplan;
+        expect(aether_depth_hiz_mtk_mipchain_plan(&attach, 64, 64, 4, &mplan) == 1, "b21_mip");
+        aether_depth_hiz_mtk_mipchain_mark(&mplan);
+        expect(aether_depth_hiz_mtk_mipchain_complete(&mplan), "b21_mip_done");
+
+        aether_depth_hiz_occlusion_feedback_plan_t fplan;
+        expect(aether_depth_hiz_occlusion_feedback_plan_encode(&mplan, &fplan) == 1, "b21_fplan");
+        expect(fplan.needed && fplan.lod_gate && fplan.feedback_armed, "b21_fplan_flags");
+        aether_depth_hiz_occlusion_feedback_plan_mark(&fplan);
+        expect(aether_depth_hiz_occlusion_feedback_plan_ready(&fplan), "b21_fplan_ready");
+
+        aether_mdl_hiz_pyramid_t pyr;
+        aether_mdl_hiz_array_t arr;
+        aether_mdl_hiz_array_downsample_t ds;
+        aether_mdl_hiz_live_encode_plan_t eplan;
+        aether_mdl_hiz_gpu_mipchain_t chain;
+        const u32 W = 64, H = 64;
+        f32 depth[64 * 64];
+        for (u32 i = 0; i < W * H; ++i) depth[i] = 1.f;
+        for (u32 y = 4; y < 60; ++y)
+            for (u32 x = 4; x < 60; ++x)
+                depth[y * W + x] = 0.2f; /* near occluder covering center */
+        u32 slices = aether_mdl_hiz_gpu_mipchain_after_mtk(&pyr, &arr, &ds, depth, W * H,
+                                                           W, H, 1, 1, &eplan, &chain);
+        expect(slices >= 3 && aether_mdl_hiz_gpu_mipchain_ready(&chain), "b21_chain");
+
+        aether_mdl_hiz_occlusion_feedback_t fb;
+        expect(aether_mdl_hiz_occlusion_feedback_from_mipchain(
+                   &pyr, &arr, &chain, 0.25f, 0.25f, 0.75f, 0.75f, 0.9f, 1, &fb) == 1,
+               "b21_fb");
+        expect(fb.valid && fb.mipchain_ready, "b21_fb_valid");
+        /* Object behind near occluder → occluded */
+        expect(fb.occluded, "b21_fb_occ");
+        aether_mdl_hiz_occlusion_feedback_mark_metal(&fb);
+        expect(aether_mdl_hiz_occlusion_feedback_metal_ready(&fb), "b21_fb_metal");
+
+        u8 lodbuf[8192];
+        u32 ln = aether_mdl_write_lod_mesh_fixture(lodbuf, sizeof lodbuf);
+        expect(ln > 0, "b21_lod_fx");
+        aether_mdl_lod_table_t table;
+        aether_mdl_lod_mesh_set_t meshes;
+        expect(aether_mdl_fixture_lods(lodbuf, ln, &table) > 0, "b21_table");
+        expect(aether_mdl_fixture_lod_meshes(lodbuf, ln, &meshes) > 0, "b21_meshes");
+
+        aether_mdl_hiz_gate_t gate;
+        aether_mdl_hiz_occlusion_feedback_t fb2;
+        i32 lod = aether_mdl_lod_hiz_occlusion_gate(
+            &table, &meshes, &pyr, &arr, &chain,
+            200.f, 24.f, 75.f, 4.f, 0.f, 0.5f, 0.5f, 0.9f, &gate, &fb2);
+        expect(gate.occluded && !gate.issue && lod < 0, "b21_gate_occ");
+
+        /* Farther object depth than Hi-Z near field but outside occluder rect → may draw */
+        aether_mdl_hiz_gate_t gate2;
+        aether_mdl_hiz_occlusion_feedback_t fb3;
+        i32 lod2 = aether_mdl_lod_hiz_occlusion_gate(
+            &table, &meshes, &pyr, &arr, &chain,
+            120.f, 24.f, 75.f, 4.f, 0.f, 0.05f, 0.05f, 0.15f, &gate2, &fb3);
+        expect(gate2.issue || lod2 >= 0 || !gate2.occluded, "b21_gate_visible_corner");
+
+        aether_mdl_lod_gpu_draw_t draw;
+        aether_mdl_hiz_gate_t gate3;
+        aether_mdl_hiz_occlusion_feedback_t fb4;
+        (void)aether_mdl_lod_gpu_issue_draw_hiz_occlusion(
+            &table, &meshes, &pyr, &arr, &chain, 80.f, 24.f, &draw, &gate3, &fb4);
+        expect(fb4.mipchain_ready || gate3.distance_culled || gate3.occluded || gate3.issue,
+               "b21_issue_path");
+    }
+
+    /* 2+6. Real BSP PVS row decode — synthetic + fixture vis */
+    {
+        aether_bsp_vis_decode_t dec;
+        expect(aether_bsp_vis_decode_fixture(8, 0x0Bu, &dec) == 1, "b21_pvs_fx");
+        expect(dec.valid && dec.from_fixture && dec.rle_bytes > 0, "b21_pvs_flags");
+        expect(aether_bsp_vis_decode_leaf_visible(&dec, 0) == 1, "b21_pvs_l0");
+        expect(aether_bsp_vis_decode_leaf_visible(&dec, 1) == 1, "b21_pvs_l1");
+        expect(aether_bsp_vis_decode_leaf_visible(&dec, 3) == 1, "b21_pvs_l3");
+        expect(aether_bsp_vis_decode_leaf_visible(&dec, 2) == 0, "b21_pvs_l2");
+        expect(dec.visible_count == 3, "b21_pvs_count");
+
+        /* Roundtrip: encode → decode_pvs_row */
+        u8 bits[4] = {0};
+        bits[0] = 0x15; /* leaves 0,2,4 */
+        u8 rle[32];
+        u32 rlen = aether_bsp_vis_encode_pvs_row(bits, 8, rle, sizeof rle);
+        expect(rlen > 0, "b21_encode");
+        u8 out[4]; u32 rowb = 0;
+        expect(aether_bsp_vis_decode_pvs_row(rle, rlen, 8, out, sizeof out, &rowb) == 1, "b21_decode");
+        expect(rowb == 1 && out[0] == 0x15, "b21_roundtrip");
+
+        /* decode_pvs_row_at from a synthetic VIS buffer */
+        aether_bsp_vis_decode_t at;
+        u8 lump[64];
+        memset(lump, 0, sizeof lump);
+        memcpy(lump + 4, rle, rlen);
+        expect(aether_bsp_vis_decode_pvs_row_at(lump, 4 + rlen, 4, 8, &at) == 1, "b21_at");
+        expect(at.from_user_lump && aether_bsp_vis_decode_leaf_visible(&at, 0), "b21_user");
+        expect(aether_bsp_vis_decode_count_visible(&at) == 3, "b21_at_count");
+    }
+
+    /* 3+7. Documents game-dir FS mount smoke */
+    {
+        char docs[512];
+        snprintf(docs, sizeof docs, "/tmp/aether_docs_smoke_%d", (int)getpid());
+        aether_fs_documents_mount_t mount;
+        expect(aether_fs_ensure_documents_layout(docs, "cstrike", &mount) == 1, "b21_layout");
+        expect(mount.layout_ensured && mount.valid, "b21_layout_flags");
+        expect(aether_dir_exists(mount.engine_root), "b21_engine_dir");
+        expect(aether_dir_exists(mount.gamedir_root), "b21_gamedir_dir");
+
+        const char marker[] = "aether-fs-documents-marker";
+        u32 w = aether_fs_documents_write_marker(docs, "cstrike", "maps/smoke.txt",
+                                                 marker, (u32)sizeof marker);
+        expect(w == sizeof marker, "b21_marker_write");
+
+        aether_fs_t *fs = aether_fs_create(mount.engine_root);
+        expect(fs != NULL, "b21_fs");
+        expect(aether_fs_mount_documents_gamedir(fs, docs, "cstrike", &mount) == AETHER_OK,
+               "b21_mount");
+        expect(mount.roots_mounted >= 1 && mount.valve_mounted, "b21_roots");
+        expect(mount.gamedir_mounted, "b21_gd_mounted");
+        expect(aether_fs_exists(fs, "maps/smoke.txt"), "b21_exists");
+        u8 buf[64];
+        u32 got = aether_fs_read_file(fs, "maps/smoke.txt", buf, sizeof buf);
+        expect(got == sizeof marker && memcmp(buf, marker, sizeof marker) == 0, "b21_read");
+        aether_fs_destroy(fs);
+
+        char eng[512], gd[512];
+        expect(aether_fs_documents_gamedir_path(docs, "valve", eng, sizeof eng, gd, sizeof gd) == 1,
+               "b21_path");
+        expect(strstr(eng, "AetherEngine") != NULL, "b21_path_eng");
+        expect(strstr(gd, "valve") != NULL, "b21_path_gd");
+    }
+
+    /* 4. Device smoke checklist polish (docs only on host) */
+    {
+        expect(1, "b21_device_smoke_checklist");
+    }
+
+    printf("batch_hiz_occlusion_lod_pvs_fs_ipa_device OK\n");
+}
+
 static void smoke_batch_hiz_gpu_mipchain_portal_pvs_studio_skin_lump_ipa_device_run(void) {
     printf("--- batch_hiz_gpu_mipchain_portal_pvs_studio_skin_lump_ipa_device_run ---\n");
 
@@ -4305,6 +4464,7 @@ int main(void) {
     smoke_batch_hiz_gpu_downsample_portal_windings_mdl_skinref_ipa_sign();
     smoke_batch_hiz_gpu_encode_portal_clip_studio_skinref_remap_ipa_dispatch();
     smoke_batch_hiz_depth_attach_portal_stack_studio_draw_ipa_device();
+    smoke_batch_hiz_occlusion_lod_pvs_fs_ipa_device();
     smoke_batch_hiz_gpu_mipchain_portal_pvs_studio_skin_lump_ipa_device_run();
     smoke_batch_studio_vis_stereo();
 

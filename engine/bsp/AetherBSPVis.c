@@ -863,3 +863,112 @@ u32 aether_bsp_portal_pvs_collect_visible(const aether_bsp_portal_pvs_flood_t *f
     }
     return n;
 }
+
+/* ---------- Real BSP PVS row decode for user maps (batch21) ---------- */
+void aether_bsp_vis_decode_init(aether_bsp_vis_decode_t *d) {
+    if (!d) return;
+    memset(d, 0, sizeof(*d));
+    d->view_leaf = -1;
+    d->vis_offset = -1;
+}
+
+int aether_bsp_vis_decode_pvs_row(const u8 *rle, u32 rle_size, u32 leaf_count,
+                                  u8 *out_bits, u32 out_cap, u32 *out_row_bytes) {
+    if (!rle || !out_bits || leaf_count == 0 || out_cap == 0) return 0;
+    u32 row_bytes = (leaf_count + 7u) / 8u;
+    if (row_bytes > out_cap) return 0;
+    if (!decompress_pvs(rle, rle_size, 0, out_bits, row_bytes)) return 0;
+    if (out_row_bytes) *out_row_bytes = row_bytes;
+    return 1;
+}
+
+int aether_bsp_vis_decode_pvs_row_at(const u8 *vis_lump, u32 vis_size, i32 offset,
+                                     u32 leaf_count, aether_bsp_vis_decode_t *out) {
+    if (out) aether_bsp_vis_decode_init(out);
+    if (!out || !vis_lump || leaf_count == 0 || leaf_count > AETHER_BSP_VIS_DECODE_MAX_LEAVES)
+        return 0;
+    if (offset < 0 || (u32)offset >= vis_size) return 0;
+    u32 row_bytes = (leaf_count + 7u) / 8u;
+    if (row_bytes > AETHER_BSP_VIS_DECODE_MAX_ROW) return 0;
+    if (!decompress_pvs(vis_lump, vis_size, offset, out->row, row_bytes)) return 0;
+    out->leaf_count = leaf_count;
+    out->row_bytes = row_bytes;
+    out->vis_offset = offset;
+    out->from_user_lump = true;
+    out->valid = true;
+    out->visible_count = aether_bsp_vis_decode_count_visible(out);
+    /* Keep a copy of the RLE span starting at offset (best-effort, capped). */
+    u32 remain = vis_size - (u32)offset;
+    u32 copy = remain < AETHER_BSP_VIS_DECODE_MAX_RLE ? remain : AETHER_BSP_VIS_DECODE_MAX_RLE;
+    memcpy(out->rle, vis_lump + (u32)offset, copy);
+    out->rle_bytes = copy;
+    return 1;
+}
+
+int aether_bsp_vis_decode_for_leaf(const aether_bsp_t *bsp, i32 view_leaf,
+                                   aether_bsp_vis_decode_t *out) {
+    if (out) aether_bsp_vis_decode_init(out);
+    if (!bsp || !out || view_leaf < 0) return 0;
+    u32 leaf_count = aether_bsp_leaf_count(bsp);
+    if (leaf_count == 0 || (u32)view_leaf >= leaf_count) return 0;
+    const aether_bsp_leaf_t *vl = aether_bsp_leaf_at(bsp, (u32)view_leaf);
+    const u8 *vis_lump = aether_bsp_lump_data(bsp, AETHER_BSP_LUMP_VISIBILITY);
+    u32 vis_size = aether_bsp_lump_size(bsp, AETHER_BSP_LUMP_VISIBILITY);
+    if (!vl || vl->vis_offset < 0 || !vis_lump || vis_size == 0) return 0;
+    if (!aether_bsp_vis_decode_pvs_row_at(vis_lump, vis_size, vl->vis_offset,
+                                          leaf_count, out))
+        return 0;
+    out->view_leaf = view_leaf;
+    out->from_user_lump = true;
+    out->from_fixture = false;
+    /* Always mark view leaf visible when drawable. */
+    if (aether_bsp_leaf_is_drawable(bsp, view_leaf)) {
+        u32 li = (u32)view_leaf;
+        out->row[li >> 3] |= (u8)(1u << (li & 7u));
+        out->visible_count = aether_bsp_vis_decode_count_visible(out);
+    }
+    return 1;
+}
+
+int aether_bsp_vis_decode_fixture(u32 leaf_count, u32 visible_mask,
+                                  aether_bsp_vis_decode_t *out) {
+    if (out) aether_bsp_vis_decode_init(out);
+    if (!out || leaf_count == 0 || leaf_count > 32) return 0;
+    u8 bits[8];
+    memset(bits, 0, sizeof bits);
+    u32 row = (leaf_count + 7u) / 8u;
+    for (u32 i = 0; i < leaf_count && i < 32; ++i) {
+        if (visible_mask & (1u << i))
+            bits[i >> 3] |= (u8)(1u << (i & 7u));
+    }
+    u8 rle[64];
+    u32 rlen = aether_bsp_vis_encode_pvs_row(bits, leaf_count, rle, sizeof rle);
+    if (rlen == 0) return 0;
+    if (!aether_bsp_vis_decode_pvs_row(rle, rlen, leaf_count, out->row,
+                                       AETHER_BSP_VIS_DECODE_MAX_ROW, &out->row_bytes))
+        return 0;
+    memcpy(out->rle, rle, rlen);
+    out->rle_bytes = rlen;
+    out->leaf_count = leaf_count;
+    out->view_leaf = 0;
+    out->vis_offset = 0;
+    out->from_fixture = true;
+    out->from_user_lump = false;
+    out->valid = true;
+    out->visible_count = aether_bsp_vis_decode_count_visible(out);
+    return 1;
+}
+
+int aether_bsp_vis_decode_leaf_visible(const aether_bsp_vis_decode_t *d, u32 leaf) {
+    if (!d || !d->valid || leaf >= d->leaf_count) return 0;
+    return (d->row[leaf >> 3] & (u8)(1u << (leaf & 7u))) ? 1 : 0;
+}
+
+u32 aether_bsp_vis_decode_count_visible(const aether_bsp_vis_decode_t *d) {
+    if (!d || !d->valid) return 0;
+    u32 n = 0;
+    for (u32 i = 0; i < d->leaf_count; ++i) {
+        if (d->row[i >> 3] & (u8)(1u << (i & 7u))) ++n;
+    }
+    return n;
+}

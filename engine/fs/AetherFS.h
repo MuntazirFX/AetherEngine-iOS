@@ -49,4 +49,37 @@ const char *aether_fs_root_at(const aether_fs_t *fs, u32 index);
 #ifdef __cplusplus
 }
 #endif
+
+/* ---------- Documents/AetherEngine/<gamedir> FS mount (batch21) ---------- */
+#define AETHER_FS_DOCUMENTS_ENGINE_DIR "AetherEngine"
+
+typedef struct aether_fs_documents_mount {
+    char documents_root[512];   /* e.g. .../Documents */
+    char engine_root[512];      /* .../Documents/AetherEngine */
+    char gamedir_root[512];     /* .../Documents/AetherEngine/<gamedir> */
+    char gamedir[64];
+    u32  roots_mounted;
+    bool layout_ensured;
+    bool valve_mounted;
+    bool gamedir_mounted;
+    bool valid;
+} aether_fs_documents_mount_t;
+
+void aether_fs_documents_mount_init(aether_fs_documents_mount_t *m);
+/* Build Documents/AetherEngine/<gamedir> paths (no I/O). */
+int  aether_fs_documents_gamedir_path(const char *documents_root, const char *gamedir,
+                                      char *out_engine, u32 engine_cap,
+                                      char *out_gamedir, u32 gamedir_cap);
+/* Ensure Documents/AetherEngine/{valve,<gamedir>,maps,saves} exist (mkdir). */
+int  aether_fs_ensure_documents_layout(const char *documents_root, const char *gamedir,
+                                       aether_fs_documents_mount_t *out);
+/* Mount Documents/AetherEngine as basedir via setup_game (valve + gamedir). */
+aether_result_t aether_fs_mount_documents_gamedir(aether_fs_t *fs,
+                                                  const char *documents_root,
+                                                  const char *gamedir,
+                                                  aether_fs_documents_mount_t *out);
+/* Smoke helper: write a marker under engine_root/<gamedir>/<relpath>, return bytes. */
+u32  aether_fs_documents_write_marker(const char *documents_root, const char *gamedir,
+                                      const char *relpath, const void *data, u32 size);
+
 #endif /* AETHER_FS_H */

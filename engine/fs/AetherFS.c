@@ -6,6 +6,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <errno.h>
 
 typedef struct aether_fs_root {
     char        path[512];
@@ -217,4 +219,119 @@ u32 aether_fs_root_count(const aether_fs_t *fs) { return fs ? fs->root_count : 0
 const char *aether_fs_root_at(const aether_fs_t *fs, u32 index) {
     if (!fs || index >= fs->root_count) return NULL;
     return fs->roots[index].path;
+}
+
+/* ---------- Documents/AetherEngine/<gamedir> FS mount (batch21) ---------- */
+static int fs_mkdir_p(const char *path) {
+    if (!path || !path[0]) return 0;
+    if (aether_dir_exists(path)) return 1;
+    if (mkdir(path, 0755) == 0) return 1;
+    if (errno == EEXIST) return 1;
+    return 0;
+}
+
+void aether_fs_documents_mount_init(aether_fs_documents_mount_t *m) {
+    if (!m) return;
+    memset(m, 0, sizeof(*m));
+}
+
+int aether_fs_documents_gamedir_path(const char *documents_root, const char *gamedir,
+                                     char *out_engine, u32 engine_cap,
+                                     char *out_gamedir, u32 gamedir_cap) {
+    if (!documents_root || !gamedir || !gamedir[0]) return 0;
+    if (out_engine && engine_cap > 0)
+        snprintf(out_engine, engine_cap, "%s/%s", documents_root, AETHER_FS_DOCUMENTS_ENGINE_DIR);
+    if (out_gamedir && gamedir_cap > 0)
+        snprintf(out_gamedir, gamedir_cap, "%s/%s/%s", documents_root,
+                 AETHER_FS_DOCUMENTS_ENGINE_DIR, gamedir);
+    return 1;
+}
+
+int aether_fs_ensure_documents_layout(const char *documents_root, const char *gamedir,
+                                      aether_fs_documents_mount_t *out) {
+    if (out) aether_fs_documents_mount_init(out);
+    if (!documents_root || !gamedir || !gamedir[0]) return 0;
+    char engine[512], gd[512], valve[600], maps[600], saves[600], gdmaps[600];
+    if (!aether_fs_documents_gamedir_path(documents_root, gamedir,
+                                          engine, sizeof engine, gd, sizeof gd))
+        return 0;
+    if (!fs_mkdir_p(documents_root)) return 0;
+    if (!fs_mkdir_p(engine)) return 0;
+    snprintf(valve, sizeof valve, "%s/valve", engine);
+    if (!fs_mkdir_p(valve)) return 0;
+    if (!aether_str_eq(gamedir, "valve")) {
+        if (!fs_mkdir_p(gd)) return 0;
+    }
+    snprintf(maps, sizeof maps, "%s/maps", engine);
+    snprintf(saves, sizeof saves, "%s/saves", engine);
+    snprintf(gdmaps, sizeof gdmaps, "%s/maps",
+             aether_str_eq(gamedir, "valve") ? valve : gd);
+    (void)fs_mkdir_p(maps);
+    (void)fs_mkdir_p(saves);
+    (void)fs_mkdir_p(gdmaps);
+    if (out) {
+        aether_str_copy(out->documents_root, sizeof out->documents_root, documents_root);
+        aether_str_copy(out->engine_root, sizeof out->engine_root, engine);
+        aether_str_copy(out->gamedir_root, sizeof out->gamedir_root,
+                        aether_str_eq(gamedir, "valve") ? valve : gd);
+        aether_str_copy(out->gamedir, sizeof out->gamedir, gamedir);
+        out->layout_ensured = true;
+        out->valid = true;
+    }
+    return 1;
+}
+
+aether_result_t aether_fs_mount_documents_gamedir(aether_fs_t *fs,
+                                                  const char *documents_root,
+                                                  const char *gamedir,
+                                                  aether_fs_documents_mount_t *out) {
+    if (out) aether_fs_documents_mount_init(out);
+    if (!fs || !documents_root || !gamedir || !gamedir[0]) return AETHER_ERR_INVALID_ARG;
+    aether_fs_documents_mount_t local;
+    aether_fs_documents_mount_t *m = out ? out : &local;
+    if (!aether_fs_ensure_documents_layout(documents_root, gamedir, m))
+        return AETHER_ERR_IO;
+    aether_result_t r = aether_fs_setup_game(fs, m->engine_root, gamedir);
+    if (r != AETHER_OK) return r;
+    m->roots_mounted = aether_fs_root_count(fs);
+    m->valve_mounted = false;
+    m->gamedir_mounted = false;
+    for (u32 i = 0; i < m->roots_mounted; ++i) {
+        const char *root = aether_fs_root_at(fs, i);
+        if (!root) continue;
+        if (strstr(root, "/valve")) m->valve_mounted = true;
+        if (!aether_str_eq(gamedir, "valve") && strstr(root, gamedir))
+            m->gamedir_mounted = true;
+        if (aether_str_eq(gamedir, "valve") && strstr(root, "/valve"))
+            m->gamedir_mounted = true;
+    }
+    m->valid = (m->roots_mounted > 0);
+    aether_log(AETHER_LOG_INFO, "fs",
+               "documents mount engine='%s' gamedir='%s' roots=%u",
+               m->engine_root, gamedir, m->roots_mounted);
+    return m->valid ? AETHER_OK : AETHER_ERR_NOT_FOUND;
+}
+
+u32 aether_fs_documents_write_marker(const char *documents_root, const char *gamedir,
+                                     const char *relpath, const void *data, u32 size) {
+    if (!documents_root || !gamedir || !relpath || !data || size == 0) return 0;
+    aether_fs_documents_mount_t m;
+    if (!aether_fs_ensure_documents_layout(documents_root, gamedir, &m)) return 0;
+    char path[700];
+    snprintf(path, sizeof path, "%s/%s", m.gamedir_root, relpath);
+    /* Ensure parent of relpath (one level) exists when relpath has a slash. */
+    const char *slash = strrchr(relpath, '/');
+    if (slash && slash != relpath) {
+        char parent[700];
+        size_t plen = (size_t)(slash - relpath);
+        if (plen + 1 < sizeof parent) {
+            snprintf(parent, sizeof parent, "%s/%.*s", m.gamedir_root, (int)plen, relpath);
+            (void)fs_mkdir_p(parent);
+        }
+    }
+    FILE *fp = fopen(path, "wb");
+    if (!fp) return 0;
+    size_t w = fwrite(data, 1, size, fp);
+    fclose(fp);
+    return (u32)w;
 }

@@ -2102,6 +2102,32 @@ struct MetalView: UIViewRepresentable {
                                                    &s, &gp, &lv, &ready)
         // Skin-lump Metal texture family atlas (fixture path when no retail MDL)
         ensureSkinLumpMetalFamilyAtlas()
+        // Live Metal occlusion feedback from Hi-Z mipchain → studio LOD gate (batch21)
+        applyHizOcclusionLodFeedback()
+    }
+
+    /// Consume Hi-Z mipchain occlusion feedback and drive studio LOD gate (CPU mirror of Metal path).
+    private func applyHizOcclusionLodFeedback() {
+        var w: UInt32 = 0, h: UInt32 = 0, slices: UInt32 = 0
+        var needed: Int32 = 0
+        _ = engine_depth_hiz_occlusion_feedback_plan(&w, &h, &slices, &needed)
+        guard needed != 0 else { return }
+        _ = engine_depth_hiz_occlusion_feedback_mark()
+        var occ: Int32 = 0, vis: Int32 = 0, mip: Int32 = 0
+        var hizZ: Float = 0
+        _ = engine_mdl_hiz_occlusion_feedback(0.2, 0.2, 0.8, 0.8, 0.75, 1,
+                                              &occ, &vis, &hizZ, &mip)
+        _ = engine_mdl_hiz_occlusion_feedback_mark_metal()
+        var lod: Int32 = 0, issue: Int32 = 0, occluded: Int32 = 0
+        var screenPx: Float = 0
+        _ = engine_mdl_lod_hiz_occlusion_gate(256, 24, 0.5, 0.5, 0.75,
+                                              &lod, &issue, &occluded, &screenPx)
+        var verts: UInt32 = 0, tris: UInt32 = 0
+        _ = engine_mdl_lod_gpu_issue_draw_hiz_occlusion(256, 24, &lod, &verts, &tris, &occluded)
+        // Touch PVS decode + Documents FS mount bridge (host smokes cover full paths)
+        var pv: UInt32 = 0, rb: UInt32 = 0, rle: UInt32 = 0
+        _ = engine_bsp_vis_decode_fixture(8, 0x07, &pv, &rb, &rle)
+        _ = engine_bsp_vis_decode_leaf_visible(0)
     }
 
     private var skinLumpFamilyTexture: MTLTexture?

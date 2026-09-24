@@ -1309,3 +1309,67 @@ fragment float4 aether_depth_hiz_mtk_mipchain_fragment(constant HizGpuMipchainUn
     float ready = (U.ready != 0 && U.fromMtk != 0) ? 1.0 : 0.0;
     return float4(z, float(U.levels) / 8.0, float(U.passes) / 8.0, ready);
 }
+
+/* ---------- Batch21: Hi-Z occlusion feedback → LOD / PVS decode / FS docs ---------- */
+struct HizOcclusionFeedbackUniforms {
+    uint occluded;
+    uint visible;
+    uint mipchainReady;
+    uint metalFeedback;
+    uint mipUsed;
+    uint lod;
+    uint issue;
+    float nearestHiz;
+    float objectDepth;
+    float screenPixels;
+};
+
+fragment float4 aether_hiz_occlusion_lod_feedback_fragment(constant HizOcclusionFeedbackUniforms &U [[buffer(0)]],
+                                                           texture2d_array<float> hiz [[texture(0)]],
+                                                           sampler samp [[sampler(0)]],
+                                                           float2 uv [[stage_in]]) {
+    float z = hiz.sample(samp, uv, U.mipUsed).r;
+    float occ = (U.occluded != 0) ? 1.0 : 0.0;
+    float ready = (U.mipchainReady != 0 && U.metalFeedback != 0) ? 1.0 : 0.0;
+    return float4(z, occ, float(U.lod) / 8.0, ready);
+}
+
+struct PvsDecodeUniforms {
+    uint leafCount;
+    uint visibleCount;
+    uint rowBytes;
+    uint rleBytes;
+    uint fromFixture;
+    uint fromUserLump;
+    uint viewLeaf;
+};
+
+fragment float4 aether_bsp_vis_pvs_decode_fragment(constant PvsDecodeUniforms &U [[buffer(0)]],
+                                                   float2 uv [[stage_in]]) {
+    float vis = float(U.visibleCount) / max(float(U.leafCount), 1.0);
+    float src = (U.fromUserLump != 0) ? 1.0 : ((U.fromFixture != 0) ? 0.5 : 0.0);
+    return float4(vis, src, float(U.rowBytes) / 64.0, float(U.viewLeaf) / 16.0);
+}
+
+struct DocumentsFsMountUniforms {
+    uint rootsMounted;
+    uint valveMounted;
+    uint gamedirMounted;
+    uint layoutEnsured;
+};
+
+fragment float4 aether_fs_documents_gamedir_fragment(constant DocumentsFsMountUniforms &U [[buffer(0)]],
+                                                     float2 uv [[stage_in]]) {
+    float roots = float(U.rootsMounted) / 4.0;
+    float ok = (U.layoutEnsured != 0 && U.valveMounted != 0) ? 1.0 : 0.0;
+    return float4(roots, float(U.gamedirMounted), ok, 1.0);
+}
+
+fragment float4 aether_depth_hiz_occlusion_feedback_fragment(constant HizOcclusionFeedbackUniforms &U [[buffer(0)]],
+                                                             depth2d<float> depthTex [[texture(0)]],
+                                                             sampler samp [[sampler(0)]],
+                                                             float2 uv [[stage_in]]) {
+    float z = depthTex.sample(samp, uv);
+    float occ = (U.occluded != 0) ? 1.0 : 0.0;
+    return float4(z, occ, U.nearestHiz, (U.metalFeedback != 0) ? 1.0 : 0.0);
+}

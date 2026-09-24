@@ -800,6 +800,47 @@ Rough overall estimate after this batch: **~82%** (~81–82) toward a playable u
 IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
 
 
+## Hi-Z occlusion→LOD / PVS decode / Documents FS / IPA device-smoke (`continue/batch-hiz-occlusion-lod-pvs-fs-ipa-device`)
+
+One PR advances **live Metal occlusion feedback** from the Hi-Z GPU mipchain into the studio
+LOD gate, a **public BSP PVS RLE decode** path for user-map VIS lumps, **Documents/AetherEngine/<gamedir>**
+FS mount smoke, unsigned-IPA **device smoke checklist** polish, host smokes, and README — still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Live Metal Hi-Z occlusion → studio LOD | **done** | `aether_mdl_hiz_occlusion_feedback_*` + `lod_hiz_occlusion_gate` / `issue_draw_hiz_occlusion` + depth feedback plan |
+| 2 | Real BSP PVS row decode (user maps) | **done** | `aether_bsp_vis_decode_pvs_row` / `_at` / `for_leaf` / `fixture` + leaf_visible |
+| 3 | Documents game-dir FS mount | **done** | `aether_fs_mount_documents_gamedir` / `ensure_documents_layout` / `write_marker` |
+| 4 | IPA Actions → device smoke checklist | **done** | `DEVICE_SMOKE_CHECKLIST` in `package_ipa.sh` + README |
+| 5 | LOD gate smoke | **done** | Occluded vs visible rects through mipchain feedback |
+| 6 | PVS decode smoke | **done** | Fixture + encode/decode roundtrip + `decode_pvs_row_at` |
+| 7 | FS mount smoke | **done** | Temp Documents/AetherEngine/cstrike marker read via VFS |
+| 8 | Host smokes + verify | **done** | `verify_host.sh` batch21 greps + smoke |
+| 9 | Fix regressions | **done** | `q.hiz_depth`→`nearest_hiz` bridge typo; prior batch20 green |
+| 10 | README + honest % | **done** | This table; cap **~83%** while IPA unbuilt on this host |
+
+### Device smoke checklist (after Actions IPA artifact)
+
+```bash
+# Download AetherEngine.ipa from workflow_dispatch → sideload → then:
+# 1 launch synthetic demo  2 Documents/AetherEngine/<gamedir>
+# 3 touch+HUD  4 Hi-Z/LOD gate  5 optional user .bsp PVS  6 net HUD  7 cfg persist  8 screenshot
+# DEVICE_SMOKE_CHECKLIST=launch|gamedir|touch_hud|hiz_lod|user_bsp_pvs|net|cfg_persist|screenshot
+```
+
+### Known gaps after hiz-occlusion / pvs-decode / fs-documents / ipa-device-smoke batch
+- Hi-Z occlusion feedback is clean-room mipchain sampling (not HW occlusion-query counters)
+- PVS decode reads GoldSrc RLE rows; full leaf→cluster tables still depend on user BSP VIS lumps
+- Documents mount creates empty game dirs — retail maps/PAKs remain user-provided
+- IPA still requires macOS + Xcode; device smoke needs a built/sideloaded IPA
+
+### Progress toward playable unsigned IPA demo
+Rough overall estimate after this batch: **~83%** (~82–83) toward a playable unsigned IPA demo
+(capped while IPA remains unbuilt on this Linux/CI host). Prior hiz-gpu-mipchain batch was ~82%.
+
+IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
+
+
 ## Build Status
 - [x] STEP 1: Core modules
 - [x] STEP 2: Verification (host compile + smoke via `build/scripts/verify_host.sh` / `.github/workflows/verify.yml`)

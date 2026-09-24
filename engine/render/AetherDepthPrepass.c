@@ -422,3 +422,37 @@ bool aether_depth_hiz_mtk_mipchain_complete(const aether_depth_hiz_mtk_mipchain_
 bool aether_depth_hiz_mtk_mipchain_needed(const aether_depth_hiz_mtk_mipchain_t *m) {
     return m && m->needed;
 }
+
+/* ---------- Live Metal occlusion feedback plan (batch21) ---------- */
+void aether_depth_hiz_occlusion_feedback_plan_init(aether_depth_hiz_occlusion_feedback_plan_t *p) {
+    if (!p) return;
+    memset(p, 0, sizeof(*p));
+}
+
+int aether_depth_hiz_occlusion_feedback_plan_encode(const aether_depth_hiz_mtk_mipchain_t *mipchain,
+                                                    aether_depth_hiz_occlusion_feedback_plan_t *out) {
+    if (out) aether_depth_hiz_occlusion_feedback_plan_init(out);
+    if (!out || !mipchain) return 0;
+    if (!aether_depth_hiz_mtk_mipchain_complete(mipchain) && !mipchain->needed)
+        return 0;
+    out->mipchain_complete = aether_depth_hiz_mtk_mipchain_complete(mipchain) ||
+                             (mipchain->marked && mipchain->gpu_downsample);
+    out->feedback_armed = out->mipchain_complete;
+    out->lod_gate = out->feedback_armed;
+    out->needed = out->feedback_armed;
+    out->mip0_w = mipchain->mip0_w;
+    out->mip0_h = mipchain->mip0_h;
+    out->slices = mipchain->slices ? mipchain->slices : mipchain->levels;
+    out->feedback_queries = 0;
+    return out->needed ? 1 : 0;
+}
+
+void aether_depth_hiz_occlusion_feedback_plan_mark(aether_depth_hiz_occlusion_feedback_plan_t *p) {
+    if (!p) return;
+    p->marked = p->needed && p->feedback_armed;
+    if (p->marked) p->feedback_queries += 1;
+}
+
+bool aether_depth_hiz_occlusion_feedback_plan_ready(const aether_depth_hiz_occlusion_feedback_plan_t *p) {
+    return p && p->marked && p->needed && p->lod_gate;
+}

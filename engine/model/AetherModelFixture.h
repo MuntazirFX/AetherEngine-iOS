@@ -840,4 +840,52 @@ int  aether_mdl_skin_lump_metal_sample(const aether_mdl_skin_lump_set_t *lumps,
                                        const aether_mdl_skin_lump_metal_bind_t *b,
                                        f32 u, f32 v, f32 out_rgba[4]);
 
+/* ---------- Live Metal occlusion feedback from Hi-Z mipchain → studio LOD (batch21) ---------- */
+typedef struct aether_mdl_hiz_occlusion_feedback {
+    bool occluded;          /* mipchain vis says occluded */
+    bool visible;           /* mipchain vis says visible */
+    bool mipchain_ready;    /* feedback sourced from ready mipchain */
+    bool metal_feedback;    /* Metal frame path marked feedback consumed */
+    bool valid;
+    i32  mip_used;
+    f32  nearest_hiz;
+    f32  object_depth;
+    f32  rect[4];           /* x0,y0,x1,y1 NDC */
+    u32  feedback_frame;    /* monotonic counter for host/Metal sync */
+} aether_mdl_hiz_occlusion_feedback_t;
+
+void aether_mdl_hiz_occlusion_feedback_init(aether_mdl_hiz_occlusion_feedback_t *fb);
+/* Query mipchain and fill occlusion feedback for studio LOD gate. */
+int  aether_mdl_hiz_occlusion_feedback_from_mipchain(const aether_mdl_hiz_pyramid_t *pyr,
+                                                     const aether_mdl_hiz_array_t *arr,
+                                                     const aether_mdl_hiz_gpu_mipchain_t *chain,
+                                                     f32 x0, f32 y0, f32 x1, f32 y1,
+                                                     f32 object_depth, i32 preferred_mip,
+                                                     aether_mdl_hiz_occlusion_feedback_t *out);
+void aether_mdl_hiz_occlusion_feedback_mark_metal(aether_mdl_hiz_occlusion_feedback_t *fb);
+bool aether_mdl_hiz_occlusion_feedback_metal_ready(const aether_mdl_hiz_occlusion_feedback_t *fb);
+
+/* Studio LOD gate driven by live mipchain occlusion feedback (not sample-buffer stub). */
+i32 aether_mdl_lod_hiz_occlusion_gate(const aether_mdl_lod_table_t *table,
+                                      const aether_mdl_lod_mesh_set_t *meshes,
+                                      const aether_mdl_hiz_pyramid_t *pyr,
+                                      const aether_mdl_hiz_array_t *arr,
+                                      const aether_mdl_hiz_gpu_mipchain_t *chain,
+                                      f32 distance, f32 aabb_radius, f32 fov_y_deg,
+                                      f32 min_pixels, f32 max_distance,
+                                      f32 sx, f32 sy, f32 depth_ndc,
+                                      aether_mdl_hiz_gate_t *gate,
+                                      aether_mdl_hiz_occlusion_feedback_t *feedback);
+
+/* Issue GPU studio draw gated by mipchain occlusion feedback. */
+i32 aether_mdl_lod_gpu_issue_draw_hiz_occlusion(const aether_mdl_lod_table_t *table,
+                                                const aether_mdl_lod_mesh_set_t *meshes,
+                                                const aether_mdl_hiz_pyramid_t *pyr,
+                                                const aether_mdl_hiz_array_t *arr,
+                                                const aether_mdl_hiz_gpu_mipchain_t *chain,
+                                                f32 distance, f32 aabb_radius,
+                                                aether_mdl_lod_gpu_draw_t *out,
+                                                aether_mdl_hiz_gate_t *gate,
+                                                aether_mdl_hiz_occlusion_feedback_t *feedback);
+
 #endif /* AETHER_MODEL_FIXTURE_H */

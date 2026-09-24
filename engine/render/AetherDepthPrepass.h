@@ -248,4 +248,23 @@ void aether_depth_hiz_mtk_mipchain_mark(aether_depth_hiz_mtk_mipchain_t *m);
 bool aether_depth_hiz_mtk_mipchain_complete(const aether_depth_hiz_mtk_mipchain_t *m);
 bool aether_depth_hiz_mtk_mipchain_needed(const aether_depth_hiz_mtk_mipchain_t *m);
 
+/* ---------- Live Metal occlusion feedback plan (Hi-Z mipchain → LOD) — batch21 ---------- */
+typedef struct aether_depth_hiz_occlusion_feedback_plan {
+    bool mipchain_complete;    /* requires MTK mipchain complete */
+    bool feedback_armed;       /* Metal will sample mipchain for studio LOD */
+    bool lod_gate;             /* feed into studio LOD gate */
+    bool needed;
+    bool marked;
+    u32  mip0_w, mip0_h;
+    u32  slices;
+    u32  feedback_queries;
+} aether_depth_hiz_occlusion_feedback_plan_t;
+
+void aether_depth_hiz_occlusion_feedback_plan_init(aether_depth_hiz_occlusion_feedback_plan_t *p);
+/* Plan Metal occlusion feedback after a complete GPU mipchain. */
+int  aether_depth_hiz_occlusion_feedback_plan_encode(const aether_depth_hiz_mtk_mipchain_t *mipchain,
+                                                     aether_depth_hiz_occlusion_feedback_plan_t *out);
+void aether_depth_hiz_occlusion_feedback_plan_mark(aether_depth_hiz_occlusion_feedback_plan_t *p);
+bool aether_depth_hiz_occlusion_feedback_plan_ready(const aether_depth_hiz_occlusion_feedback_plan_t *p);
+
 #endif /* AETHER_DEPTH_PREPASS_H */

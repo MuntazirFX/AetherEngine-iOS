@@ -991,4 +991,43 @@ int  engine_mdl_skin_lump_metal_bind_mark(void);
 int  engine_mdl_skin_lump_metal_bind_was_bound(void);
 int  engine_mdl_skin_lump_metal_sample(float u, float v, float *out_rgba4);
 
+/* ---------- Batch: hiz-occlusion-lod / pvs-decode / fs-documents / ipa-device-smoke ---------- */
+int  engine_depth_hiz_occlusion_feedback_plan(unsigned *out_w, unsigned *out_h,
+                                              unsigned *out_slices, int *out_needed);
+int  engine_depth_hiz_occlusion_feedback_mark(void);
+int  engine_depth_hiz_occlusion_feedback_ready(void);
+int  engine_mdl_hiz_occlusion_feedback(float x0, float y0, float x1, float y1,
+                                       float obj_depth, int preferred_mip,
+                                       int *out_occluded, int *out_visible,
+                                       float *out_hiz, int *out_mip);
+int  engine_mdl_hiz_occlusion_feedback_mark_metal(void);
+int  engine_mdl_lod_hiz_occlusion_gate(float distance, float aabb_radius,
+                                       float sx, float sy, float depth_ndc,
+                                       int *out_lod, int *out_issue, int *out_occluded,
+                                       float *out_screen_px);
+int  engine_mdl_lod_gpu_issue_draw_hiz_occlusion(float distance, float aabb_radius,
+                                                 int *out_lod, unsigned *out_verts,
+                                                 unsigned *out_tris, int *out_occluded);
+
+int  engine_bsp_vis_decode_pvs_row(const unsigned char *rle, unsigned rle_size,
+                                   unsigned leaf_count,
+                                   unsigned char *out_bits, unsigned out_cap,
+                                   unsigned *out_row_bytes);
+int  engine_bsp_vis_decode_fixture(unsigned leaf_count, unsigned visible_mask,
+                                   unsigned *out_visible, unsigned *out_row_bytes,
+                                   unsigned *out_rle_bytes);
+int  engine_bsp_vis_decode_leaf_visible(unsigned leaf);
+int  engine_bsp_vis_decode_for_current_leaf(float x, float y, float z,
+                                            unsigned *out_visible, int *out_view_leaf);
+
+int  engine_fs_documents_gamedir_path(const char *documents_root, const char *gamedir,
+                                      char *out_engine, unsigned engine_cap,
+                                      char *out_gamedir, unsigned gamedir_cap);
+int  engine_fs_ensure_documents_layout(const char *documents_root, const char *gamedir);
+int  engine_fs_mount_documents_gamedir(const char *documents_root, const char *gamedir,
+                                       unsigned *out_roots, int *out_valve, int *out_gamedir);
+unsigned engine_fs_documents_write_marker(const char *documents_root, const char *gamedir,
+                                          const char *relpath, const void *data, unsigned size);
+int  engine_fs_documents_exists(const char *vpath);
+
 #endif /* ENGINE_BRIDGE_H */

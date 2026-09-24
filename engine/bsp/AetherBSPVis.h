@@ -200,4 +200,41 @@ int  aether_bsp_portal_pvs_leaf_visible(const aether_bsp_portal_pvs_flood_t *f, 
 u32  aether_bsp_portal_pvs_collect_visible(const aether_bsp_portal_pvs_flood_t *f,
                                            u16 *out, u32 max_out);
 
+/* ---------- Real BSP PVS row decode for user maps (RLE / VIS lump) — batch21 ---------- */
+#define AETHER_BSP_VIS_DECODE_MAX_LEAVES  512
+#define AETHER_BSP_VIS_DECODE_MAX_ROW    ((AETHER_BSP_VIS_DECODE_MAX_LEAVES + 7u) / 8u)
+#define AETHER_BSP_VIS_DECODE_MAX_RLE    1024
+
+typedef struct aether_bsp_vis_decode {
+    u32 leaf_count;
+    u32 row_bytes;
+    u32 rle_bytes;
+    u32 visible_count;
+    i32 view_leaf;
+    i32 vis_offset;
+    u8  row[AETHER_BSP_VIS_DECODE_MAX_ROW];
+    u8  rle[AETHER_BSP_VIS_DECODE_MAX_RLE];
+    bool from_fixture;
+    bool from_user_lump;
+    bool valid;
+} aether_bsp_vis_decode_t;
+
+void aether_bsp_vis_decode_init(aether_bsp_vis_decode_t *d);
+/* Public GoldSrc RLE PVS row decompress (user-map VIS data). Returns 1 on success. */
+int  aether_bsp_vis_decode_pvs_row(const u8 *rle, u32 rle_size, u32 leaf_count,
+                                   u8 *out_bits, u32 out_cap, u32 *out_row_bytes);
+/* Decode PVS row for a view leaf from a raw VIS lump (offset into lump). */
+int  aether_bsp_vis_decode_pvs_row_at(const u8 *vis_lump, u32 vis_size, i32 offset,
+                                      u32 leaf_count, aether_bsp_vis_decode_t *out);
+/* Decode from BSP leaf vis_offset when VIS lump present (user maps). */
+int  aether_bsp_vis_decode_for_leaf(const aether_bsp_t *bsp, i32 view_leaf,
+                                    aether_bsp_vis_decode_t *out);
+/* Synthetic + fixture VIS: encode known bitrow → RLE → decode roundtrip. */
+int  aether_bsp_vis_decode_fixture(u32 leaf_count, u32 visible_mask,
+                                   aether_bsp_vis_decode_t *out);
+/* True if leaf bit is set in a decoded row. */
+int  aether_bsp_vis_decode_leaf_visible(const aether_bsp_vis_decode_t *d, u32 leaf);
+/* Count set bits in decoded row. */
+u32  aether_bsp_vis_decode_count_visible(const aether_bsp_vis_decode_t *d);
+
 #endif /* AETHER_BSP_VIS_H */
