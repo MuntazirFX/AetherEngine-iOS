@@ -12,6 +12,7 @@ void aether_net_predict_init(aether_net_predict_t *pr, u32 local_id) {
     memset(pr, 0, sizeof(*pr));
     pr->local_id = local_id;
     pr->speed = 320.f; /* GoldSrc-ish walk */
+    pr->error_decay = 12.f;
     pr->active = true;
 }
 
@@ -120,4 +121,62 @@ void aether_net_predict_apply_cmd_clipped(aether_net_predict_t *pr,
         pr->origin[2] = to.z;
     }
     pr->cmd_seq = cmd->seq ? cmd->seq : (pr->cmd_seq + 1);
+}
+
+void aether_net_predict_set_error_decay(aether_net_predict_t *pr, f32 rate) {
+    if (!pr) return;
+    if (rate < 0.f) rate = 0.f;
+    pr->error_decay = rate;
+}
+
+f32 aether_net_predict_error_length(const aether_net_predict_t *pr) {
+    if (!pr) return 0.f;
+    return sqrtf(pr->error[0]*pr->error[0] + pr->error[1]*pr->error[1] + pr->error[2]*pr->error[2]);
+}
+
+f32 aether_net_predict_smooth_tick(aether_net_predict_t *pr, f32 dt) {
+    if (!pr || !pr->active) return 0.f;
+    if (dt < 0.f) dt = 0.f;
+    if (dt > 0.25f) dt = 0.25f;
+    f32 rate = pr->error_decay > 0.f ? pr->error_decay : 12.f;
+    /* Exponential decay: err *= exp(-rate*dt) ≈ 1 - rate*dt for small dt.
+     * Apply the portion we remove to origin so motion eases toward auth. */
+    f32 keep = expf(-rate * dt);
+    if (keep < 0.f) keep = 0.f;
+    if (keep > 1.f) keep = 1.f;
+    f32 apply = 1.f - keep;
+    pr->origin[0] += pr->error[0] * apply;
+    pr->origin[1] += pr->error[1] * apply;
+    pr->origin[2] += pr->error[2] * apply;
+    pr->error[0] *= keep;
+    pr->error[1] *= keep;
+    pr->error[2] *= keep;
+    /* Snap tiny residuals */
+    if (aether_net_predict_error_length(pr) < 0.05f) {
+        pr->origin[0] += pr->error[0];
+        pr->origin[1] += pr->error[1];
+        pr->origin[2] += pr->error[2];
+        pr->error[0] = pr->error[1] = pr->error[2] = 0.f;
+    }
+    return aether_net_predict_error_length(pr);
+}
+
+void aether_net_predict_reconcile_smooth(aether_net_predict_t *pr,
+                                         const aether_net_snapshot_t *snap,
+                                         f32 snap_blend, f32 dt) {
+    if (!pr || !snap) return;
+    /* Hard-snap fraction, leave residual in error[] for smooth_tick. */
+    if (snap_blend < 0.f) snap_blend = 0.f;
+    if (snap_blend > 1.f) snap_blend = 1.f;
+    aether_net_predict_reconcile(pr, snap, snap_blend);
+    /* After reconcile, error[] holds full delta *before* blend was applied
+     * in current reconcile — actually reconcile stores full delta then applies
+     * blend to origin, leaving error as full auth-predict. Reduce residual to
+     * the unapplied portion: error *= (1-blend). */
+    f32 rem = 1.f - snap_blend;
+    pr->error[0] *= rem;
+    pr->error[1] *= rem;
+    pr->error[2] *= rem;
+    if (pr->error_decay <= 0.f) pr->error_decay = 12.f;
+    (void)aether_net_predict_smooth_tick(pr, dt);
 }

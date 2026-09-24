@@ -300,6 +300,43 @@ muzzle→world particle/light sync, cleaned style-blend UBO upload, and weapon s
 - IPA still requires macOS + Xcode via workflow_dispatch
 
 
+
+
+## Studio LOD / Water reflect / Net score / Predict smooth / Depth prepass (`continue/batch-studio-lod-water-reflect-netscore`)
+
+One PR advances studio LOD + bodygroup select, water planar reflection hooks, live
+scoreboard join/leave over UDP, client prediction smooth error decay, Metal depth
+prepass encode plan, bodygroup swap (input/console), and scoreboard HUD events —
+still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Studio LOD / bodygroup API | **done** | `aether_mdl_write_lod_fixture` + `lod_select` / bodygroup set/cycle/tri_total |
+| 2 | Water planar reflection | **done** | mirror matrix + clip plane uniforms; Metal/host hooks |
+| 3 | Net scoreboard join/leave UDP | **done** | encode JOIN/LEAVE + handle_packet + server broadcast + UDP smoke |
+| 4 | Predict smooth error decay | **done** | `smooth_tick` / `reconcile_smooth` exponential residual decay |
+| 5 | Metal depth prepass | **done** | encode plan + `record_stub` + depth-only shader/pipeline stub |
+| 6 | Bodygroup swap input/console | **done** | `BODYGROUP_NEXT` + `engine_console_exec_bodygroup` / cycle API |
+| 7 | Scoreboard HUD join/leave | **done** | Swift overlay shows join/leave event ticker |
+| 8 | Host smokes | **done** | LOD/bodygroup, water reflect, netscore UDP, predict smooth, depth plan |
+| 9 | Verify regressions | **done** | `verify_host.sh` greps + smoke green |
+| 10 | README + gaps | **done** | This table |
+
+### Known gaps after studio-lod / water-reflect / netscore batch
+- LOD table is clean-room tri budgets (not GoldSrc multi-resolution meshes); bodygroup submodels are count stubs
+- Water reflection is planar mirror/clip uniforms only — Metal does not yet re-render the scene into a reflection RT
+- Join/leave HUD events are client-side ring buffer; full server→all-clients fanout needs active peer slots
+- Predict smooth decays residual after partial snap blend (not full GoldSrc entity baseline rewind)
+- Depth prepass pipeline is depth-write stub (color mask none); full early-Z occlusion cull still thin
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+### Progress toward playable unsigned IPA demo
+Rough overall estimate after this batch: **~72–76%** toward a playable unsigned IPA demo
+(synthetic BSP walk/swim/combat stubs + Metal world/particles/post + net/predict foundations).
+Remaining: real game-data FS paths, fuller studio/GPU features, signed packaging on macOS/Xcode,
+and tighter netplay/HUD polish.
+
+
 ## Build Status
 - [x] STEP 1: Core modules
 - [x] STEP 2: Verification (host compile + smoke via `build/scripts/verify_host.sh` / `.github/workflows/verify.yml`)

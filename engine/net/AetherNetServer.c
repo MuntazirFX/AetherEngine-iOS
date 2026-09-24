@@ -2,6 +2,7 @@
  * AetherEngine-iOS · Clean-room.
  */
 #include "AetherNetServer.h"
+#include "AetherNetScoreboard.h"
 #include "AetherNetCmd.h"
 #include "AetherNetSnapshot.h"
 #include <math.h>
@@ -407,4 +408,26 @@ const aether_net_cmd_t *aether_net_server_lagcomp_cmd(const aether_net_server_t 
         return aether_net_cmd_history_at_lag(&s->clients[i].cmd_hist, s->time, lag_ms);
     }
     return NULL;
+}
+
+void aether_net_server_broadcast_join(aether_net_server_t *s, u32 player_id, const char *name) {
+    if (!s) return;
+    u8 pkt[256];
+    u32 n = aether_scoreboard_encode_join(pkt, sizeof pkt, player_id, name);
+    if (!n) return;
+    for (u32 i = 0; i < AETHER_NET_MAX_PLAYERS; ++i) {
+        if (!s->clients[i].active) continue;
+        aether_socket_send(s->sock, &s->clients[i].addr, pkt, n);
+    }
+}
+
+void aether_net_server_broadcast_leave(aether_net_server_t *s, u32 player_id) {
+    if (!s) return;
+    u8 pkt[64];
+    u32 n = aether_scoreboard_encode_leave(pkt, sizeof pkt, player_id);
+    if (!n) return;
+    for (u32 i = 0; i < AETHER_NET_MAX_PLAYERS; ++i) {
+        if (!s->clients[i].active) continue;
+        aether_socket_send(s->sock, &s->clients[i].addr, pkt, n);
+    }
 }

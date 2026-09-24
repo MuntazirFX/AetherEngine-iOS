@@ -25,7 +25,8 @@ typedef struct aether_net_predict {
     f32 speed;          /* units/sec for predicted move */
     u32 last_ack_tick;
     u32 cmd_seq;
-    f32 error[3];       /* last reconcile delta */
+    f32 error[3];       /* last reconcile delta (remaining soft-correct) */
+    f32 error_decay;    /* 1/sec exponential decay rate for residual error (default 12) */
     bool active;
     struct aether_collision *collision; /* optional clipnodes for predict move */
     bool on_ground;
@@ -53,6 +54,21 @@ struct aether_collision *aether_net_predict_get_collision(const aether_net_predi
 void aether_net_predict_apply_cmd_clipped(aether_net_predict_t *pr,
                                           const aether_net_predict_cmd_t *cmd,
                                           i32 hull_index);
+
+/* Set residual-error decay rate (1/sec). Default 12. */
+void aether_net_predict_set_error_decay(aether_net_predict_t *pr, f32 rate);
+
+/* Smooth residual error toward zero each frame; applies delta to origin.
+ * Returns remaining error length. */
+f32 aether_net_predict_smooth_tick(aether_net_predict_t *pr, f32 dt);
+
+/* Reconcile then leave residual for smooth decay (blend snaps partially). */
+void aether_net_predict_reconcile_smooth(aether_net_predict_t *pr,
+                                        const aether_net_snapshot_t *snap,
+                                        f32 snap_blend, f32 dt);
+
+/* Remaining soft-correct error length. */
+f32 aether_net_predict_error_length(const aether_net_predict_t *pr);
 
 #ifdef __cplusplus
 }

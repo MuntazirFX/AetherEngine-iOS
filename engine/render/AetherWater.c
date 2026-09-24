@@ -158,3 +158,60 @@ u32 aether_water_copy_render(const aether_water_t *w,
     }
     return written;
 }
+
+void aether_water_reflect_point(const aether_water_t *w, const f32 in[3], f32 out[3]) {
+    if (!out) return;
+    if (!in) { out[0]=out[1]=out[2]=0; return; }
+    f32 h = w ? w->height : 0.f;
+    /* Reflect across z = h (normal = +Z). */
+    out[0] = in[0];
+    out[1] = in[1];
+    out[2] = 2.f * h - in[2];
+}
+
+void aether_water_reflect_compute(const aether_water_t *w, const f32 eye[3],
+                                  aether_water_reflect_t *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    out->plane_normal[0] = 0.f;
+    out->plane_normal[1] = 0.f;
+    out->plane_normal[2] = 1.f;
+    f32 h = w ? w->height : 0.f;
+    out->plane_origin[0] = w ? w->origin[0] : 0.f;
+    out->plane_origin[1] = w ? w->origin[1] : 0.f;
+    out->plane_origin[2] = h;
+    /* Clip plane: 0*x + 0*y + 1*z - h = 0 → keep z >= h for above-water view */
+    out->clip_plane[0] = 0.f;
+    out->clip_plane[1] = 0.f;
+    out->clip_plane[2] = 1.f;
+    out->clip_plane[3] = -h;
+    /* Mirror matrix: I - 2 n n^T with translation so plane stays fixed.
+     * For n=(0,0,1), M = diag(1,1,-1) and translation z' = 2h - z:
+     *   [1 0 0 0]
+     *   [0 1 0 0]
+     *   [0 0 -1 2h]
+     *   [0 0 0 1]  (column-major) */
+    out->mirror[0] = 1.f; out->mirror[5] = 1.f;
+    out->mirror[10] = -1.f; out->mirror[15] = 1.f;
+    out->mirror[14] = 2.f * h; /* column 3, row 2 */
+    if (eye) {
+        aether_water_reflect_point(w, eye, out->eye_reflected);
+    }
+    out->enabled = w ? w->enabled : false;
+}
+
+void aether_water_reflect_fill_uniforms(const aether_water_reflect_t *r,
+                                        aether_water_reflect_uniforms_t *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    if (!r) return;
+    memcpy(out->mirror, r->mirror, sizeof out->mirror);
+    memcpy(out->clip_plane, r->clip_plane, sizeof out->clip_plane);
+    out->enabled = (r->enabled && aether_water_reflect_encode_needed(r)) ? 1.f : 0.f;
+}
+
+bool aether_water_reflect_encode_needed(const aether_water_reflect_t *r) {
+    if (!r || !r->enabled) return false;
+    /* Mirror scale on Z should be -1. */
+    return fabsf(r->mirror[10] + 1.f) < 1e-4f;
+}

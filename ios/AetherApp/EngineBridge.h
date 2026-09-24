@@ -566,4 +566,46 @@ int  engine_inv_cycle(int dir);
 int  engine_inv_apply_weapon_input(void);
 int  engine_inv_current_weapon(void);
 
+
+/* ---------- Batch: studio LOD / water reflect / netscore / predict smooth / depth ---------- */
+int  engine_mdl_write_lod_fixture(const char *filepath);
+int  engine_mdl_lod_select(float distance); /* returns lod index; loads fixture table */
+int  engine_mdl_lod_tri_count(int lod);
+int  engine_bodygroup_init_fixture(void);
+int  engine_bodygroup_set(unsigned part, unsigned sub);
+int  engine_bodygroup_get(unsigned part);
+int  engine_bodygroup_cycle(unsigned part, int dir);
+int  engine_bodygroup_tri_total(void);
+int  engine_bodygroup_apply_lod(float distance);
+int  engine_bodygroup_apply_input(void); /* BODYGROUP_NEXT */
+
+int  engine_water_reflect_compute(float eye_x, float eye_y, float eye_z);
+int  engine_water_reflect_fill_uniforms(float *out20); /* 16 mirror + 4 clip */
+int  engine_water_reflect_encode_needed(void);
+int  engine_water_reflect_point(float ix, float iy, float iz, float *out3);
+
+int  engine_scoreboard_apply_join(unsigned player_id, const char *name);
+int  engine_scoreboard_apply_leave(unsigned player_id);
+int  engine_scoreboard_event_count(void);
+int  engine_scoreboard_get_event(int index, int *out_kind, unsigned *out_id,
+                                 char *name, int name_cap, float *out_time);
+int  engine_scoreboard_handle_packet(const unsigned char *data, unsigned size, float time);
+int  engine_net_broadcast_join_demo(unsigned player_id, const char *name);
+int  engine_net_broadcast_leave_demo(unsigned player_id);
+
+int  engine_net_predict_set_error_decay(float rate);
+float engine_net_predict_smooth_tick(float dt);
+float engine_net_predict_error_length(void);
+int  engine_net_predict_reconcile_smooth(float snap_ox, float snap_oy, float snap_oz,
+                                         float snap_blend, float dt);
+
+int  engine_depth_prepass_ensure(unsigned w, unsigned h);
+int  engine_depth_prepass_encode_plan(unsigned *out_passes, unsigned *out_w, unsigned *out_h,
+                                      int *out_write_depth);
+int  engine_depth_prepass_record_stub(const float *positions_xyz, unsigned count,
+                                      float near_z, float far_z,
+                                      float *out_depths, unsigned max_out);
+int  engine_depth_prepass_encode_needed(void);
+int  engine_console_exec_bodygroup(const char *line); /* "bodygroup <part> [sub|next|prev]" */
+
 #endif /* ENGINE_BRIDGE_H */

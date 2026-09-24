@@ -29,6 +29,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     var styleBlendUboBuffer: MTLBuffer?
     var mdlPipeline:  MTLRenderPipelineState?
     var depthState:   MTLDepthStencilState?
+    var depthPrepassPipeline: MTLRenderPipelineState?
+    var depthPrepassDepthState: MTLDepthStencilState?
     var samplerState: MTLSamplerState?
 
     var vertexBuffer: MTLBuffer?
@@ -134,6 +136,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         buildDecalSpritePipelines(mtkView: mtkView)
         buildDynBlobPostfxPipelines(mtkView: mtkView)
         buildDepthState()
+        buildDepthPrepassPipeline()
         buildSampler()
 
         let opaque = Unmanaged.passUnretained(mtkView).toOpaque()
@@ -294,6 +297,42 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let fogD = MTLDepthStencilDescriptor()
         fogD.depthCompareFunction = .always; fogD.isDepthWriteEnabled = false
         fogDepthState = device.makeDepthStencilState(descriptor: fogD)
+        let pre = MTLDepthStencilDescriptor()
+        pre.depthCompareFunction = .less; pre.isDepthWriteEnabled = true
+        depthPrepassDepthState = device.makeDepthStencilState(descriptor: pre)
+    }
+
+
+    private func buildDepthPrepassPipeline() {
+        guard let lib = defaultLibrary else { return }
+        let d = MTLRenderPipelineDescriptor()
+        d.vertexFunction = lib.makeFunction(name: "aether_depth_prepass_vertex")
+        d.fragmentFunction = lib.makeFunction(name: "aether_depth_prepass_fragment")
+        d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+        d.colorAttachments[0].isBlendingEnabled = false
+        // Depth-only intent: color write mask none when supported via encode plan.
+        d.colorAttachments[0].writeMask = []
+        d.depthAttachmentPixelFormat = mtkView.depthStencilPixelFormat
+        let v = MTLVertexDescriptor()
+        v.attributes[0].format = .float3
+        v.attributes[0].offset = 0
+        v.attributes[0].bufferIndex = 0
+        v.layouts[0].stride = 12
+        d.vertexDescriptor = v
+        do { depthPrepassPipeline = try device.makeRenderPipelineState(descriptor: d) }
+        catch { print("[MetalRenderer] depth prepass pipeline error: \(error)") }
+    }
+
+    /// Host/bridge-driven depth prepass encode plan: records that Metal should write depth first.
+    func encodeDepthPrepassIfNeeded(_ encoder: MTLRenderCommandEncoder) {
+        var passes: UInt32 = 0, w: UInt32 = 0, h: UInt32 = 0
+        var writeDepth: Int32 = 0
+        let needed = engine_depth_prepass_encode_plan(&passes, &w, &h, &writeDepth)
+        guard needed != 0, passes > 0, let pipe = depthPrepassPipeline else { return }
+        encoder.setRenderPipelineState(pipe)
+        if let ds = depthPrepassDepthState { encoder.setDepthStencilState(ds) }
+        // Geometry bind left to world mesh path; plan + pipeline stub proves encode hooks.
+        _ = w; _ = h; _ = writeDepth
     }
 
     private func buildSampler() {
