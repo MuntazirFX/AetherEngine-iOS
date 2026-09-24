@@ -481,3 +481,39 @@ bool aether_net_server_register_kill(aether_net_server_t *s,
     if (ok) aether_net_server_broadcast_kill(s, killer_id, kn, victim_id, vn);
     return ok;
 }
+
+u32 aether_net_server_fanout_scores(aether_net_server_t *s) {
+    if (!s || !s->sock) return 0;
+    aether_net_server_broadcast_scoreboard(s);
+    u32 n = 0;
+    for (u32 i = 0; i < AETHER_NET_MAX_PLAYERS; ++i)
+        if (s->clients[i].active) n++;
+    return n;
+}
+
+u32 aether_net_server_tick_authority_kill_score(aether_net_server_t *s, f32 dt,
+                                                u32 killer_id, u32 victim_id,
+                                                aether_net_server_authority_fanout_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!s) return 0;
+    u32 kills = 0;
+    if (killer_id || victim_id) {
+        if (aether_net_server_register_kill(s, killer_id, victim_id))
+            kills = 1;
+    }
+    u32 snaps = aether_net_server_tick_authority(s, dt);
+    /* Always fanout scoreboard when a kill happened so HUD stays consistent */
+    u32 reached = 0;
+    u32 scoreboards = 0;
+    if (kills > 0 || snaps > 0) {
+        reached = aether_net_server_fanout_scores(s);
+        scoreboards = reached > 0 ? 1u : 0u;
+    }
+    if (out) {
+        out->snapshots = snaps;
+        out->scoreboards = scoreboards;
+        out->kills = kills;
+        out->clients_reached = reached;
+    }
+    return snaps + kills + scoreboards;
+}

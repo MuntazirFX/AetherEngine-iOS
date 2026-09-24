@@ -82,6 +82,11 @@ typedef struct aether_water_reflect_rt {
     bool sample_enabled; /* fragment samples reflection texture */
     bool enabled;
     u32  tex_stub_id;    /* host/Metal texture handle stub (non-zero when allocated) */
+    /* clear / resolve / mip hooks (host + Metal) */
+    bool cleared;
+    bool resolved;
+    u32  mip_levels;     /* 1 = no mips; >1 after gen_mips */
+    f32  clear_rgba[4];
 } aether_water_reflect_rt_t;
 
 typedef struct aether_water_reflect_rt_plan {
@@ -109,5 +114,41 @@ void aether_water_reflect_rt_encode_plan(const aether_water_reflect_rt_t *rt,
 bool aether_water_reflect_rt_sample_needed(const aether_water_reflect_rt_t *rt);
 bool aether_water_reflect_rt_encode_needed(const aether_water_reflect_rt_t *rt,
                                            const aether_water_reflect_t *reflect);
+
+/* ---------- Mirrored-camera encode into reflection RT ---------- */
+typedef struct aether_water_reflect_rt_draw {
+    f32 mirror_mvp[16];   /* column-major: proj * view_mirrored */
+    f32 mirror_view[16];
+    f32 mirror_proj[16];
+    f32 eye_reflected[3];
+    f32 clip_plane[4];
+    u32 width;
+    u32 height;
+    bool clear;           /* clear RT before draw */
+    bool draw_world;      /* draw world mesh with mirror_mvp */
+    bool resolve;         /* resolve/mip after draw */
+    bool needed;
+} aether_water_reflect_rt_draw_t;
+
+/* Build mirrored view from eye + reflection, then MVP = proj * view_m.
+ * view/proj are column-major 4x4 (pass identity proj for smoke). */
+void aether_water_reflect_rt_build_mirror_mvp(const aether_water_reflect_t *reflect,
+                                              const f32 view[16], const f32 proj[16],
+                                              f32 out_mvp[16], f32 out_view_m[16]);
+
+/* Full clear → draw-world → resolve plan for Metal encode into RT. */
+void aether_water_reflect_rt_draw_plan(const aether_water_reflect_rt_t *rt,
+                                       const aether_water_reflect_t *reflect,
+                                       const f32 view[16], const f32 proj[16],
+                                       aether_water_reflect_rt_draw_t *out);
+
+/* Clear / resolve / mip stubs (host smoke + Metal hooks). */
+aether_result_t aether_water_reflect_rt_clear(aether_water_reflect_rt_t *rt,
+                                              f32 r, f32 g, f32 b, f32 a);
+aether_result_t aether_water_reflect_rt_resolve(aether_water_reflect_rt_t *rt);
+aether_result_t aether_water_reflect_rt_gen_mips(aether_water_reflect_rt_t *rt);
+bool aether_water_reflect_rt_was_cleared(const aether_water_reflect_rt_t *rt);
+bool aether_water_reflect_rt_was_resolved(const aether_water_reflect_rt_t *rt);
+u32  aether_water_reflect_rt_mip_levels(const aether_water_reflect_rt_t *rt);
 
 #endif /* AETHER_WATER_H */

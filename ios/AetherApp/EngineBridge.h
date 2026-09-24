@@ -650,4 +650,45 @@ int  engine_depth_prepass_bind_before_main(void);
 int  engine_depth_prepass_mark_bound(void);
 int  engine_depth_prepass_was_bound_before_main(void);
 
+
+/* ---------- Batch: mirror-RT / multi-mesh LOD / MP kill-score / depth cam / spectator / IPA docs ---------- */
+int  engine_water_reflect_rt_draw_plan(float *out_mvp16, unsigned *out_w, unsigned *out_h,
+                                       int *out_clear, int *out_draw, int *out_resolve);
+int  engine_water_reflect_rt_clear(float r, float g, float b, float a);
+int  engine_water_reflect_rt_resolve(void);
+int  engine_water_reflect_rt_gen_mips(void);
+int  engine_water_reflect_rt_was_cleared(void);
+int  engine_water_reflect_rt_was_resolved(void);
+unsigned engine_water_reflect_rt_mip_levels(void);
+int  engine_water_reflect_rt_build_mirror_mvp(const float *view16, const float *proj16,
+                                             float *out_mvp16);
+
+int  engine_mdl_lod_mesh_init_fixture(void);
+int  engine_mdl_lod_mesh_select(float distance, unsigned *out_vert_count, unsigned *out_tri_count,
+                                int *out_lod);
+int  engine_mdl_lod_mesh_copy_selected(float *out_pos, unsigned max_verts,
+                                       unsigned *out_idx, unsigned max_idx,
+                                       unsigned *out_vert_count, unsigned *out_tri_count);
+
+int  engine_net_server_tick_authority_kill_score(float dt, unsigned killer_id, unsigned victim_id,
+                                                 unsigned *out_snaps, unsigned *out_kills,
+                                                 unsigned *out_scoreboards, unsigned *out_reached);
+int  engine_net_server_fanout_scores(void);
+
+int  engine_depth_prepass_camera_set(const float *view16, const float *proj16,
+                                     float eye_x, float eye_y, float eye_z);
+int  engine_depth_prepass_camera_fill_mvp(float *out_mvp16);
+int  engine_depth_prepass_camera_valid(void);
+int  engine_depth_prepass_encode_plan_ex(unsigned *out_passes, unsigned *out_w, unsigned *out_h,
+                                         int *out_write_depth, float *out_mvp16, int *out_has_mvp);
+
+int  engine_spectator_init(void);
+int  engine_spectator_follow(unsigned player_id);
+int  engine_spectator_stop(void);
+int  engine_spectator_tick(float dt, float tx, float ty, float tz,
+                           float fx, float fy, float fz);
+int  engine_spectator_get_eye(float *out3);
+int  engine_spectator_get_forward(float *out3);
+int  engine_spectator_is_following(void);
+
 #endif /* ENGINE_BRIDGE_H */

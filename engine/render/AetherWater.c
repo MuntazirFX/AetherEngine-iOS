@@ -277,3 +277,104 @@ void aether_water_reflect_rt_encode_plan(const aether_water_reflect_rt_t *rt,
     out->sample = aether_water_reflect_rt_sample_needed(rt);
     out->pass_count = out->needed ? 1u : 0u;
 }
+
+static void mat4_mul(const f32 A[16], const f32 B[16], f32 out[16]) {
+    f32 t[16];
+    for (int c = 0; c < 4; ++c) {
+        for (int r = 0; r < 4; ++r) {
+            t[c * 4 + r] =
+                A[0 * 4 + r] * B[c * 4 + 0] +
+                A[1 * 4 + r] * B[c * 4 + 1] +
+                A[2 * 4 + r] * B[c * 4 + 2] +
+                A[3 * 4 + r] * B[c * 4 + 3];
+        }
+    }
+    memcpy(out, t, sizeof t);
+}
+
+static void mat4_identity(f32 m[16]) {
+    memset(m, 0, 16 * sizeof(f32));
+    m[0] = m[5] = m[10] = m[15] = 1.f;
+}
+
+void aether_water_reflect_rt_build_mirror_mvp(const aether_water_reflect_t *reflect,
+                                              const f32 view[16], const f32 proj[16],
+                                              f32 out_mvp[16], f32 out_view_m[16]) {
+    f32 vm[16], p[16], v[16];
+    mat4_identity(vm);
+    mat4_identity(p);
+    mat4_identity(v);
+    if (view) memcpy(v, view, sizeof v);
+    if (proj) memcpy(p, proj, sizeof p);
+    /* view_mirrored = view * mirror  (world → mirrored → view) */
+    if (reflect) {
+        mat4_mul(v, reflect->mirror, vm);
+    } else {
+        memcpy(vm, v, sizeof vm);
+    }
+    if (out_view_m) memcpy(out_view_m, vm, sizeof vm);
+    if (out_mvp) mat4_mul(p, vm, out_mvp);
+}
+
+void aether_water_reflect_rt_draw_plan(const aether_water_reflect_rt_t *rt,
+                                       const aether_water_reflect_t *reflect,
+                                       const f32 view[16], const f32 proj[16],
+                                       aether_water_reflect_rt_draw_t *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    if (!rt || !rt->enabled || !rt->allocated) return;
+    out->needed = aether_water_reflect_rt_encode_needed(rt, reflect);
+    out->width = rt->width;
+    out->height = rt->height;
+    out->clear = out->needed;
+    out->draw_world = out->needed;
+    out->resolve = out->needed;
+    if (reflect) {
+        memcpy(out->clip_plane, reflect->clip_plane, sizeof out->clip_plane);
+        memcpy(out->eye_reflected, reflect->eye_reflected, sizeof out->eye_reflected);
+    }
+    aether_water_reflect_rt_build_mirror_mvp(reflect, view, proj,
+                                             out->mirror_mvp, out->mirror_view);
+    if (proj) memcpy(out->mirror_proj, proj, sizeof out->mirror_proj);
+    else mat4_identity(out->mirror_proj);
+}
+
+aether_result_t aether_water_reflect_rt_clear(aether_water_reflect_rt_t *rt,
+                                              f32 r, f32 g, f32 b, f32 a) {
+    if (!rt || !rt->allocated) return AETHER_ERR_INVALID_ARG;
+    rt->clear_rgba[0] = r; rt->clear_rgba[1] = g;
+    rt->clear_rgba[2] = b; rt->clear_rgba[3] = a;
+    rt->cleared = true;
+    rt->resolved = false;
+    return AETHER_OK;
+}
+
+aether_result_t aether_water_reflect_rt_resolve(aether_water_reflect_rt_t *rt) {
+    if (!rt || !rt->allocated) return AETHER_ERR_INVALID_ARG;
+    rt->resolved = true;
+    if (rt->mip_levels < 1) rt->mip_levels = 1;
+    return AETHER_OK;
+}
+
+aether_result_t aether_water_reflect_rt_gen_mips(aether_water_reflect_rt_t *rt) {
+    if (!rt || !rt->allocated) return AETHER_ERR_INVALID_ARG;
+    /* log2 stub levels from max dimension */
+    u32 m = rt->width > rt->height ? rt->width : rt->height;
+    u32 levels = 1;
+    while (m > 1) { m >>= 1; levels++; }
+    if (levels < 1) levels = 1;
+    if (levels > 12) levels = 12;
+    rt->mip_levels = levels;
+    rt->resolved = true;
+    return AETHER_OK;
+}
+
+bool aether_water_reflect_rt_was_cleared(const aether_water_reflect_rt_t *rt) {
+    return rt && rt->cleared;
+}
+bool aether_water_reflect_rt_was_resolved(const aether_water_reflect_rt_t *rt) {
+    return rt && rt->resolved;
+}
+u32 aether_water_reflect_rt_mip_levels(const aether_water_reflect_rt_t *rt) {
+    return rt ? rt->mip_levels : 0;
+}

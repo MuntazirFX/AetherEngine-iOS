@@ -327,22 +327,33 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     }
 
     /// Host/bridge-driven depth prepass encode plan: records that Metal should write depth first.
-    func encodeDepthPrepassIfNeeded(_ encoder: MTLRenderCommandEncoder) {
+    /// Uses real camera MVP when threaded via engine_depth_prepass_camera_set (not identity stub).
+    func encodeDepthPrepassIfNeeded(_ encoder: MTLRenderCommandEncoder, mvp: simd_float4x4) {
         _ = engine_depth_prepass_bind_before_main()
         var passes: UInt32 = 0, w: UInt32 = 0, h: UInt32 = 0
         var writeDepth: Int32 = 0
-        let needed = engine_depth_prepass_encode_plan(&passes, &w, &h, &writeDepth)
+        var mvpArr = [Float](repeating: 0, count: 16)
+        var hasMvp: Int32 = 0
+        let needed = engine_depth_prepass_encode_plan_ex(&passes, &w, &h, &writeDepth, &mvpArr, &hasMvp)
         guard needed != 0, passes > 0, let pipe = depthPrepassPipeline else { return }
         encoder.setRenderPipelineState(pipe)
         if let ds = depthPrepassDepthState { encoder.setDepthStencilState(ds) }
-        // Bind depth prepass BEFORE main color pass (early-Z plan).
+        // Bind depth prepass BEFORE main color pass (early-Z plan) with real camera MVP.
         if let vb = vertexBuffer, indexCount > 0 {
             encoder.setVertexBuffer(vb, offset: 0, index: 0)
             struct DepthU { var mvp: simd_float4x4; var clip: simd_float4; var enabled: Float; var pad: simd_float3 }
-            var DU = DepthU(mvp: matrix_identity_float4x4, clip: simd_float4(0,0,1,0),
+            var useMvp = mvp
+            if hasMvp != 0 {
+                useMvp = simd_float4x4(columns: (
+                    SIMD4<Float>(mvpArr[0], mvpArr[1], mvpArr[2], mvpArr[3]),
+                    SIMD4<Float>(mvpArr[4], mvpArr[5], mvpArr[6], mvpArr[7]),
+                    SIMD4<Float>(mvpArr[8], mvpArr[9], mvpArr[10], mvpArr[11]),
+                    SIMD4<Float>(mvpArr[12], mvpArr[13], mvpArr[14], mvpArr[15])
+                ))
+            }
+            var DU = DepthU(mvp: useMvp, clip: simd_float4(0,0,1,0),
                             enabled: 1, pad: simd_float3(0,0,0))
             encoder.setVertexBytes(&DU, length: MemoryLayout<DepthU>.stride, index: 1)
-            // Depth-only: draw indexed world mesh into depth attachment before main.
             if let ib = culledIndexBuffer ?? indexBuffer {
                 let ic = culledIndexCount > 0 ? culledIndexCount : indexCount
                 if ic > 0 {
@@ -356,6 +367,63 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         _ = w; _ = h; _ = writeDepth
     }
 
+    /// Clear + draw world with mirrored MVP into waterReflectTexture, then resolve/mips.
+    private func encodeWaterReflectPass(cmd: MTLCommandBuffer, viewMat: simd_float4x4, projMat: simd_float4x4,
+                                        pixelFormat: MTLPixelFormat) {
+        guard let rtex = waterReflectTexture else { return }
+        var mvpArr = [Float](repeating: 0, count: 16)
+        var rw: UInt32 = 0, rh: UInt32 = 0
+        var clr: Int32 = 0, drw: Int32 = 0, res: Int32 = 0
+        let needed = engine_water_reflect_rt_draw_plan(&mvpArr, &rw, &rh, &clr, &drw, &res)
+        guard needed != 0 else { return }
+        _ = engine_water_reflect_rt_clear(0.2, 0.35, 0.5, 1.0)
+        let rpd = MTLRenderPassDescriptor()
+        rpd.colorAttachments[0].texture = rtex
+        rpd.colorAttachments[0].loadAction = clr != 0 ? .clear : .load
+        rpd.colorAttachments[0].storeAction = .store
+        rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.2, green: 0.35, blue: 0.5, alpha: 1)
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { return }
+        defer { enc.endEncoding() }
+        if drw != 0, let pipe = bspPipeline ?? mdlPipeline, let vb = vertexBuffer {
+            enc.setRenderPipelineState(pipe)
+            enc.setVertexBuffer(vb, offset: 0, index: 0)
+            let mirrorMvp = simd_float4x4(columns: (
+                SIMD4<Float>(mvpArr[0], mvpArr[1], mvpArr[2], mvpArr[3]),
+                SIMD4<Float>(mvpArr[4], mvpArr[5], mvpArr[6], mvpArr[7]),
+                SIMD4<Float>(mvpArr[8], mvpArr[9], mvpArr[10], mvpArr[11]),
+                SIMD4<Float>(mvpArr[12], mvpArr[13], mvpArr[14], mvpArr[15])
+            ))
+            // Rebuild as model/view/proj from bridge mirror MVP for world draw into RT.
+            var viewCols = [Float](repeating: 0, count: 16)
+            var projCols = [Float](repeating: 0, count: 16)
+            withUnsafeBytes(of: viewMat) { buf in
+                for i in 0..<16 { viewCols[i] = buf.load(fromByteOffset: i*4, as: Float.self) }
+            }
+            withUnsafeBytes(of: projMat) { buf in
+                for i in 0..<16 { projCols[i] = buf.load(fromByteOffset: i*4, as: Float.self) }
+            }
+            _ = engine_water_reflect_rt_build_mirror_mvp(&viewCols, &projCols, &mvpArr)
+            var U = Uniforms(model: matrix_identity_float4x4, view: mirrorMvp, proj: matrix_identity_float4x4,
+                             lightDir: simd_normalize(simd_float3(0.3, 0.8, 0.5)), pad0: 0,
+                             baseColor: simd_float4(0.7, 0.85, 1.0, 1.0),
+                             useTexture: 0, useLightmap: 0, pad2: 0, pad3: 0)
+            enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+            enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+            if let ib = culledIndexBuffer ?? indexBuffer {
+                let ic = culledIndexCount > 0 ? culledIndexCount : indexCount
+                if ic > 0 {
+                    enc.drawIndexedPrimitives(type: .triangle, indexCount: ic,
+                                              indexType: .uint32, indexBuffer: ib, indexBufferOffset: 0)
+                }
+            }
+            _ = pipe; _ = pixelFormat
+        }
+        if res != 0 {
+            _ = engine_water_reflect_rt_resolve()
+            _ = engine_water_reflect_rt_gen_mips()
+        }
+    }
+
     private func ensureWaterReflectRT(fbW: Int, fbH: Int, pixelFormat: MTLPixelFormat) {
         _ = engine_water_reflect_rt_ensure(UInt32(fbW), UInt32(fbH), 0.5)
         var passes: UInt32 = 0, w: UInt32 = 0, h: UInt32 = 0
@@ -365,7 +433,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         if iw <= 0 || ih <= 0 { iw = max(fbW / 2, 1); ih = max(fbH / 2, 1) }
         if waterReflectSize == (iw, ih), waterReflectTexture != nil { return }
         let desc = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: pixelFormat, width: iw, height: ih, mipmapped: false)
+            pixelFormat: pixelFormat, width: iw, height: ih, mipmapped: true)
         desc.usage = [.renderTarget, .shaderRead]
         desc.storageMode = .private
         waterReflectTexture = device.makeTexture(descriptor: desc)
@@ -780,16 +848,19 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
         engine_renderer_begin_frame_dt(dt)
 
-        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { cmd.commit(); return }
-        depthPrepassBoundThisFrame = false
-        // Depth prepass bound BEFORE main color/world pass.
-        encodeDepthPrepassIfNeeded(enc)
-        if let ds = depthState { enc.setDepthStencilState(ds) }
-
         var eye = [Float](repeating: 0, count: 3)
         var fwd = [Float](repeating: 0, count: 3)
         engine_player_get_eye(&eye)
         engine_player_get_forward(&fwd)
+        // Optional spectator follow overrides eye/forward.
+        if engine_spectator_is_following() != 0 {
+            var se = [Float](repeating: 0, count: 3)
+            var sf = [Float](repeating: 0, count: 3)
+            _ = engine_spectator_tick(dt, eye[0], eye[1], eye[2], fwd[0], fwd[1], fwd[2])
+            _ = engine_spectator_get_eye(&se)
+            _ = engine_spectator_get_forward(&sf)
+            eye = se; fwd = sf
+        }
 
         let eyeV  = simd_float3(eye[0], eye[1], eye[2])
         let fwdV  = simd_normalize(simd_float3(fwd[0], fwd[1], fwd[2]))
@@ -807,8 +878,22 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         viewFlat.withUnsafeMutableBufferPointer { vb in
             projFlat.withUnsafeMutableBufferPointer { pb in
                 engine_renderer_set_camera(vb.baseAddress, pb.baseAddress)
+                // Thread real camera matrices into depth prepass (not identity stub).
+                _ = engine_depth_prepass_camera_set(vb.baseAddress, pb.baseAddress,
+                                                    eye[0], eye[1], eye[2])
             }
         }
+
+        // Mirrored-camera encode into water reflection RT (clear + draw world + resolve).
+        encodeWaterReflectPass(cmd: cmd, viewMat: viewMat, projMat: projMat,
+                               pixelFormat: view.colorPixelFormat)
+
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { cmd.commit(); return }
+        depthPrepassBoundThisFrame = false
+        let mvp = projMat * viewMat
+        encodeDepthPrepassIfNeeded(enc, mvp: mvp)
+        if let ds = depthState { enc.setDepthStencilState(ds) }
+
         // Leaf / PVS cull from eye, then submit DRAW_WORLD (MetalCallbacks tracks it).
         _ = refreshVisIndices(force: false)
         engine_renderer_draw_world()

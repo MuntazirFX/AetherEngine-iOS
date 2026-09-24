@@ -122,4 +122,22 @@ void aether_net_server_broadcast_kill(aether_net_server_t *s,
 #ifdef __cplusplus
 }
 #endif
+
+/* ---------- Live MP authority: kill/score fanout to clients ---------- */
+typedef struct aether_net_server_authority_fanout {
+    u32 snapshots;       /* snapshot broadcasts this tick */
+    u32 scoreboards;     /* scoreboard packet broadcasts */
+    u32 kills;           /* kill feed packets sent */
+    u32 clients_reached; /* active clients that received fanout */
+} aether_net_server_authority_fanout_t;
+
+/* Tick authority + fan out scoreboard after any pending kill/score change.
+ * If killer_id/victim_id non-zero, register_kill first then fanout. */
+u32 aether_net_server_tick_authority_kill_score(aether_net_server_t *s, f32 dt,
+                                                u32 killer_id, u32 victim_id,
+                                                aether_net_server_authority_fanout_t *out);
+
+/* Fan out current scores (scoreboard packet) to all clients. Returns clients reached. */
+u32 aether_net_server_fanout_scores(aether_net_server_t *s);
+
 #endif /* AETHER_NET_SERVER_H */

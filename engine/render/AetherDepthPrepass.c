@@ -107,3 +107,57 @@ void aether_depth_prepass_mark_bound(aether_depth_prepass_frame_t *f) {
 bool aether_depth_prepass_was_bound_before_main(const aether_depth_prepass_frame_t *f) {
     return f && f->bind_before_main && f->bound && f->prepass_index < f->main_pass_index;
 }
+
+static void dp_mat4_mul(const f32 A[16], const f32 B[16], f32 out[16]) {
+    f32 t[16];
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            t[c*4+r] = A[0*4+r]*B[c*4+0] + A[1*4+r]*B[c*4+1]
+                     + A[2*4+r]*B[c*4+2] + A[3*4+r]*B[c*4+3];
+    memcpy(out, t, sizeof t);
+}
+static void dp_mat4_id(f32 m[16]) {
+    memset(m, 0, 16 * sizeof(f32));
+    m[0] = m[5] = m[10] = m[15] = 1.f;
+}
+
+void aether_depth_prepass_camera_init(aether_depth_prepass_camera_t *c) {
+    if (!c) return;
+    memset(c, 0, sizeof(*c));
+    dp_mat4_id(c->view);
+    dp_mat4_id(c->proj);
+    dp_mat4_id(c->mvp);
+}
+
+void aether_depth_prepass_camera_set(aether_depth_prepass_camera_t *c,
+                                     const f32 view[16], const f32 proj[16],
+                                     const f32 eye[3]) {
+    if (!c) return;
+    aether_depth_prepass_camera_init(c);
+    if (view) memcpy(c->view, view, sizeof c->view);
+    if (proj) memcpy(c->proj, proj, sizeof c->proj);
+    if (eye) { c->eye[0]=eye[0]; c->eye[1]=eye[1]; c->eye[2]=eye[2]; }
+    dp_mat4_mul(c->proj, c->view, c->mvp);
+    c->valid = true;
+}
+
+void aether_depth_prepass_camera_fill_mvp(const aether_depth_prepass_camera_t *c,
+                                          f32 out_mvp[16]) {
+    if (!out_mvp) return;
+    if (c && c->valid) memcpy(out_mvp, c->mvp, 16 * sizeof(f32));
+    else dp_mat4_id(out_mvp);
+}
+
+bool aether_depth_prepass_camera_valid(const aether_depth_prepass_camera_t *c) {
+    return c && c->valid;
+}
+
+void aether_depth_prepass_encode_plan_ex(const aether_depth_prepass_t *d,
+                                         const aether_depth_prepass_camera_t *cam,
+                                         aether_depth_prepass_plan_ex_t *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    aether_depth_prepass_encode_plan(d, &out->base);
+    aether_depth_prepass_camera_fill_mvp(cam, out->mvp);
+    out->has_mvp = cam && cam->valid;
+}

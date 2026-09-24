@@ -77,6 +77,7 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/net/AetherNetServer.c
     ${CMAKE_SOURCE_DIR}/../engine/net/AetherNetScoreboard.c
     ${CMAKE_SOURCE_DIR}/../engine/net/AetherNetChat.c
+    ${CMAKE_SOURCE_DIR}/../engine/net/AetherNetSpectator.c
 
     # -------- input --------
     ${CMAKE_SOURCE_DIR}/../engine/input/AetherInput.c
