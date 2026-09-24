@@ -25,6 +25,7 @@
 #include "AetherSky.h"
 #include "AetherWater.h"
 #include "AetherFog.h"
+#include "AetherLightmap.h"
 #include "AetherBSP.h"
 #include "AetherBSPGeometry.h"
 #include "AetherBSPSynthetic.h"
@@ -266,6 +267,35 @@ int main(void) {
         expect(world.surface_count == mesh->index_count / 3u, "world_surface_count");
         aether_world_render_shutdown(&world);
 
+        /* Lightmap stub: procedural atlas + mesh LUV (feeds Metal sample). */
+        aether_lightmap_t lm;
+        expect(aether_lightmap_init(&lm, 64, 64, 1) == AETHER_OK, "lightmap_init");
+        expect(aether_lightmap_is_enabled(&lm), "lightmap_enabled_default");
+        expect(aether_lightmap_bake_mesh_stub(&lm, mesh) == AETHER_OK, "lightmap_bake_mesh_stub");
+        expect(aether_lightmap_is_stub(&lm), "lightmap_is_stub");
+        expect(aether_lightmap_width(&lm) == 256u && aether_lightmap_height(&lm) == 256u,
+               "lightmap_stub_size");
+        expect(lm.rgba != NULL, "lightmap_rgba");
+        expect(mesh->vertices[0].lu >= 0.f && mesh->vertices[0].lu <= 1.f, "lightmap_uv_lu");
+        expect(mesh->vertices[0].lv >= 0.f && mesh->vertices[0].lv <= 1.f, "lightmap_uv_lv");
+        {
+            u8 *rgba = (u8 *)malloc(256u * 256u * 4u);
+            expect(rgba != NULL, "lightmap_copy_alloc");
+            u32 got = aether_lightmap_copy_rgba(&lm, rgba, 256u * 256u * 4u);
+            expect(got == 256u * 256u * 4u, "lightmap_copy_rgba");
+            /* Stub should vary (not a flat fill). */
+            u8 lo = 255, hi = 0;
+            for (u32 i = 0; i < 256u * 256u; ++i) {
+                u8 g = rgba[i * 4u];
+                if (g < lo) lo = g;
+                if (g > hi) hi = g;
+            }
+            expect(hi > lo + 20, "lightmap_stub_contrast");
+            free(rgba);
+        }
+        aether_lightmap_shutdown(&lm);
+        expect(lm.rgba == NULL && !lm.enabled, "lightmap_shutdown");
+
         aether_entity_mgr_destroy(mgr);
         aether_mesh_free(mesh);
         aether_bsp_free(bsp);
@@ -293,6 +323,7 @@ int main(void) {
     expect(aether_renderer_features(rend) != NULL, "renderer_features");
     {
         aether_render_features_t *feat = aether_renderer_features(rend);
+        expect(aether_lightmap_is_enabled(&feat->lightmap), "renderer_lightmap_enabled");
         f32 origin[3] = { 0.f, 0.f, 40.f };
         u32 n = aether_particles_spawn_burst(&feat->particles, origin, 16);
         expect(n == 16, "renderer_particles_burst");

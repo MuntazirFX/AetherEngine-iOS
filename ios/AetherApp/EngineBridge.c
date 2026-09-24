@@ -21,6 +21,7 @@
 #include "../../engine/render/AetherSky.h"
 #include "../../engine/render/AetherWater.h"
 #include "../../engine/render/AetherFog.h"
+#include "../../engine/render/AetherLightmap.h"
 #include "../../engine/bsp/AetherBSP.h"
 #include "../../engine/bsp/AetherBSPGeometry.h"
 #include "../../engine/bsp/AetherBSPSynthetic.h"
@@ -756,8 +757,17 @@ static int bridge_activate_bsp(aether_bsp_t *b, bool synthetic) {
 
     if (g_renderer) {
         aether_render_features_t *feat = aether_renderer_features(g_renderer);
-        if (feat)
+        if (feat) {
             aether_world_render_set_surface_count(&feat->world, m->index_count / 3u);
+            /* Procedural lightmap stub so synthetic (and atlas-less) rooms are not flat. */
+            if (aether_lightmap_bake_mesh_stub(&feat->lightmap, m) == AETHER_OK) {
+                aether_log(AETHER_LOG_INFO, "bridge",
+                           "lightmap stub %ux%u baked for mesh (%s)",
+                           aether_lightmap_width(&feat->lightmap),
+                           aether_lightmap_height(&feat->lightmap),
+                           synthetic ? "synthetic" : "bsp");
+            }
+        }
     }
 
     aether_bsp_free(b);
@@ -825,6 +835,51 @@ void engine_bsp_mesh_release(void) {
     if (g_atlas)      { aether_texture_atlas_free(g_atlas); g_atlas = NULL; }
     if (g_active_mesh){ aether_mesh_free(g_active_mesh); g_active_mesh = NULL; }
     if (g_collision)  { aether_collision_free(g_collision); g_collision = NULL; }
+}
+
+
+/* ---------- Lightmap ---------- */
+static aether_lightmap_t *bridge_lightmap(void) {
+    if (!g_renderer) return NULL;
+    aether_render_features_t *f = aether_renderer_features(g_renderer);
+    return f ? &f->lightmap : NULL;
+}
+
+int engine_lightmap_enabled(void) {
+    aether_lightmap_t *lm = bridge_lightmap();
+    return (lm && aether_lightmap_is_enabled(lm)) ? 1 : 0;
+}
+
+void engine_lightmap_set_enabled(bool enabled) {
+    aether_lightmap_t *lm = bridge_lightmap();
+    if (lm) aether_lightmap_enable(lm, enabled);
+}
+
+int engine_lightmap_width(void) {
+    aether_lightmap_t *lm = bridge_lightmap();
+    return lm ? (int)aether_lightmap_width(lm) : 0;
+}
+
+int engine_lightmap_height(void) {
+    aether_lightmap_t *lm = bridge_lightmap();
+    return lm ? (int)aether_lightmap_height(lm) : 0;
+}
+
+int engine_lightmap_is_stub(void) {
+    aether_lightmap_t *lm = bridge_lightmap();
+    return (lm && aether_lightmap_is_stub(lm)) ? 1 : 0;
+}
+
+int engine_lightmap_copy_rgba(unsigned char *out, int max_bytes) {
+    aether_lightmap_t *lm = bridge_lightmap();
+    if (!lm || !out || max_bytes <= 0) return 0;
+    return (int)aether_lightmap_copy_rgba(lm, out, (u32)max_bytes);
+}
+
+int engine_lightmap_bake_active_mesh(void) {
+    aether_lightmap_t *lm = bridge_lightmap();
+    if (!lm || !g_active_mesh) return 0;
+    return aether_lightmap_bake_mesh_stub(lm, g_active_mesh) == AETHER_OK ? 1 : 0;
 }
 
 /* ---------- Texture / WAD diagnostics ---------- */

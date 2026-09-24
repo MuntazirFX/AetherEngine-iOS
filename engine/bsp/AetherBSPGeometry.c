@@ -112,6 +112,7 @@ aether_result_t aether_mesh_from_bsp(const aether_bsp_t *bsp,
             out->x = v->x; out->y = v->y; out->z = v->z;
             out->nx = nx; out->ny = ny; out->nz = nz;
             out->u = u_atlas; out->v = v_atlas;
+            out->lu = 0.f; out->lv = 0.f; /* filled by aether_lightmap_assign_mesh_uvs */
 
             if (v->x < m->bounds_min[0]) m->bounds_min[0] = v->x;
             if (v->y < m->bounds_min[1]) m->bounds_min[1] = v->y;
