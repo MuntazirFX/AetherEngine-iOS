@@ -63,9 +63,11 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
         {-256.f,  256.f, 128.f},
     };
 
-    /* Render planes 0..6; clip planes 7..21 (Quake n·p - dist, front = +).
-     * Ledge: world box x[80..256] y[±256] z[0..16] (16u step ≤ STEPSIZE 18). */
-    aether_bsp_plane_t planes[22];
+    /* Render planes 0..6; clip planes 7..29 (Quake n*p - dist, front = +).
+     * Ledge: world box x[80..256] y[+/-256] z[0..16] (16u step <= STEPSIZE 18).
+     * Low alcove (-X): physical ceiling z=48 so standing (72u) blocked, crouch (36u) fits.
+     * Standing/crouch hull Z are distinct (room_ceil - hull height), not shared. */
+    aether_bsp_plane_t planes[30];
     memset(planes, 0, sizeof planes);
     planes[0].normal[2] =  1.f; planes[0].dist =    0.f; planes[0].type = 2; /* floor +Z */
     planes[1].normal[2] = -1.f; planes[1].dist = -128.f; planes[1].type = 2; /* ceiling -Z */
@@ -81,17 +83,27 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     planes[10].normal[1] = 1.f; planes[10].dist =  256.f; planes[10].type = 1;
     planes[11].normal[2] = 1.f; planes[11].dist =    0.f; planes[11].type = 2;
     planes[12].normal[2] = 1.f; planes[12].dist =  128.f; planes[12].type = 2;
-    /* Standing/crouch hull: XY inset 16u for feet-origin player half-width. */
+    /* Standing/crouch hull: XY inset 16u; Z ceilings differ by hull height. */
     planes[13].normal[0] = 1.f; planes[13].dist = -240.f; planes[13].type = 0;
     planes[14].normal[0] = 1.f; planes[14].dist =  240.f; planes[14].type = 0;
     planes[15].normal[1] = 1.f; planes[15].dist = -240.f; planes[15].type = 1;
     planes[16].normal[1] = 1.f; planes[16].dist =  240.f; planes[16].type = 1;
-    planes[17].normal[2] = 1.f; planes[17].dist =    0.f; planes[17].type = 2;
-    planes[18].normal[2] = 1.f; planes[18].dist =  128.f; planes[18].type = 2;
+    planes[17].normal[2] = 1.f; planes[17].dist =    0.f; planes[17].type = 2; /* shared floor */
+    planes[18].normal[2] = 1.f; planes[18].dist =   56.f; planes[18].type = 2; /* stand feet max = 128-72 */
     /* Ledge extras: top z=16; standing face x=64 (=80-16); point face x=80. */
     planes[19].normal[2] = 1.f; planes[19].dist =   16.f; planes[19].type = 2;
     planes[20].normal[0] = 1.f; planes[20].dist =   64.f; planes[20].type = 0;
     planes[21].normal[0] = 1.f; planes[21].dist =   80.f; planes[21].type = 0;
+    /* Crouch distinct Z ceiling (128-36=92) -- not standing AABB reused. */
+    planes[22].normal[2] = 1.f; planes[22].dist =   92.f; planes[22].type = 2;
+    /* Low alcove (-X): physical x[-256,-96] y[+/-128] ceil z=48 -> hull-space solids. */
+    planes[23].normal[0] = 1.f; planes[23].dist = -112.f; planes[23].type = 0; /* alcove +X (hull) */
+    planes[24].normal[1] = 1.f; planes[24].dist = -112.f; planes[24].type = 1;
+    planes[25].normal[1] = 1.f; planes[25].dist =  112.f; planes[25].type = 1;
+    planes[26].normal[2] = 1.f; planes[26].dist =   48.f; planes[26].type = 2; /* point solid bottom */
+    planes[27].normal[2] = 1.f; planes[27].dist =    0.f; planes[27].type = 2; /* standing solid bottom */
+    planes[28].normal[2] = 1.f; planes[28].dist =   12.f; planes[28].type = 2; /* crouch solid bottom = 48-36 */
+    planes[29].normal[0] = 1.f; planes[29].dist =  -96.f; planes[29].type = 0; /* point alcove +X */
 
     aether_bsp_edge_t edges[12] = {
         {0, 1}, {1, 2}, {2, 3}, {3, 0}, /* 0..3 floor ring */
@@ -175,17 +187,17 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     leaves[2].first_marksurface = 4;
     leaves[2].num_marksurfaces = 4;
 
-    /* Clipnodes: Quake/GoldSrc layout — children[0]=front(+), children[1]=back(-);
+    /* Clipnodes: Quake/GoldSrc layout -- children[0]=front(+), children[1]=back(-);
      * negative child = contents (EMPTY=-1, SOLID=-2).
-     * 3 room AABB hulls × 6 + 3 solid ledge boxes × 6 = 36 nodes.
-     * Room interior child points at the ledge solid-box subtree. */
+     * 3 room AABB x 6 + 3 ledge solids x 6 + 3 alcove solids x 6 = 54 nodes.
+     * Room -> ledge -> low-ceiling alcove -> EMPTY. */
     #pragma pack(push, 1)
     typedef struct { i32 plane; i16 children[2]; } synth_clipnode_t;
     #pragma pack(pop)
     enum { SYNTH_CN_EMPTY = -1, SYNTH_CN_SOLID = -2 };
-    synth_clipnode_t clipnodes[36];
+    synth_clipnode_t clipnodes[54];
     memset(clipnodes, 0, sizeof clipnodes);
-    /* Room AABB: interior leaf = `interior` (ledge root or EMPTY). */
+    /* Room AABB: interior leaf = `interior` (next obstacle root or EMPTY). */
     #define SYNTH_BOX_HULL(base, pL, pR, pY0, pY1, pZ0, pZ1, interior) do { \
         clipnodes[(base)+0].plane = (pL);  clipnodes[(base)+0].children[0] = (i16)((base)+1); clipnodes[(base)+0].children[1] = SYNTH_CN_SOLID; \
         clipnodes[(base)+1].plane = (pR);  clipnodes[(base)+1].children[0] = SYNTH_CN_SOLID;   clipnodes[(base)+1].children[1] = (i16)((base)+2); \
@@ -194,26 +206,33 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
         clipnodes[(base)+4].plane = (pZ0); clipnodes[(base)+4].children[0] = (i16)((base)+5); clipnodes[(base)+4].children[1] = SYNTH_CN_SOLID; \
         clipnodes[(base)+5].plane = (pZ1); clipnodes[(base)+5].children[0] = SYNTH_CN_SOLID;   clipnodes[(base)+5].children[1] = (i16)(interior); \
     } while (0)
-    /* Solid obstacle AABB: outside → EMPTY, inside all faces → SOLID. */
-    #define SYNTH_SOLID_BOX(base, pL, pR, pY0, pY1, pZ0, pZ1) do { \
-        clipnodes[(base)+0].plane = (pL);  clipnodes[(base)+0].children[0] = (i16)((base)+1); clipnodes[(base)+0].children[1] = SYNTH_CN_EMPTY; \
-        clipnodes[(base)+1].plane = (pR);  clipnodes[(base)+1].children[0] = SYNTH_CN_EMPTY;   clipnodes[(base)+1].children[1] = (i16)((base)+2); \
-        clipnodes[(base)+2].plane = (pY0); clipnodes[(base)+2].children[0] = (i16)((base)+3); clipnodes[(base)+2].children[1] = SYNTH_CN_EMPTY; \
-        clipnodes[(base)+3].plane = (pY1); clipnodes[(base)+3].children[0] = SYNTH_CN_EMPTY;   clipnodes[(base)+3].children[1] = (i16)((base)+4); \
-        clipnodes[(base)+4].plane = (pZ0); clipnodes[(base)+4].children[0] = (i16)((base)+5); clipnodes[(base)+4].children[1] = SYNTH_CN_EMPTY; \
-        clipnodes[(base)+5].plane = (pZ1); clipnodes[(base)+5].children[0] = SYNTH_CN_EMPTY;   clipnodes[(base)+5].children[1] = SYNTH_CN_SOLID; \
+    /* Solid obstacle AABB; `outside` chains to next obstacle or EMPTY. */
+    #define SYNTH_SOLID_BOX_NEXT(base, pL, pR, pY0, pY1, pZ0, pZ1, outside) do { \
+        clipnodes[(base)+0].plane = (pL);  clipnodes[(base)+0].children[0] = (i16)((base)+1); clipnodes[(base)+0].children[1] = (i16)(outside); \
+        clipnodes[(base)+1].plane = (pR);  clipnodes[(base)+1].children[0] = (i16)(outside);   clipnodes[(base)+1].children[1] = (i16)((base)+2); \
+        clipnodes[(base)+2].plane = (pY0); clipnodes[(base)+2].children[0] = (i16)((base)+3); clipnodes[(base)+2].children[1] = (i16)(outside); \
+        clipnodes[(base)+3].plane = (pY1); clipnodes[(base)+3].children[0] = (i16)(outside);   clipnodes[(base)+3].children[1] = (i16)((base)+4); \
+        clipnodes[(base)+4].plane = (pZ0); clipnodes[(base)+4].children[0] = (i16)((base)+5); clipnodes[(base)+4].children[1] = (i16)(outside); \
+        clipnodes[(base)+5].plane = (pZ1); clipnodes[(base)+5].children[0] = (i16)(outside);   clipnodes[(base)+5].children[1] = SYNTH_CN_SOLID; \
     } while (0)
-    /* Room hulls → ledge subtrees at 18 / 24 / 30. */
+    /* Room hulls -> ledge (18/24/30) -> alcove (36/42/48) -> EMPTY.
+     * Standing Z ceiling plane 18 (56); crouch uses distinct plane 22 (92). */
     SYNTH_BOX_HULL(0,  7,  8,  9, 10, 11, 12, 18); /* hull 0 / point */
     SYNTH_BOX_HULL(6, 13, 14, 15, 16, 17, 18, 24); /* hull 1 standing */
-    SYNTH_BOX_HULL(12,13, 14, 15, 16, 17, 18, 30); /* hull 2 crouch (stub) */
-    /* Point ledge: x[80..256] y[±256] z[0..16] */
-    SYNTH_SOLID_BOX(18, 21,  8,  9, 10, 11, 19);
-    /* Standing/crouch ledge: x[64..240] y[±240] z[0..16] (XY inset 16) */
-    SYNTH_SOLID_BOX(24, 20, 14, 15, 16, 17, 19);
-    SYNTH_SOLID_BOX(30, 20, 14, 15, 16, 17, 19);
+    SYNTH_BOX_HULL(12,13, 14, 15, 16, 17, 22, 30); /* hull 2 crouch (shorter Z) */
+    /* Point ledge -> point alcove */
+    SYNTH_SOLID_BOX_NEXT(18, 21,  8,  9, 10, 11, 19, 36);
+    /* Standing/crouch ledge -> matching alcove */
+    SYNTH_SOLID_BOX_NEXT(24, 20, 14, 15, 16, 17, 19, 42);
+    SYNTH_SOLID_BOX_NEXT(30, 20, 14, 15, 16, 17, 19, 48);
+    /* Point alcove slab: physical z[48..128] x[-256,-96] y[+/-128] */
+    SYNTH_SOLID_BOX_NEXT(36,  7, 29,  9, 10, 26, 12, SYNTH_CN_EMPTY);
+    /* Standing alcove: expanded so 72u player cannot fit under z=48 (solid z[0..56]) */
+    SYNTH_SOLID_BOX_NEXT(42, 13, 23, 24, 25, 27, 18, SYNTH_CN_EMPTY);
+    /* Crouch alcove: 36u fits -- solid only above feet z=12 (48-36) */
+    SYNTH_SOLID_BOX_NEXT(48, 13, 23, 24, 25, 28, 22, SYNTH_CN_EMPTY);
     #undef SYNTH_BOX_HULL
-    #undef SYNTH_SOLID_BOX
+    #undef SYNTH_SOLID_BOX_NEXT
 
     aether_bsp_model_t model;
     memset(&model, 0, sizeof model);

@@ -37,6 +37,10 @@ float engine_player_get_pitch(void);
 int   engine_player_on_ground(void);
 float engine_player_get_step_height(void);
 void  engine_player_set_step_height(float height);
+int   engine_player_is_crouching(void);
+void  engine_player_set_crouching(bool crouching);
+int   engine_player_hull_index(void);
+float engine_player_eye_height(void);
 
 /* ---------- Collision (clipnode hull) ---------- */
 int  engine_collision_ready(void);

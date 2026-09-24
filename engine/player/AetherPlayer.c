@@ -70,11 +70,20 @@ void aether_player_update(aether_player_t *p,
     if (p->pitch >  PITCH_LIMIT) p->pitch =  PITCH_LIMIT;
     if (p->pitch < -PITCH_LIMIT) p->pitch = -PITCH_LIMIT;
 
-    /* 2. Crouch --- */
+    /* 2. Crouch / duck --- hull 2 is a shorter Z AABB than standing. */
     bool want_crouch = in->actions[AETHER_ACTION_DUCK];
-    if (want_crouch != p->crouching) {
-        p->crouching = want_crouch;
-        p->hull_index = want_crouch ? 2 : 1;
+    if (want_crouch && !p->crouching) {
+        p->crouching = true;
+        p->hull_index = 2;
+    } else if (!want_crouch && p->crouching) {
+        /* Stand up only if standing hull fits at current feet (ceiling headroom). */
+        bool blocked = false;
+        if (collision)
+            blocked = aether_collision_point_in_solid(collision, p->position, 1);
+        if (!blocked) {
+            p->crouching = false;
+            p->hull_index = 1;
+        }
     }
     f32 target_eye = p->crouching ? CROUCH_EYE_HEIGHT : DEFAULT_EYE_HEIGHT;
     p->eye_height += (target_eye - p->eye_height) * 10.0f * dt;
@@ -156,4 +165,7 @@ void aether_player_update(aether_player_t *p,
     if (fabsf(final.x - target.x) > 1e-3f) p->velocity.x = 0.0f;
     if (fabsf(final.y - target.y) > 1e-3f) p->velocity.y = 0.0f;
     if (on_ground && p->velocity.z < 0.0f) p->velocity.z = 0.0f;
+    /* Ceiling clamp: upward move stopped by hull headroom. */
+    if (p->velocity.z > 0.0f && (final.z + 1e-3f) < target.z)
+        p->velocity.z = 0.0f;
 }

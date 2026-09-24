@@ -14,8 +14,8 @@ extern "C" {
 /* Build an in-memory GoldSrc-style BSP v30 "demo room":
  * axis-aligned box (-256..256, -256..256, 0..128) with floor/ceiling/walls,
  * a tiny node/leaf tree (split at X=0) + marksurfaces for VIS/leaf culling,
- * CLIPNODES hulls (point + standing/crouch) for floor/wall/ledge traces,
- * a 16u step ledge on +X for step-up tests,
+ * CLIPNODES hulls: point + standing (72u Z) + crouch (36u Z, distinct ceiling),
+ * a 16u step ledge on +X and a low-ceiling alcove on -X (z=48) for duck tests,
  * ENTITIES lump containing worldspawn, info_player_start, and a few monsters.
  * No Half-Life map data — geometry and entity text are authored here. */
 aether_bsp_t *aether_bsp_create_synthetic_room(void);

@@ -281,6 +281,23 @@ void engine_player_set_step_height(float height) {
     if (height < 0.f) height = 0.f;
     g_player.step_height = height;
 }
+int engine_player_is_crouching(void) { return g_player.crouching ? 1 : 0; }
+void engine_player_set_crouching(bool crouching) {
+    if (crouching) {
+        g_player.crouching = true;
+        g_player.hull_index = 2;
+        g_player.eye_height = 12.0f; /* CROUCH_EYE_HEIGHT */
+    } else {
+        /* Refuse stand-up if standing hull is solid at feet (low ceiling). */
+        if (g_collision && aether_collision_point_in_solid(g_collision, g_player.position, 1))
+            return;
+        g_player.crouching = false;
+        g_player.hull_index = 1;
+        g_player.eye_height = 28.0f; /* DEFAULT_EYE_HEIGHT */
+    }
+}
+int engine_player_hull_index(void) { return (int)g_player.hull_index; }
+float engine_player_eye_height(void) { return g_player.eye_height; }
 
 /* ---------- Collision ---------- */
 int engine_collision_ready(void) {
