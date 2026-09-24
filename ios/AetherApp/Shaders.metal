@@ -1061,3 +1061,87 @@ fragment float4 aether_mdl_skinref_select_fragment(WaterVertexOut in [[stage_in]
     return float4(rgb, tint.a);
 }
 
+
+/* ============ Live Hi-Z encode from depth + portal reflect clip + skinref remap ============ */
+struct HizLiveEncodeUniforms {
+    uint srcWidth;
+    uint srcHeight;
+    uint dstWidth;
+    uint dstHeight;
+    uint srcSlice;   /* 0 = depth fill; else downsample src */
+    uint dstSlice;
+    uint passIndex;  /* 0 = fill from depth, >=1 = downsample */
+    uint fromDepth;  /* 1 when reading depth texture */
+};
+
+/* Fill Hi-Z mip0 / array slice 0 from a live depth texture (linearized). */
+kernel void aether_hiz_encode_from_depth(depth2d<float, access::read> depthTex [[texture(0)]],
+                                         texture2d_array<float, access::write> hiz [[texture(1)]],
+                                         constant HizLiveEncodeUniforms &U [[buffer(0)]],
+                                         uint2 gid [[thread_position_in_grid]]) {
+    if (gid.x >= U.dstWidth || gid.y >= U.dstHeight) return;
+    float z = 1.0;
+    if (U.fromDepth != 0) {
+        uint2 dcoord = gid;
+        if (dcoord.x >= U.srcWidth) dcoord.x = U.srcWidth - 1;
+        if (dcoord.y >= U.srcHeight) dcoord.y = U.srcHeight - 1;
+        z = depthTex.read(dcoord);
+    }
+    hiz.write(float4(z, z, z, 1.0), uint3(gid, U.dstSlice));
+}
+
+/* Fragment alternate: sample depth, emit linearized Hi-Z for encode plan pass 0. */
+fragment float4 aether_hiz_encode_from_depth_fragment(constant HizLiveEncodeUniforms &U [[buffer(0)]],
+                                                      depth2d<float> depthTex [[texture(0)]],
+                                                      sampler samp [[sampler(0)]],
+                                                      float2 uv [[stage_in]]) {
+    float z = depthTex.sample(samp, uv);
+    return float4(z, z, float(U.passIndex) / 8.0, 1.0);
+}
+
+struct PortalReflectClipUniforms {
+    float4 clipPlanes[4];
+    uint   planeCount;
+    uint   windingVerts;
+    uint   pad0, pad1;
+};
+
+/* Documents portal winding clipped against recursive reflect clip planes. */
+fragment float4 aether_portal_winding_reflect_clip_fragment(constant PortalReflectClipUniforms &U [[buffer(0)]],
+                                                            float2 uv [[stage_in]]) {
+    float2 p = uv * 2.0 - 1.0;
+    float keep = 1.0;
+    for (uint i = 0; i < U.planeCount && i < 4; ++i) {
+        float d = U.clipPlanes[i].x * p.x + U.clipPlanes[i].y * p.y
+                + U.clipPlanes[i].z * 0.5 + U.clipPlanes[i].w;
+        if (d < -0.0001) keep = 0.0;
+    }
+    return float4(keep, float(U.planeCount) / 4.0, float(U.windingVerts) / 8.0, 1.0);
+}
+
+struct SkinrefRemapUniforms {
+    uint  family;
+    uint  refIndex;
+    uint  group;
+    uint  tex;
+    uint  drawSlot;
+    float uvScaleX;
+    float uvScaleY;
+    float uvOffX;
+    float uvOffY;
+    float pad0, pad1, pad2;
+};
+
+/* Studio skinref → texture remap on draw (atlas UV + slot tint). */
+fragment float4 aether_mdl_skinref_remap_fragment(WaterVertexOut in [[stage_in]],
+                                                  constant SkinrefRemapUniforms &U [[buffer(2)]],
+                                                  constant float4 &tint [[buffer(3)]]) {
+    float2 uv = in.uv;
+    float2 mapped = float2(U.uvOffX, U.uvOffY) + uv * float2(U.uvScaleX, U.uvScaleY);
+    float checker = (((int)(mapped.x * 8.0) + (int)(mapped.y * 8.0) + (int)U.group) & 1) ? 1.0 : 0.88;
+    float slot = float(U.drawSlot) * 0.05;
+    float3 rgb = tint.rgb * float3(0.50 + float(U.family) * 0.2,
+                                   0.48 + float(U.refIndex) * 0.12,
+                                   0.42 + float(U.tex) * 0.1 + slot) * checker;
+    return float4(rgb, tint.a);
+}

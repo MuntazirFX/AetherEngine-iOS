@@ -65,6 +65,9 @@ write_dry_run_notes() {
     echo "notes_only_flag=--notes-only"
     echo "sign_check_flag=--sign-check"
     echo "sideload=AltStore|Sideloadly|TrollStore|ideviceinstaller"
+    echo "dispatch_dry_run=gh workflow run 'Build AetherEngine IPA' -f version=v0.0.0-dry -f publish_release=false -f dry_run_validate=true"
+    echo "dispatch_input=dry_run_validate"
+    echo "workflow_file=.github/workflows/build-arm64.yml"
   } > "${NOTES}"
   log "Wrote ${NOTES}"
 }

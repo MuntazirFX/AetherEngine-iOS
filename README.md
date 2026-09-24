@@ -657,14 +657,60 @@ bash build/scripts/package_ipa.sh --help
 ```
 
 ### Known gaps after hiz-gpu-downsample / portal-windings / mdl-skinref / ipa-sign batch
-- Metal downsample is compute/fragment-hook + host chain complete; live GPU encode still needs a real depth texture on device
-- Portal windings from marksurfaces use leaf AABB + face plane rects (not full Quake portal clip winding sets from retail BSPs)
-- Skinref families are clean-room fixture metadata (retail studio skinref tables still partial)
-- IPA still requires macOS + Xcode via workflow_dispatch (dry-run flags only document/plan here)
+- *(addressed in hiz-gpu-encode batch: live Metal encode plan from depth texture + shaders)*
+- *(addressed in hiz-gpu-encode batch: portal winding clip against recursive reflect planes)*
+- *(addressed in hiz-gpu-encode batch: studio skinref → texture remap on draw)*
+- *(addressed in hiz-gpu-encode batch: Actions dry_run_validate dispatch input + docs)*
+- IPA still requires macOS + Xcode via workflow_dispatch for a real unsigned IPA
 
 ### Progress toward playable unsigned IPA demo
-Rough overall estimate after this batch: **~79%** (~78–79) toward a playable unsigned IPA demo
-(capped while IPA remains unbuilt on this Linux/CI host). Prior hiz-array batch was ~78%.
+Rough overall estimate after hiz-gpu-downsample batch: **~79%** (superseded by hiz-gpu-encode batch below).
+
+IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
+
+
+
+
+## Hi-Z GPU live encode / portal clip / skinref remap / IPA dispatch (`continue/batch-hiz-gpu-encode-portal-clip-studio-skinref-remap-ipa-dispatch`)
+
+One PR advances **live Metal encode** of Hi-Z downsample from a depth texture (encode plan +
+shaders), portal winding clip against recursive reflect clip planes, studio skinref → texture
+remap on draw, optional Actions `dry_run_validate` workflow_dispatch input for unsigned IPA
+validation, Metal frame-path wiring, host smokes, and README — still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Live Metal Hi-Z encode from depth | **done** | `aether_mdl_hiz_encode_from_depth` + `aether_depth_hiz_live_encode_*` + Metal `aether_hiz_encode_from_depth` |
+| 2 | Portal winding clip vs recursive reflect planes | **done** | `aether_portal_winding_clip_reflect_planes` / `clip_planes` + `aether_water_reflect_portal_clip_plan` |
+| 3 | Studio skinref → texture remap on draw | **done** | `aether_mdl_skinref_remap_draw` / `remap_uv` / `remap_sample` + Metal remap fragment |
+| 4 | Actions dry-run dispatch docs/inputs | **done** | `dry_run_validate` input; `gh workflow run … -f dry_run_validate=true`; DRY_RUN_NOTES dispatch line |
+| 5 | Wire encode plan into Metal frame path | **done** | MetalRenderer calls live encode + mark + portal clip + skinref remap |
+| 6 | Portal clip smoke | **done** | host `b18_clip_*` |
+| 7 | Skinref remap smoke | **done** | host `b18_remap_*` |
+| 8 | Host smokes + verify green | **done** | `smoke_batch_hiz_gpu_encode_portal_clip_studio_skinref_remap_ipa_dispatch` + verify greps |
+| 9 | Fix regressions | **done** | prior downsample/skinref/portal smokes retained |
+| 10 | README + honest % | **done** | This table; cap **~80%** while IPA unbuilt on this host |
+
+### Unsigned IPA dry-run dispatch (optional)
+
+```bash
+# Local (any host):
+bash build/scripts/package_ipa.sh --dry-run --sign-check
+
+# Actions (macos-14) — validate notes only, skip Xcode IPA:
+gh workflow run "Build AetherEngine IPA" \
+  -f version=v0.0.0-dry -f publish_release=false -f dry_run_validate=true
+```
+
+### Known gaps after hiz-gpu-encode / portal-clip / skinref-remap / ipa-dispatch batch
+- Live encode fills from a host linearized depth buffer / Metal depth2d hook; on-device depth texture bind still needs a real MTK depth attachment at runtime
+- Portal clip against reflect planes is Sutherland–Hodgman cascade (not full Quake portal stack from retail BSPs)
+- Skinref remap atlas is fixture 2×2 family/ref cells (retail studio skinref tables still partial)
+- IPA still requires macOS + Xcode for a real unsigned build (`dry_run_validate` only emits notes)
+
+### Progress toward playable unsigned IPA demo
+Rough overall estimate after this batch: **~80%** (~79–80) toward a playable unsigned IPA demo
+(capped while IPA remains unbuilt on this Linux/CI host). Prior hiz-gpu-downsample batch was ~79%.
 
 IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
 

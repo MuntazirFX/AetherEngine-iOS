@@ -958,3 +958,76 @@ u32 aether_water_reflect_portal_winding_plan(const aether_water_t *water,
     return aether_water_reflect_recursive_plan(water, eye, &wind, max_depth, out);
 }
 
+
+
+/* ===== Portal winding clip against recursive reflect planes (batch18) ===== */
+
+u32 aether_portal_winding_clip_planes(const aether_portal_winding_t *in,
+                                      const f32 planes[][4], u32 plane_count,
+                                      aether_portal_winding_t *out) {
+    if (!out) return 0;
+    aether_portal_winding_init(out);
+    if (!in || !in->valid || in->count < 3) return 0;
+    if (!planes || plane_count == 0) {
+        *out = *in;
+        return out->count;
+    }
+    aether_portal_winding_t cur = *in;
+    aether_portal_winding_t next;
+    for (u32 i = 0; i < plane_count; ++i) {
+        u32 n = aether_portal_winding_clip(&cur, planes[i], &next);
+        if (n < 3) {
+            aether_portal_winding_init(out);
+            return 0;
+        }
+        cur = next;
+    }
+    *out = cur;
+    return out->count;
+}
+
+u32 aether_portal_winding_clip_reflect_planes(const aether_portal_winding_t *in,
+                                              const aether_portal_reflect_plan_t *reflect,
+                                              aether_portal_winding_t *out,
+                                              u32 *out_planes_applied) {
+    if (out_planes_applied) *out_planes_applied = 0;
+    if (!out) return 0;
+    aether_portal_winding_init(out);
+    if (!in || !in->valid || !reflect || reflect->view_count == 0) return 0;
+
+    f32 planes[AETHER_PORTAL_REFLECT_MAX_VIEWS][4];
+    u32 nplanes = 0;
+    for (u32 i = 0; i < reflect->view_count && nplanes < AETHER_PORTAL_REFLECT_MAX_VIEWS; ++i) {
+        if (!reflect->views[i].active) continue;
+        memcpy(planes[nplanes], reflect->views[i].clip_plane, 4 * sizeof(f32));
+        nplanes++;
+    }
+    if (nplanes == 0) {
+        *out = *in;
+        if (out_planes_applied) *out_planes_applied = 0;
+        return out->count;
+    }
+    u32 verts = aether_portal_winding_clip_planes(in, planes, nplanes, out);
+    if (out_planes_applied) *out_planes_applied = nplanes;
+    return verts;
+}
+
+u32 aether_water_reflect_portal_clip_plan(const aether_water_t *water,
+                                          const f32 eye[3],
+                                          const aether_portal_winding_t *portal,
+                                          u32 max_depth,
+                                          aether_portal_reflect_plan_t *out_plan,
+                                          aether_portal_winding_t *out_clipped) {
+    if (out_plan) aether_portal_reflect_plan_init(out_plan);
+    if (out_clipped) aether_portal_winding_init(out_clipped);
+    if (!water || !eye || !portal || !portal->valid || !out_plan) return 0;
+
+    u32 views = aether_water_reflect_recursive_plan(water, eye, portal, max_depth, out_plan);
+    if (views == 0) return 0;
+    if (out_clipped) {
+        u32 applied = 0;
+        (void)aether_portal_winding_clip_reflect_planes(portal, out_plan, out_clipped, &applied);
+        (void)applied;
+    }
+    return views;
+}

@@ -4946,3 +4946,130 @@ int engine_mdl_skinref_sample(float u, float v, float *out_rgba4) {
     return aether_mdl_skinref_sample(&g_skinref, &g_skinref_pages, u, v, out_rgba4);
 }
 
+
+
+/* ===== Batch18: hiz-gpu-encode / portal-clip / skinref-remap / ipa-dispatch ===== */
+static aether_mdl_hiz_live_encode_plan_t g_hiz_live_encode;
+static aether_depth_hiz_live_encode_t g_depth_hiz_live;
+static aether_mdl_skinref_remap_t g_skinref_remap;
+static aether_portal_winding_t g_portal_clip_out;
+static aether_portal_reflect_plan_t g_portal_clip_plan;
+
+int engine_mdl_hiz_encode_from_depth(unsigned w, unsigned h,
+                                     unsigned *out_slices, unsigned *out_passes,
+                                     unsigned *out_samples, int *out_needed) {
+    if (w == 0) w = 64;
+    if (h == 0) h = 64;
+    if (w > 128) w = 128;
+    if (h > 128) h = 128;
+    u32 count = w * h;
+    f32 *depth = (f32 *)malloc((size_t)count * sizeof(f32));
+    if (!depth) return 0;
+    for (u32 i = 0; i < count; ++i) depth[i] = 1.f;
+    /* Near blob in center — simulates live depth texture sample. */
+    u32 x0 = w / 4, x1 = (3 * w) / 4, y0 = h / 4, y1 = (3 * h) / 4;
+    for (u32 y = y0; y < y1; ++y)
+        for (u32 x = x0; x < x1; ++x)
+            depth[y * w + x] = 0.22f;
+    u32 slices = aether_mdl_hiz_encode_from_depth(&g_hiz_pyr, &g_hiz_array, &g_hiz_downsample,
+                                                  depth, count, w, h, &g_hiz_live_encode);
+    free(depth);
+    if (out_slices) *out_slices = g_hiz_live_encode.slices;
+    if (out_passes) *out_passes = g_hiz_live_encode.encode_passes;
+    if (out_samples) *out_samples = g_hiz_live_encode.depth_samples;
+    if (out_needed) *out_needed = g_hiz_live_encode.needed ? 1 : 0;
+    return (slices > 0) ? 1 : 0;
+}
+
+int engine_mdl_hiz_live_encode_mark(void) {
+    aether_mdl_hiz_live_encode_mark(&g_hiz_live_encode);
+    aether_depth_hiz_live_encode_mark(&g_depth_hiz_live);
+    return aether_mdl_hiz_live_encode_was_encoded(&g_hiz_live_encode) ? 1 : 0;
+}
+
+int engine_mdl_hiz_live_encode_was_encoded(void) {
+    return aether_mdl_hiz_live_encode_was_encoded(&g_hiz_live_encode) ? 1 : 0;
+}
+
+int engine_depth_hiz_live_encode_plan(unsigned mip0_w, unsigned mip0_h, unsigned slices,
+                                      unsigned *out_passes, int *out_needed) {
+    aether_depth_prepass_t dp;
+    aether_depth_prepass_init(&dp);
+    aether_depth_prepass_ensure(&dp, mip0_w ? mip0_w : 64, mip0_h ? mip0_h : 64);
+    int ok = aether_depth_hiz_live_encode_plan(&dp, mip0_w ? mip0_w : 64,
+                                               mip0_h ? mip0_h : 64, slices,
+                                               &g_depth_hiz_live);
+    if (out_passes) *out_passes = g_depth_hiz_live.encode_passes;
+    if (out_needed) *out_needed = g_depth_hiz_live.needed ? 1 : 0;
+    return ok;
+}
+
+int engine_portal_winding_clip_reflect_planes(unsigned *out_verts,
+                                              unsigned *out_planes_applied) {
+    aether_portal_winding_t wind;
+    f32 c[3] = {0.f, 0.f, 32.f};
+    f32 n[3] = {0.f, 1.f, 0.f};
+    if (!aether_portal_winding_make_rect(&wind, c, n, 32.f, 48.f)) return 0;
+    aether_water_t w; aether_water_init(&w); aether_water_set_enabled(&w, true);
+    f32 eye[3] = {0.f, 0.f, 64.f};
+    aether_portal_reflect_plan_init(&g_portal_clip_plan);
+    (void)aether_water_reflect_recursive_plan(&w, eye, &wind, 3, &g_portal_clip_plan);
+    u32 applied = 0;
+    u32 verts = aether_portal_winding_clip_reflect_planes(&wind, &g_portal_clip_plan,
+                                                          &g_portal_clip_out, &applied);
+    if (out_verts) *out_verts = verts;
+    if (out_planes_applied) *out_planes_applied = applied;
+    return (verts >= 3) ? 1 : 0;
+}
+
+unsigned engine_water_reflect_portal_clip_plan(float eye_x, float eye_y, float eye_z,
+                                               unsigned max_depth,
+                                               unsigned *out_views,
+                                               unsigned *out_clip_verts) {
+    aether_portal_winding_t wind;
+    f32 c[3] = {0.f, 0.f, 32.f};
+    f32 n[3] = {0.f, 1.f, 0.f};
+    if (!aether_portal_winding_make_rect(&wind, c, n, 32.f, 48.f)) return 0;
+    aether_water_t w; aether_water_init(&w); aether_water_set_enabled(&w, true);
+    f32 eye[3] = {eye_x, eye_y, eye_z};
+    u32 views = aether_water_reflect_portal_clip_plan(&w, eye, &wind, max_depth,
+                                                      &g_portal_clip_plan, &g_portal_clip_out);
+    if (out_views) *out_views = views;
+    if (out_clip_verts) *out_clip_verts = g_portal_clip_out.valid ? g_portal_clip_out.count : 0;
+    return views;
+}
+
+int engine_mdl_skinref_remap_draw(unsigned draw_slot,
+                                  unsigned *out_family, unsigned *out_ref,
+                                  unsigned *out_group, unsigned *out_tex,
+                                  unsigned *out_skin, unsigned *out_slot) {
+    if (!g_skinref_ready) (void)engine_mdl_skinref_init_fixture(NULL, NULL);
+    if (!aether_mdl_skinref_remap_draw(&g_skinref, draw_slot, &g_skinref_remap)) return 0;
+    if (out_family) *out_family = g_skinref_remap.family;
+    if (out_ref) *out_ref = g_skinref_remap.ref;
+    if (out_group) *out_group = g_skinref_remap.group;
+    if (out_tex) *out_tex = g_skinref_remap.tex;
+    if (out_skin) *out_skin = g_skinref_remap.skin_index;
+    if (out_slot) *out_slot = g_skinref_remap.draw_slot;
+    return 1;
+}
+
+int engine_mdl_skinref_remap_uv(float u, float v, float *out_u, float *out_v) {
+    if (!g_skinref_remap.valid)
+        (void)engine_mdl_skinref_remap_draw(3, NULL, NULL, NULL, NULL, NULL, NULL);
+    f32 uv[2];
+    aether_mdl_skinref_remap_uv(&g_skinref_remap, u, v, uv);
+    if (out_u) *out_u = uv[0];
+    if (out_v) *out_v = uv[1];
+    return g_skinref_remap.valid ? 1 : 0;
+}
+
+int engine_mdl_skinref_remap_sample(float u, float v, float *out_rgba4) {
+    if (!g_skinref_remap.valid)
+        (void)engine_mdl_skinref_remap_draw(3, NULL, NULL, NULL, NULL, NULL, NULL);
+    if (!g_skinref_pages_ready) {
+        aether_mdl_skin_pages_build_fixture(&g_skinref_pages, 4);
+        g_skinref_pages_ready = 1;
+    }
+    return aether_mdl_skinref_remap_sample(&g_skinref_remap, &g_skinref_pages, u, v, out_rgba4);
+}

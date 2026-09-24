@@ -578,6 +578,28 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             var srRgba = [Float](repeating: 0, count: 4)
             _ = engine_mdl_skinref_sample(0.3, 0.7, &srRgba)
             _ = engine_mdl_skinref_cycle_family(1)
+            // Live Metal Hi-Z encode from depth texture (encode plan)
+            var leSlices: UInt32 = 0, lePasses: UInt32 = 0, leSamples: UInt32 = 0
+            var leNeeded: Int32 = 0
+            _ = engine_mdl_hiz_encode_from_depth(64, 64, &leSlices, &lePasses, &leSamples, &leNeeded)
+            var depPasses: UInt32 = 0
+            var depNeeded: Int32 = 0
+            _ = engine_depth_hiz_live_encode_plan(64, 64, leSlices, &depPasses, &depNeeded)
+            _ = engine_mdl_hiz_live_encode_mark()
+            let leEncoded = engine_mdl_hiz_live_encode_was_encoded()
+            // Portal winding clip against recursive reflect planes
+            var clipVerts: UInt32 = 0, clipPlanes: UInt32 = 0
+            _ = engine_portal_winding_clip_reflect_planes(&clipVerts, &clipPlanes)
+            var pcViews: UInt32 = 0, pcClipVerts: UInt32 = 0
+            _ = engine_water_reflect_portal_clip_plan(0, 0, 64, 3, &pcViews, &pcClipVerts)
+            // Studio skinref → texture remap on draw
+            var rmFam: UInt32 = 0, rmRef: UInt32 = 0, rmGrp: UInt32 = 0
+            var rmTex: UInt32 = 0, rmSkin: UInt32 = 0, rmSlot: UInt32 = 0
+            _ = engine_mdl_skinref_remap_draw(3, &rmFam, &rmRef, &rmGrp, &rmTex, &rmSkin, &rmSlot)
+            var rmU: Float = 0, rmV: Float = 0
+            _ = engine_mdl_skinref_remap_uv(0.25, 0.75, &rmU, &rmV)
+            var rmRgba = [Float](repeating: 0, count: 4)
+            _ = engine_mdl_skinref_remap_sample(0.25, 0.75, &rmRgba)
             _ = arrSlices; _ = arrW; _ = arrH; _ = dhArrSlices; _ = dhArrBound
             _ = aqVis; _ = aqOcc; _ = aqZ; _ = aqMip
             _ = pgLeaves; _ = pgEdges; _ = pgReached; _ = pgDepth; _ = pgViews; _ = pgFlood
@@ -587,6 +609,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             _ = pwCount; _ = pwFromBsp; _ = pwAttached; _ = pwPlane; _ = pwCenter
             _ = pwVerts; _ = pwMarks; _ = pwViews
             _ = srFam; _ = srEnt; _ = rFam; _ = rRef; _ = rGrp; _ = rTex; _ = rSkin; _ = srRgba
+            _ = leSlices; _ = lePasses; _ = leSamples; _ = leNeeded; _ = depPasses; _ = depNeeded; _ = leEncoded
+            _ = clipVerts; _ = clipPlanes; _ = pcViews; _ = pcClipVerts
+            _ = rmFam; _ = rmRef; _ = rmGrp; _ = rmTex; _ = rmSkin; _ = rmSlot; _ = rmU; _ = rmV; _ = rmRgba
             _ = ec; _ = mc; _ = res2; _ = dw2; _ = clr2; _ = rw2; _ = rh2; _ = studioCount
             _ = hvVis; _ = hvOcc; _ = hvZ; _ = hvMip; _ = plod; _ = pissue; _ = pocc; _ = ppx
             _ = portalMvp

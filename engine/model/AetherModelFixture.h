@@ -659,4 +659,55 @@ int  aether_mdl_skinref_sample(const aether_mdl_skinref_table_t *t,
 /* Write a tiny skinref trailer fixture into a buffer (for load tests). */
 u32  aether_mdl_write_skinref_fixture(u8 *out, u32 cap);
 
+/* ---------- Live Metal Hi-Z encode from depth texture (encode plan) ---------- */
+typedef struct aether_mdl_hiz_live_encode_plan {
+    bool fill_mip0_from_depth; /* copy linearized depth → pyramid mip0 */
+    bool downsample_chain;     /* then run array downsample passes */
+    bool from_depth_texture;   /* Metal depth texture / host depth buffer path */
+    bool needed;
+    bool encoded;              /* host/Metal marked encode complete */
+    u32  mip0_w, mip0_h;
+    u32  encode_passes;        /* 1 fill + (slices-1) downsample */
+    u32  slices;
+    u32  depth_samples;        /* linearized depth texels consumed */
+} aether_mdl_hiz_live_encode_plan_t;
+
+void aether_mdl_hiz_live_encode_plan_init(aether_mdl_hiz_live_encode_plan_t *plan);
+/* Fill mip0 from linearized depth, bind array, run downsample chain, fill plan. */
+u32  aether_mdl_hiz_encode_from_depth(aether_mdl_hiz_pyramid_t *pyr,
+                                      aether_mdl_hiz_array_t *arr,
+                                      aether_mdl_hiz_array_downsample_t *ds,
+                                      const f32 *depth_lin, u32 depth_count,
+                                      u32 w, u32 h,
+                                      aether_mdl_hiz_live_encode_plan_t *plan);
+void aether_mdl_hiz_live_encode_mark(aether_mdl_hiz_live_encode_plan_t *plan);
+bool aether_mdl_hiz_live_encode_was_encoded(const aether_mdl_hiz_live_encode_plan_t *plan);
+
+/* ---------- Studio skinref → texture remap on draw ---------- */
+typedef struct aether_mdl_skinref_remap {
+    u32 family;
+    u32 ref;
+    u8  group;
+    u8  tex;
+    u16 skin_index;
+    u32 draw_slot;          /* Metal fragment texture bind slot */
+    f32 uv_scale[2];
+    f32 uv_offset[2];
+    f32 atlas[4];           /* u0, v0, u1, v1 in page / lump */
+    bool valid;
+} aether_mdl_skinref_remap_t;
+
+void aether_mdl_skinref_remap_init(aether_mdl_skinref_remap_t *r);
+/* Resolve active skinref into a draw remap (atlas UV + bind slot). */
+int  aether_mdl_skinref_remap_draw(const aether_mdl_skinref_table_t *t,
+                                   u32 draw_slot,
+                                   aether_mdl_skinref_remap_t *out);
+/* Map mesh UV through remap atlas → out_uv[2]. */
+void aether_mdl_skinref_remap_uv(const aether_mdl_skinref_remap_t *r,
+                                 f32 u, f32 v, f32 out_uv[2]);
+/* Sample pages through remap (uses remapped UV). */
+int  aether_mdl_skinref_remap_sample(const aether_mdl_skinref_remap_t *r,
+                                     const aether_mdl_skin_page_set_t *pages,
+                                     f32 u, f32 v, f32 out_rgba[4]);
+
 #endif /* AETHER_MODEL_FIXTURE_H */

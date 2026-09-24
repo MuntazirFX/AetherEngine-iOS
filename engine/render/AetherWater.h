@@ -393,4 +393,22 @@ u32  aether_water_reflect_portal_winding_plan(const aether_water_t *water,
                                               u32 max_depth,
                                               aether_portal_reflect_plan_t *out);
 
+/* ---------- Portal winding clip against recursive reflect planes ---------- */
+/* Clip winding against N planes in order (Sutherland–Hodgman cascade). */
+u32  aether_portal_winding_clip_planes(const aether_portal_winding_t *in,
+                                       const f32 planes[][4], u32 plane_count,
+                                       aether_portal_winding_t *out);
+/* Clip portal winding against every clip_plane in a recursive reflect plan. */
+u32  aether_portal_winding_clip_reflect_planes(const aether_portal_winding_t *in,
+                                               const aether_portal_reflect_plan_t *reflect,
+                                               aether_portal_winding_t *out,
+                                               u32 *out_planes_applied);
+/* Build recursive plan then clip original portal against all view clip planes. */
+u32  aether_water_reflect_portal_clip_plan(const aether_water_t *water,
+                                           const f32 eye[3],
+                                           const aether_portal_winding_t *portal,
+                                           u32 max_depth,
+                                           aether_portal_reflect_plan_t *out_plan,
+                                           aether_portal_winding_t *out_clipped);
+
 #endif /* AETHER_WATER_H */

@@ -21,6 +21,11 @@ on:
         required: false
         type: number
         default: 30
+      dry_run_validate:
+        description: 'Unsigned IPA dry-run validate only (skip real build; emit notes)'
+        required: false
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'engine/**'
@@ -60,29 +65,52 @@ jobs:
           xcrun --sdk iphoneos --show-sdk-path
           swift --version
           uname -m
+      - name: Unsigned IPA dry-run validate (optional)
+        if: ${{ github.event.inputs.dry_run_validate == 'true' }}
+        run: |
+          set -euo pipefail
+          echo "### IPA dry-run validate" >> "$GITHUB_STEP_SUMMARY"
+          echo "dry_run_validate=true — skipping real IPA build" >> "$GITHUB_STEP_SUMMARY"
+          bash build/scripts/package_ipa.sh --dry-run --sign-check
+          test -f build/out/DRY_RUN_NOTES.txt
+          echo "Dispatch: gh workflow run build-arm64.yml -f version=v0.0.0-dry -f publish_release=false -f dry_run_validate=true" >> "$GITHUB_STEP_SUMMARY"
+          cat build/out/DRY_RUN_NOTES.txt >> "$GITHUB_STEP_SUMMARY"
+      - name: Skip real IPA when dry_run_validate
+        if: ${{ github.event.inputs.dry_run_validate == 'true' }}
+        run: |
+          echo "dry_run_validate set — exiting build_ipa before Xcode (notes already written)"
+          exit 0
       - name: Install CMake
+        if: ${{ github.event.inputs.dry_run_validate != 'true' }}
         run: |
           if ! command -v cmake >/dev/null 2>&1; then brew install cmake; fi
       - name: Install XcodeGen
+        if: ${{ github.event.inputs.dry_run_validate != 'true' }}
         run: |
           if ! command -v xcodegen >/dev/null 2>&1; then brew install xcodegen; fi
           xcodegen --version
       - name: Make build scripts executable
+        if: ${{ github.event.inputs.dry_run_validate != 'true' }}
         run: |
           chmod +x build/scripts/build_ios.sh build/scripts/package_ipa.sh build/scripts/verify_host.sh build/scripts/cmake_host.sh 2>/dev/null || true
       - name: Host verify before IPA
+        if: ${{ github.event.inputs.dry_run_validate != 'true' }}
         run: bash build/scripts/verify_host.sh
       - name: Build iOS app (unsigned)
+        if: ${{ github.event.inputs.dry_run_validate != 'true' }}
         run: bash build/scripts/build_ios.sh
       - name: Package unsigned IPA
+        if: ${{ github.event.inputs.dry_run_validate != 'true' }}
         run: bash build/scripts/package_ipa.sh
       - name: Verify IPA
+        if: ${{ github.event.inputs.dry_run_validate != 'true' }}
         run: |
           set -euo pipefail
           IPA_PATH="build/out/AetherEngine.ipa"
           test -f "$IPA_PATH" || (echo "IPA missing!" && exit 1)
           ls -lh "$IPA_PATH"
       - name: Compute IPA metadata
+        if: ${{ github.event.inputs.dry_run_validate != 'true' }}
         id: meta
         run: |
           IPA=build/out/AetherEngine.ipa
@@ -97,6 +125,7 @@ jobs:
           echo "date=$DATE" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
       - name: Upload IPA artifact
+        if: ${{ github.event.inputs.dry_run_validate != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: AetherEngine-${{ github.event.inputs.version }}
@@ -107,7 +136,7 @@ jobs:
           compression-level: 9
           if-no-files-found: error
       - name: Build release notes
-        if: ${{ github.event.inputs.publish_release == 'true' }}
+        if: ${{ github.event.inputs.dry_run_validate != 'true' && github.event.inputs.publish_release == 'true' }}
         run: |
           cat > /tmp/notes.md <<EOF
           ## AetherEngine-iOS — ${{ github.event.inputs.version }}
@@ -118,7 +147,7 @@ jobs:
           No copyrighted assets bundled. Provide your own game data.
           EOF
       - name: Create GitHub Release
-        if: ${{ github.event.inputs.publish_release == 'true' }}
+        if: ${{ github.event.inputs.dry_run_validate != 'true' && github.event.inputs.publish_release == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.version }}
@@ -148,3 +177,5 @@ jobs:
           echo "4. gh run download <run-id> -n AetherEngine-<version>" >> $GITHUB_STEP_SUMMARY
           echo "5. Sideload unsigned IPA (no baked signing)" >> $GITHUB_STEP_SUMMARY
           echo "PR/push: verify_host only — IPA is dispatch-only." >> $GITHUB_STEP_SUMMARY
+          echo "- dry_run_validate input: package_ipa.sh --dry-run/--notes-only (skip Xcode)" >> $GITHUB_STEP_SUMMARY
+          echo "- Dispatch dry-run: gh workflow run \"Build AetherEngine IPA\" -f version=v0.0.0-dry -f publish_release=false -f dry_run_validate=true" >> $GITHUB_STEP_SUMMARY
