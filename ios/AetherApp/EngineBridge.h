@@ -450,6 +450,28 @@ int  engine_mdl_fixture_extract_verts(void); /* write fixture, extract; returns 
 const char *engine_base_path(void);
 const char *engine_version(void);
 
+/* ---------- Batch: GPU lightstyles / skin / mp cmds / bloom / decal atlas ---------- */
+int  engine_lightstyles_fill_gpu_weights(float *out_weights64, unsigned *out_count);
+int  engine_mdl_skin_build_stub(unsigned bone_count, float time, float sway_deg);
+int  engine_mdl_skin_fill_ubo(float *out, int max_floats);
+int  engine_mdl_skin_transform_point(unsigned bone, float weight,
+                                     const float in3[3], float out3[3]);
+int  engine_mdl_write_textured_fixture(const char *filepath);
+int  engine_mdl_fixture_texture_rgba(unsigned char *out, int cap, int *out_w, int *out_h);
+int  engine_postfx_set_bloom_chain(float threshold, float intensity, float blur_radius);
+int  engine_postfx_fill_uniforms_ex(float *out8);
+int  engine_postfx_fill_bloom(float *out4); /* threshold,intensity,blur,enabled */
+int  engine_decal_atlas_generate(void);
+int  engine_decal_atlas_copy_rgba(unsigned char *out, int max_bytes);
+int  engine_decal_atlas_sample(float u, float v, float out_rgb[3]);
+int  engine_net_client_send_input(float forward, float side, float yaw_deg,
+                                  float pitch_deg, unsigned buttons, float dt);
+int  engine_net_client_live_tick(float dt, float forward, float side, float yaw_deg,
+                                 unsigned buttons, float out_origin[3]);
+int  engine_net_server_tick_authority(float dt);
+int  engine_net_server_build_snapshot_players(void);
+int  engine_net_lagcomp_cmd_seq(unsigned player_id, float lag_ms);
+
 #ifdef __cplusplus
 }
 #endif

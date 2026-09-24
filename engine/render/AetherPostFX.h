@@ -18,6 +18,11 @@ typedef struct aether_postfx {
     u32  target_width;
     u32  target_height;
     bool offscreen_ready;
+    /* Bloom chain (bright pass + blur + combine). */
+    f32  bloom_threshold;
+    f32  bloom_intensity;
+    f32  bloom_blur_radius;
+    bool bloom_enabled;
 } aether_postfx_t;
 
 /* Fullscreen quad for Metal post pass (pos.xy + uv). */
@@ -33,6 +38,14 @@ typedef struct aether_postfx_uniforms {
     f32 exposure;
     f32 enabled; /* 1 when offscreen path should sample scene */
 } aether_postfx_uniforms_t;
+
+/* Bloom chain uniforms (bright-pass threshold + blur + combine). */
+typedef struct aether_postfx_bloom {
+    f32 threshold;   /* luminance cutoff for bright pass */
+    f32 intensity;   /* bloom combine strength */
+    f32 blur_radius; /* texel radius hint for blur pass */
+    f32 enabled;     /* 1 when bloom path active */
+} aether_postfx_bloom_t;
 
 aether_result_t aether_postfx_init(aether_postfx_t *p);
 void aether_postfx_shutdown(aether_postfx_t *p);
@@ -55,6 +68,11 @@ u32  aether_postfx_target_height(const aether_postfx_t *p);
 
 /* Fill GPU/host uniform block; enabled=1 only when offscreen_ready && p->enabled. */
 void aether_postfx_fill_uniforms(const aether_postfx_t *p, aether_postfx_uniforms_t *out);
+
+void aether_postfx_set_bloom_chain(aether_postfx_t *p, f32 threshold, f32 intensity, f32 blur_radius);
+void aether_postfx_fill_bloom(const aether_postfx_t *p, aether_postfx_bloom_t *out);
+/* Extended: [brightness,gamma,exposure,enabled, threshold,intensity,blur,bloom_on] */
+void aether_postfx_fill_uniforms_ex(const aether_postfx_t *p, f32 out8[8]);
 
 #ifdef __cplusplus
 }

@@ -2,6 +2,9 @@
  * AetherEngine-iOS · Clean-room.
  */
 #include "AetherNetServer.h"
+#include "AetherNetCmd.h"
+#include "AetherNetSnapshot.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -25,6 +28,10 @@ aether_net_server_t *aether_net_server_create(u16 port, i32 max_clients) {
     aether_str_copy(s->map_name, AETHER_NET_MAX_MAP_NAME, "unknown");
     s->frag_limit = 30;
     s->time_limit_minutes = 30;
+    s->sim_tick = 0;
+    s->snap_accum = 0.f;
+    s->snap_interval = 1.f / (f32)AETHER_NET_SNAPSHOT_RATE;
+    s->has_snap = false;
 
     aether_log(AETHER_LOG_INFO, "net-server",
                "server listening on port %u (max=%d)", port, s->max_clients);
@@ -67,6 +74,8 @@ static aether_net_client_slot_t *allocate_slot(aether_net_server_t *s,
             s->clients[i].last_recv_time = (f32)aether_net_time();
             s->clients[i].connect_time = s->clients[i].last_recv_time;
             s->clients[i].health = 100;
+            s->clients[i].position = (aether_vec3_t){0, 0, 40};
+            aether_net_cmd_history_init(&s->clients[i].cmd_hist);
             s->client_count++;
             return &s->clients[i];
         }
@@ -114,6 +123,9 @@ static void send_challenge(aether_net_server_t *s,
     aether_netbuf_write_u32(&b, challenge);
     aether_socket_send(s->sock, to, b.data, aether_netbuf_size(&b));
 }
+
+/* fwd */ aether_result_t aether_net_server_apply_cmd(aether_net_server_t *s, u32 player_id,
+                                            const aether_net_cmd_t *cmd);
 
 static void handle_packet(aether_net_server_t *s,
                           const aether_net_addr_t *from,
@@ -173,15 +185,12 @@ static void handle_packet(aether_net_server_t *s,
         case AETHER_MSG_CLIENT_CMD:
             if (slot) {
                 slot->last_recv_time = (f32)aether_net_time();
-                u32 seq = aether_netbuf_read_u32(&b);
-                slot->last_seq = seq;
-                slot->position = aether_netbuf_read_vec3(&b);
-                (void)slot->position;  /* not used yet */
-                slot->angles.x = aether_netbuf_read_f32(&b);
-                slot->angles.y = aether_netbuf_read_f32(&b);
-                slot->angles.z = aether_netbuf_read_f32(&b);
-                /* buttons */
-                (void)aether_netbuf_read_u32(&b);
+                aether_net_cmd_t cmd;
+                /* Payload starts after 7-byte header already consumed into b;
+                 * rebuild from original data+7 for robust decode. */
+                if (aether_net_cmd_decode_payload(data + 7, size >= 7 ? size - 7 : 0, &cmd) == AETHER_OK) {
+                    aether_net_server_apply_cmd(s, slot->player_id, &cmd);
+                }
             }
             break;
 
@@ -326,4 +335,76 @@ void aether_net_server_dump(const aether_net_server_t *s) {
                    s->clients[i].player_id, s->clients[i].name,
                    s->clients[i].score, s->clients[i].deaths, s->clients[i].ping_ms);
     }
+}
+
+aether_result_t aether_net_server_apply_cmd(aether_net_server_t *s, u32 player_id,
+                                            const aether_net_cmd_t *cmd) {
+    if (!s || !cmd) return AETHER_ERR_INVALID_ARG;
+    aether_net_client_slot_t *slot = NULL;
+    for (u32 i = 0; i < AETHER_NET_MAX_PLAYERS; ++i) {
+        if (s->clients[i].active && s->clients[i].player_id == player_id) {
+            slot = &s->clients[i]; break;
+        }
+    }
+    if (!slot) return AETHER_ERR_NOT_FOUND;
+    if (cmd->seq && cmd->seq <= slot->last_seq) return AETHER_OK; /* stale */
+    slot->last_seq = cmd->seq;
+    slot->buttons = cmd->buttons;
+    slot->angles.y = cmd->yaw_deg;
+    slot->angles.x = cmd->pitch_deg;
+    aether_net_cmd_apply_move(&slot->position, &slot->angles.y, cmd, 320.f);
+    aether_net_cmd_history_push(&slot->cmd_hist, cmd, s->time);
+    return AETHER_OK;
+}
+
+u32 aether_net_server_build_snapshot(aether_net_server_t *s, aether_net_snapshot_t *out) {
+    if (!s) return 0;
+    aether_net_snapshot_t local;
+    aether_net_snapshot_t *dst = out ? out : &local;
+    memset(dst, 0, sizeof(*dst));
+    dst->tick = s->sim_tick;
+    dst->time = s->time;
+    u32 n = 0;
+    for (u32 i = 0; i < AETHER_NET_MAX_PLAYERS && n < AETHER_NET_MAX_PLAYERS; ++i) {
+        if (!s->clients[i].active) continue;
+        aether_net_snapshot_player_t *p = &dst->players[n++];
+        p->player_id = s->clients[i].player_id;
+        aether_str_copy(p->name, sizeof p->name, s->clients[i].name);
+        p->score = s->clients[i].score;
+        p->deaths = s->clients[i].deaths;
+        p->ping_ms = s->clients[i].ping_ms;
+        p->origin[0] = s->clients[i].position.x;
+        p->origin[1] = s->clients[i].position.y;
+        p->origin[2] = s->clients[i].position.z;
+    }
+    dst->player_count = n;
+    s->last_snap = *dst;
+    s->has_snap = true;
+    return n;
+}
+
+u32 aether_net_server_tick_authority(aether_net_server_t *s, f32 dt) {
+    if (!s) return 0;
+    aether_net_server_tick(s, dt);
+    s->sim_tick++;
+    s->snap_accum += dt > 0.f ? dt : 0.f;
+    f32 interval = s->snap_interval > 1e-4f ? s->snap_interval : 0.05f;
+    if (s->snap_accum < interval) return 0;
+    s->snap_accum = 0.f;
+    aether_net_snapshot_t snap;
+    aether_net_server_build_snapshot(s, &snap);
+    u8 pkt[1400];
+    u32 psz = aether_net_snapshot_encode(&snap, pkt, sizeof pkt);
+    if (psz > 0) aether_net_server_broadcast_snapshot(s, pkt, psz);
+    return 1;
+}
+
+const aether_net_cmd_t *aether_net_server_lagcomp_cmd(const aether_net_server_t *s,
+                                                     u32 player_id, f32 lag_ms) {
+    if (!s) return NULL;
+    for (u32 i = 0; i < AETHER_NET_MAX_PLAYERS; ++i) {
+        if (!s->clients[i].active || s->clients[i].player_id != player_id) continue;
+        return aether_net_cmd_history_at_lag(&s->clients[i].cmd_hist, s->time, lag_ms);
+    }
+    return NULL;
 }

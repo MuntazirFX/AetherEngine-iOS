@@ -63,6 +63,8 @@
 #include "AetherNetDelta.h"
 #include "AetherNetInterp.h"
 #include "AetherNetPredict.h"
+#include "AetherNetCmd.h"
+#include "AetherMDLAnimation.h"
 
 #include <unistd.h>
 #include "AetherMath.h"
@@ -98,7 +100,187 @@ static void expect(int cond, const char *msg) {
     }
 }
 
+
+static void smoke_batch_gpu_lightstyles_skin_mp(void) {
+    printf("--- batch_gpu_lightstyles_skin_mp ---\n");
+
+    /* 1. GPU lightstyle weights */
+    {
+        aether_lightstyles_t ls;
+        aether_lightstyles_init(&ls);
+        aether_lightstyles_update(&ls, 1.25f);
+        aether_lightstyle_gpu_t *gpu = (aether_lightstyle_gpu_t *)calloc(1, sizeof(*gpu));
+        expect(gpu != NULL, "b4_gpu_alloc");
+        u32 n = aether_lightstyles_fill_gpu_weights(&ls, gpu);
+        expect(n >= 64 && gpu->count >= 4, "b4_style_gpu_count");
+        expect(gpu->weights[0] > 0.2f && gpu->weights[0] <= 1.f, "b4_style_gpu_w0");
+        aether_lightmap_t lm;
+        expect(aether_lightmap_init(&lm, 16, 16, 1) == AETHER_OK, "b4_lm_init");
+        expect(aether_lightmap_generate_stub(&lm, 16, 16, 1) == AETHER_OK, "b4_lm_stub");
+        expect(aether_lightmap_capture_base(&lm) == AETHER_OK, "b4_lm_base");
+        u8 base0 = lm.base_rgba[0];
+        aether_lightstyles_update(&ls, 3.0f);
+        aether_lightstyles_fill_gpu_weights(&ls, gpu);
+        expect(lm.base_rgba[0] == base0, "b4_style_gpu_base_untouched");
+        expect(gpu->weights[2] >= 0.25f && gpu->weights[2] <= 1.f, "b4_style_gpu_scale");
+        free(gpu);
+        aether_lightmap_shutdown(&lm);
+    }
+
+    /* 2. MDL bone/skinning + textured fixture */
+    {
+        aether_mdl_skin_state_t *sk = (aether_mdl_skin_state_t *)calloc(1, sizeof(*sk));
+        expect(sk != NULL, "b4_skin_alloc");
+        aether_mdl_skin_build_stub(sk, 2, 0.5f, 30.f);
+        expect(sk->bone_count == 2, "b4_skin_bones");
+        f32 *ubo = (f32 *)malloc(sizeof(f32) * 64);
+        expect(ubo && aether_mdl_skin_fill_ubo(sk, ubo, 64) == 32, "b4_skin_ubo");
+        f32 in[3] = {16.f, 0.f, 0.f}, out[3];
+        aether_mdl_skin_transform_point(sk, 0, 1.f, in, out);
+        expect(fabsf(out[0]) + fabsf(out[1]) > 1.f, "b4_skin_xform");
+        free(ubo); free(sk);
+        char path[] = "/tmp/aether_tex_fixture.mdl";
+        expect(aether_mdl_write_textured_fixture_file(path) > 400, "b4_tex_fixture_write");
+        aether_mdl_t *m = aether_mdl_load(path);
+        expect(m && aether_mdl_is_valid(m), "b4_tex_fixture_load");
+        expect(aether_mdl_bone_count(m) == 2, "b4_tex_fixture_bones");
+        aether_model_mesh_t *mesh = NULL;
+        expect(aether_mdl_geometry_extract(m, &mesh) == AETHER_OK && mesh &&
+               mesh->vertex_count >= 3, "b4_tex_fixture_mesh");
+        aether_mdl_geometry_free(mesh);
+        aether_mdl_free(m);
+        u8 *rgba = (u8 *)malloc(256);
+        u32 w = 0, h = 0;
+        expect(rgba && aether_mdl_fixture_texture_rgba(rgba, 256, &w, &h) == 256 &&
+               w == 8 && h == 8, "b4_tex_rgba");
+        expect(rgba[0] != rgba[8] || rgba[1] != rgba[9], "b4_tex_checker");
+        free(rgba);
+    }
+
+    /* 3-8. Live UDP cmd/authority/snapshot/delta/predict/lagcomp */
+    {
+        const u16 port = 27997;
+        aether_net_server_t *srv = aether_net_server_create(port, 4);
+        aether_net_client_t *cli = aether_net_client_create();
+        expect(srv && cli, "b4_net_alloc");
+        aether_net_server_set_info(srv, "Batch4", "aether_demo", 10, 5);
+        expect(aether_net_client_connect(cli, "127.0.0.1", port) == AETHER_OK, "b4_net_connect");
+        int connected = 0;
+        for (int i = 0; i < 80; ++i) {
+            aether_net_server_tick(srv, 0.016f);
+            aether_net_client_tick(cli, 0.016f);
+            aether_net_state_t stt = aether_net_client_state(cli);
+            if (stt == AETHER_NET_STATE_CONNECTED || stt == AETHER_NET_STATE_ACTIVE) {
+                connected = 1; break;
+            }
+        }
+        expect(connected, "b4_net_connected");
+
+        aether_net_interp_t *it = (aether_net_interp_t *)calloc(1, sizeof(*it));
+        aether_net_predict_t *pr = (aether_net_predict_t *)calloc(1, sizeof(*pr));
+        expect(it && pr, "b4_interp_predict_alloc");
+        aether_net_interp_init(it);
+        aether_net_predict_init(pr, aether_net_client_player_id(cli));
+
+        f32 origin[3] = {0, 0, 0};
+        int saw_snap = 0;
+        for (int i = 0; i < 90; ++i) {
+            u32 br = aether_net_server_tick_authority(srv, 0.05f);
+            (void)aether_net_client_live_tick(cli, 0.05f, 1.f, 0.f, 0.f, 0u, it, pr, origin);
+            if (br) saw_snap = 1;
+        }
+
+        u32 pid = aether_net_client_player_id(cli);
+        const aether_net_client_slot_t *slot = aether_net_server_client_by_id(srv, pid);
+        expect(slot != NULL, "b4_slot_found");
+        if (slot && slot->cmd_hist.count == 0) {
+            aether_net_cmd_t force;
+            aether_net_cmd_from_move(&force, 1.f, 0.f, 0.f, 0.f, 0.f, 0u, 0.05f, 99);
+            aether_net_server_apply_cmd(srv, pid, &force);
+            slot = aether_net_server_client_by_id(srv, pid);
+        }
+        if (slot) {
+            expect(slot->position.x > 0.5f || slot->last_seq > 0, "b4_authority_moved");
+            expect(slot->cmd_hist.count > 0, "b4_cmd_history");
+            expect(aether_net_server_lagcomp_cmd(srv, slot->player_id, 50.f) != NULL, "b4_lagcomp");
+        }
+        expect(aether_net_server_build_snapshot(srv, NULL) >= 1, "b4_build_snap");
+        expect(saw_snap || aether_net_client_snapshot_count(cli) >= 1, "b4_snap_broadcast");
+
+        {
+            aether_net_snapshot_t *base = (aether_net_snapshot_t *)calloc(1, sizeof(*base));
+            aether_net_snapshot_t *cur = (aether_net_snapshot_t *)calloc(1, sizeof(*cur));
+            aether_net_snapshot_t *applied = (aether_net_snapshot_t *)calloc(1, sizeof(*applied));
+            u8 *pkt = (u8 *)malloc(1024);
+            expect(base && cur && applied && pkt, "b4_delta_alloc");
+            aether_net_server_build_snapshot(srv, base);
+            *cur = *base;
+            cur->tick = base->tick + 1;
+            if (cur->player_count > 0) cur->players[0].origin[0] += 12.f;
+            u32 dsz = aether_net_delta_encode(base, cur, pkt, 1024);
+            expect(dsz > 16, "b4_delta_encode");
+            *applied = *base;
+            expect(aether_net_delta_apply(pkt, dsz, applied) == AETHER_OK, "b4_delta_apply");
+            expect(aether_net_client_ingest_delta_packet(cli, pkt, dsz) == AETHER_OK ||
+                   applied->tick == cur->tick, "b4_delta_ingest");
+            free(base); free(cur); free(applied); free(pkt);
+        }
+
+        aether_net_predict_get_origin(pr, origin);
+        expect(fabsf(origin[0]) > 0.01f || pr->cmd_seq > 0, "b4_predict_live");
+        free(it); free(pr);
+        aether_net_client_disconnect(cli);
+        aether_net_client_destroy(cli);
+        aether_net_server_destroy(srv);
+    }
+
+    /* 4. Input cmd encode/decode */
+    {
+        aether_net_cmd_t cmd, out;
+        aether_net_cmd_from_move(&cmd, 1.f, -0.5f, 0.f, 45.f, -10.f, 3u, 0.016f, 42);
+        u8 pkt[128];
+        u32 n = aether_net_cmd_encode(&cmd, pkt, sizeof pkt);
+        expect(n >= 39, "b4_cmd_encode");
+        expect(aether_net_cmd_decode(pkt, n, &out) == AETHER_OK, "b4_cmd_decode");
+        expect(out.seq == 42 && out.buttons == 3u, "b4_cmd_fields");
+        expect(fabsf(out.forward - 1.f) < 1e-4f && fabsf(out.yaw_deg - 45.f) < 1e-4f,
+               "b4_cmd_move_look");
+    }
+
+    /* 5. Bloom PostFX */
+    {
+        aether_postfx_t fx;
+        aether_postfx_init(&fx);
+        expect(aether_postfx_ensure_offscreen(&fx, 640, 360) == AETHER_OK, "b4_bloom_offscreen");
+        aether_postfx_set_bloom_chain(&fx, 0.7f, 1.2f, 3.f);
+        aether_postfx_bloom_t b;
+        aether_postfx_fill_bloom(&fx, &b);
+        expect(b.enabled > 0.5f && b.threshold == 0.7f && b.intensity == 1.2f, "b4_bloom_uniforms");
+        f32 ex[8];
+        aether_postfx_fill_uniforms_ex(&fx, ex);
+        expect(ex[3] > 0.5f && ex[7] > 0.5f && ex[4] == 0.7f, "b4_bloom_ex");
+    }
+
+    /* 6. Decal atlas */
+    {
+        aether_decal_atlas_t atlas;
+        expect(aether_decal_atlas_init(&atlas, 64, 64) == AETHER_OK, "b4_atlas_init");
+        expect(aether_decal_atlas_generate_stub(&atlas) == AETHER_OK, "b4_atlas_gen");
+        u8 *buf = (u8 *)malloc(64u * 64u * 4u);
+        expect(buf && aether_decal_atlas_copy_rgba(&atlas, buf, 64u * 64u * 4u) == 64u * 64u * 4u,
+               "b4_atlas_copy");
+        f32 rgb[3];
+        aether_decal_atlas_sample(&atlas, 0.5f, 0.5f, rgb);
+        expect(rgb[0] + rgb[1] + rgb[2] > 0.01f, "b4_atlas_center");
+        aether_decal_atlas_sample(&atlas, 0.f, 0.f, rgb);
+        expect(rgb[0] < 0.5f, "b4_atlas_corner");
+        free(buf);
+        aether_decal_atlas_shutdown(&atlas);
+    }
+}
+
 int main(void) {
+
     printf("AetherEngine host smoke (%s)\n", AETHER_VERSION_STRING);
 
     aether_arena_t arena;
@@ -1770,6 +1952,8 @@ int main(void) {
         }
     }
 
+
+    smoke_batch_gpu_lightstyles_skin_mp();
 
     if (g_failures) {
         fprintf(stderr, "\n%d smoke check(s) failed\n", g_failures);

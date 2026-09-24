@@ -6,6 +6,8 @@
 
 #include "AetherNet.h"
 #include "AetherNetBuffer.h"
+#include "AetherNetSnapshot.h"
+#include "AetherNetCmd.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,6 +31,8 @@ typedef struct aether_net_client_slot {
     i32                 score;
     i32                 deaths;
     i32                 ping_ms;
+    aether_net_cmd_history_t cmd_hist;
+    u32                 buttons;
 } aether_net_client_slot_t;
 
 typedef struct aether_net_server {
@@ -47,6 +51,12 @@ typedef struct aether_net_server {
     /* Game rules */
     i32                      frag_limit;
     i32                      time_limit_minutes;
+    /* Authority / snapshot broadcast */
+    u32                      sim_tick;
+    f32                      snap_accum;
+    f32                      snap_interval; /* default 1/20 */
+    aether_net_snapshot_t    last_snap;
+    bool                     has_snap;
 } aether_net_server_t;
 
 aether_net_server_t *aether_net_server_create(u16 port, i32 max_clients);
@@ -79,6 +89,22 @@ const aether_net_client_slot_t *aether_net_server_client_at(const aether_net_ser
 const aether_net_client_slot_t *aether_net_server_client_by_id(const aether_net_server_t *s, u32 id);
 
 void aether_net_server_dump(const aether_net_server_t *s);
+
+/* Apply authoritative client cmd to slot (move/look/buttons + history). */
+aether_result_t aether_net_server_apply_cmd(aether_net_server_t *s, u32 player_id,
+                                            const aether_net_cmd_t *cmd);
+
+/* Build snapshot from current client slots into out (or s->last_snap). */
+u32 aether_net_server_build_snapshot(aether_net_server_t *s, aether_net_snapshot_t *out);
+
+/* Tick authority: receive → apply cmds → optional snapshot broadcast when due.
+ * Returns snapshots broadcast this call (0 or 1 typically). */
+u32 aether_net_server_tick_authority(aether_net_server_t *s, f32 dt);
+
+/* Lag-comp stub: fetch historical cmd for player at lag_ms. */
+const aether_net_cmd_t *aether_net_server_lagcomp_cmd(const aether_net_server_t *s,
+                                                     u32 player_id, f32 lag_ms);
+
 
 #ifdef __cplusplus
 }

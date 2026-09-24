@@ -98,11 +98,14 @@ ar rcs "${LIB_DIR}/libaether_engine.a" ${OBJ_DIR}/*.o
 ok "libaether_engine.a"
 
 info "5/6 Link and run host smoke test"
-"${CC}" "${CFLAGS[@]}" \
+"${CC}" "${CFLAGS[@]}" -O1 \
   tests/host_smoke.c \
   "${LIB_DIR}/libaether_engine.a" \
   -lm \
   -o "${BIN_DIR}/host_smoke"
+# host_smoke main() is large at -O0; raise stack for nested locals.
+ulimit -S -s unlimited 2>/dev/null || ulimit -s 1048576 2>/dev/null || ulimit -s 65536 || true
+echo "host_smoke stack limit: $(ulimit -s)"
 "${BIN_DIR}/host_smoke"
 ok "host smoke passed"
 
@@ -165,3 +168,17 @@ ok "batch postfx/lightmap/mdl/predict API symbols present"
 
 
 info "All host verification checks passed."
+
+
+grep -q "aether_lightstyles_fill_gpu_weights" engine/render/AetherLightmap.h || fail "missing lightstyles_fill_gpu_weights"
+grep -q "aether_mdl_skin_build_stub" engine/render/AetherMDLAnimation.h || fail "missing mdl_skin_build_stub"
+grep -q "aether_mdl_write_textured_fixture" engine/model/AetherModelFixture.h || fail "missing textured_fixture"
+grep -q "aether_net_client_live_tick" engine/net/AetherNetClient.h || fail "missing client_live_tick"
+grep -q "aether_net_cmd_encode" engine/net/AetherNetCmd.h || fail "missing net_cmd_encode"
+grep -q "aether_postfx_fill_bloom" engine/render/AetherPostFX.h || fail "missing postfx_fill_bloom"
+grep -q "aether_decal_atlas_generate_stub" engine/render/AetherDecal.h || fail "missing decal_atlas"
+grep -q "aether_net_server_tick_authority" engine/net/AetherNetServer.h || fail "missing server_tick_authority"
+grep -q "aether_net_cmd_history_at_lag" engine/net/AetherNetCmd.h || fail "missing cmd_history_lag"
+grep -q "engine_lightstyles_fill_gpu_weights" ios/AetherApp/EngineBridge.h || fail "missing bridge style weights"
+grep -q "engine_net_client_live_tick" ios/AetherApp/EngineBridge.h || fail "missing bridge live_tick"
+ok "batch gpu-lightstyles/skin/mp API symbols present"

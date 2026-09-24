@@ -7,6 +7,8 @@ aether_result_t aether_postfx_init(aether_postfx_t *p) {
     memset(p, 0, sizeof(*p));
     p->exposure = 1.0f; p->contrast = 1.0f; p->saturation = 1.0f;
     p->brightness = 0.0f; p->gamma = 1.0f; p->enabled = true;
+    p->bloom_threshold = 0.8f; p->bloom_intensity = 0.0f; p->bloom_blur_radius = 2.0f;
+    p->bloom_enabled = false;
     return AETHER_OK;
 }
 void aether_postfx_shutdown(aether_postfx_t *p) { if (p) memset(p, 0, sizeof(*p)); }
@@ -81,4 +83,40 @@ void aether_postfx_fill_uniforms(const aether_postfx_t *p, aether_postfx_uniform
     out->gamma = p->gamma > 1e-4f ? p->gamma : 1.f;
     out->exposure = p->exposure > 1e-4f ? p->exposure : 1.f;
     out->enabled = (p->enabled && aether_postfx_has_offscreen(p)) ? 1.f : 0.f;
+}
+
+void aether_postfx_set_bloom_chain(aether_postfx_t *p, f32 threshold, f32 intensity, f32 blur_radius) {
+    if (!p) return;
+    if (threshold < 0.f) threshold = 0.f;
+    if (threshold > 1.f) threshold = 1.f;
+    if (intensity < 0.f) intensity = 0.f;
+    if (intensity > 4.f) intensity = 4.f;
+    if (blur_radius < 0.f) blur_radius = 0.f;
+    if (blur_radius > 16.f) blur_radius = 16.f;
+    p->bloom_threshold = threshold;
+    p->bloom_intensity = intensity;
+    p->bloom_blur_radius = blur_radius;
+    p->bloom_enabled = (intensity > 1e-4f);
+    p->bloom = intensity > 1.f ? 1.f : intensity;
+}
+
+void aether_postfx_fill_bloom(const aether_postfx_t *p, aether_postfx_bloom_t *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    if (!p) { out->threshold = 0.8f; return; }
+    out->threshold = p->bloom_threshold > 0.f ? p->bloom_threshold : 0.8f;
+    out->intensity = p->bloom_intensity;
+    out->blur_radius = p->bloom_blur_radius > 0.f ? p->bloom_blur_radius : 2.f;
+    out->enabled = (p->bloom_enabled && aether_postfx_has_offscreen(p) && p->enabled) ? 1.f : 0.f;
+}
+
+void aether_postfx_fill_uniforms_ex(const aether_postfx_t *p, f32 out8[8]) {
+    if (!out8) return;
+    memset(out8, 0, sizeof(f32) * 8);
+    aether_postfx_uniforms_t u;
+    aether_postfx_fill_uniforms(p, &u);
+    out8[0] = u.brightness; out8[1] = u.gamma; out8[2] = u.exposure; out8[3] = u.enabled;
+    aether_postfx_bloom_t b;
+    aether_postfx_fill_bloom(p, &b);
+    out8[4] = b.threshold; out8[5] = b.intensity; out8[6] = b.blur_radius; out8[7] = b.enabled;
 }

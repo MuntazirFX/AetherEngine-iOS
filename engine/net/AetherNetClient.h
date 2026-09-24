@@ -9,6 +9,10 @@
 #include "AetherNetSnapshot.h"
 #include "AetherNetScoreboard.h"
 #include "AetherNetChat.h"
+#include "AetherNetCmd.h"
+#include "AetherNetInterp.h"
+#include "AetherNetPredict.h"
+#include "AetherNetDelta.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,6 +73,24 @@ u32 aether_net_client_apply_snapshot_hud(aether_net_client_t *c,
 /* Host/smoke helper: inject a raw SERVER_SNAPSHOT packet as if received. */
 aether_result_t aether_net_client_ingest_snapshot_packet(aether_net_client_t *c,
                                                          const u8 *data, u32 size);
+
+/* Send structured input cmd (move/look/buttons) via AETHER_MSG_CLIENT_CMD. */
+aether_result_t aether_net_client_send_input(aether_net_client_t *c, const aether_net_cmd_t *cmd);
+
+/* Live UDP client tick: pump + push snap→interp + delta apply + predict step.
+ * out_origin may be NULL. Returns 1 if a snapshot was processed this tick. */
+int aether_net_client_live_tick(aether_net_client_t *c, f32 dt,
+                                f32 forward, f32 side, f32 yaw_deg, u32 buttons,
+                                aether_net_interp_t *interp,
+                                aether_net_predict_t *predict,
+                                f32 out_origin[3]);
+
+/* Ingest SERVER_DELTA packet onto last snapshot. */
+aether_result_t aether_net_client_ingest_delta_packet(aether_net_client_t *c,
+                                                      const u8 *data, u32 size);
+
+u32 aether_net_client_delta_count(const aether_net_client_t *c);
+
 
 
 #ifdef __cplusplus

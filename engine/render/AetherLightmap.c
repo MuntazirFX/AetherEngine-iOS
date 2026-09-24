@@ -481,3 +481,22 @@ aether_result_t aether_lightmap_apply_style_pingpong(aether_lightmap_t *lm,
     memcpy(lm->rgba, lm->base_rgba, bytes);
     return aether_lightmap_apply_style(lm, ls, style_index);
 }
+
+f32 aether_lightstyles_gpu_scale(f32 value) {
+    if (value < 0.f) value = 0.f;
+    if (value > 1.f) value = 1.f;
+    return 0.25f + 0.75f * value;
+}
+
+u32 aether_lightstyles_fill_gpu_weights(const aether_lightstyles_t *ls,
+                                        aether_lightstyle_gpu_t *out) {
+    if (!out) return 0;
+    memset(out, 0, sizeof(*out));
+    if (!ls) { out->weights[0] = 1.f; out->count = 1; return 4 + AETHER_MAX_LIGHTSTYLES; }
+    out->count = ls->count > 0 ? ls->count : 1;
+    out->time = ls->time;
+    for (u32 i = 0; i < AETHER_MAX_LIGHTSTYLES; ++i) {
+        out->weights[i] = aether_lightstyles_gpu_scale(ls->values[i]);
+    }
+    return 4 + AETHER_MAX_LIGHTSTYLES; /* floats conceptually */
+}
