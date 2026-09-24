@@ -25,6 +25,12 @@
 #include "AetherSky.h"
 #include "AetherWater.h"
 #include "AetherFog.h"
+#include "AetherBSP.h"
+#include "AetherBSPGeometry.h"
+#include "AetherBSPSynthetic.h"
+#include "AetherEntityBase.h"
+#include "AetherEntitySpawn.h"
+#include "AetherWorld.h"
 #include "AetherMath.h"
 
 /* Host stubs for Metal backend entry points (Swift provides these on iOS). */
@@ -224,6 +230,47 @@ int main(void) {
         expect(aether_particles_active_count(&parts) == 0, "particles_clear");
     }
 
+
+    /* Synthetic BSP demo room → mesh + entities (feeds Metal world path). */
+    {
+        aether_bsp_t *bsp = aether_bsp_create_synthetic_room();
+        expect(bsp != NULL, "bsp_create_synthetic_room");
+        expect(aether_bsp_is_valid(bsp), "bsp_synthetic_valid");
+        expect(aether_bsp_is_synthetic(bsp), "bsp_is_synthetic");
+        expect(aether_bsp_version(bsp) == 30u, "bsp_synthetic_version");
+        expect(aether_bsp_vertex_count(bsp) == 8u, "bsp_synthetic_verts");
+        expect(aether_bsp_face_count(bsp) == 6u, "bsp_synthetic_faces");
+        expect(aether_bsp_edge_count(bsp) == 12u, "bsp_synthetic_edges");
+        expect(aether_bsp_plane_count(bsp) == 6u, "bsp_synthetic_planes");
+
+        aether_mesh_t *mesh = NULL;
+        expect(aether_mesh_from_bsp(bsp, NULL, &mesh) == AETHER_OK && mesh != NULL,
+               "mesh_from_synthetic_bsp");
+        expect(mesh->vertex_count >= 24u, "mesh_synth_vertex_count");
+        expect(mesh->index_count >= 36u && (mesh->index_count % 3u) == 0u,
+               "mesh_synth_index_count");
+        expect(mesh->bounds_max[0] > mesh->bounds_min[0], "mesh_synth_bounds");
+
+        aether_entity_mgr_t *mgr = aether_entity_mgr_create();
+        expect(mgr != NULL, "entity_mgr_create");
+        u32 spawned = aether_entity_spawn_from_bsp(mgr, bsp);
+        expect(spawned >= 4u, "entity_spawn_from_synthetic"); /* worldspawn+start+3 monsters; light skipped */
+        aether_vec3_t pos, ang;
+        expect(aether_entity_get_player_start(mgr, &pos, &ang) == AETHER_OK,
+               "synthetic_player_start");
+        expect(fabsf(pos.z - 40.f) < 1e-3f, "synthetic_player_start_z");
+
+        aether_world_render_t world;
+        expect(aether_world_render_init(&world) == AETHER_OK, "world_render_init");
+        aether_world_render_set_surface_count(&world, mesh->index_count / 3u);
+        expect(world.surface_count == mesh->index_count / 3u, "world_surface_count");
+        aether_world_render_shutdown(&world);
+
+        aether_entity_mgr_destroy(mgr);
+        aether_mesh_free(mesh);
+        aether_bsp_free(bsp);
+    }
+
     /* Renderer feature particles via begin_frame_dt path. */
     /* Renderer camera + feature tick plumbing (NULL backend — no GPU). */
     aether_renderer_t *rend = aether_renderer_create(AETHER_RENDER_NULL, NULL);
@@ -267,7 +314,13 @@ int main(void) {
         aether_renderer_tick_features(rend, 1.f / 30.f);
         expect(feat->water.wave_time > 0.f, "renderer_water_wave_ticks");
     }
+    {
+        aether_render_features_t *feat = aether_renderer_features(rend);
+        if (feat) aether_world_render_set_surface_count(&feat->world, 12u);
+    }
     expect(aether_renderer_draw_world(rend) == AETHER_OK, "renderer_draw_world");
+    expect(aether_renderer_features(rend)->world.surface_count == 12u,
+           "renderer_world_surfaces");
     expect(aether_renderer_draw_hud(rend) == AETHER_OK, "renderer_draw_hud");
     expect(aether_renderer_end_frame(rend) == AETHER_OK, "renderer_end_frame");
     expect(aether_renderer_width(rend) == 640 && aether_renderer_height(rend) == 360,

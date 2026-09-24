@@ -24,6 +24,13 @@ Linux/macOS (no Xcode required):
 bash build/scripts/verify_host.sh
 ```
 
+### Synthetic demo world (no game assets)
+
+When Half-Life `.bsp` files are not present, the engine builds a tiny clean-room BSP v30 room
+(`aether_bsp_create_synthetic_room` → `aether_mesh_from_bsp` → entity spawn). On iOS use
+**Start Demo World (synthetic BSP)** or any Launch path (falls back automatically). Metal draws
+the room mesh (flat-shaded) plus red monster debug boxes from the entity/monster registries.
+
 This compiles all `engine/**/*.c` sources, archives `libaether_engine.a`, and runs `tests/host_smoke.c` (arena, engine lifecycle, 5-game registry, manifests, entity/weapon/monster tables, scoreboard/chat, VGUI runtime).
 
 GitHub Actions workflow `.github/workflows/verify.yml` runs the same script on every push/PR to `main`.
@@ -36,6 +43,7 @@ GitHub Actions workflow `.github/workflows/verify.yml` runs the same script on e
 - [x] STEP 2d: Metal sky — AetherSky face colors → gradient dome + bridge + Metal placeholder (see `continue/metal-sky`)
 - [x] STEP 2e: Metal water — AetherWater wavy plane + bridge + Metal translucent pass (see `continue/metal-water`)
 - [x] STEP 2f: Metal fog — AetherFog params + fullscreen tint copy_render + bridge + Metal pass (see `continue/metal-fog`)
+- [x] STEP 2g: BSP/world → Metal — synthetic demo room BSP → mesh + entities + DRAW_WORLD (see `continue/bsp-metal`)
 - [ ] STEP 3: Engine foundation
 - [ ] STEP 4: iOS application
 - [ ] STEP 5: 5-game configuration
@@ -58,7 +66,8 @@ AetherEngine now exposes an Xash3D-class renderer feature layer with clean-room 
 - `AetherRender_GLES3` — GLES3 backend interface
 - `AetherRender_Soft` — software/reference backend interface
 - `AetherRenderFeatures` — feature lifecycle/update coordinator
-- `AetherWorld` — world-surface render state
+- `AetherWorld` — world-surface render state (triangle count from active BSP mesh)
+- `AetherBSPSynthetic` — clean-room BSP v30 demo room (no copyrighted maps) for host/iOS verify
 - `AetherLightmap` — lightmap/style state
 - `AetherWater` — animated water state + wavy plane vertex copy for Metal
 - `AetherSky` — six-face sky state + gradient dome vertex copy for Metal

@@ -1,5 +1,5 @@
 // DashboardView.swift — AetherEngine-iOS · Clean-room.
-// STEP 17A: Entity diagnostics.
+// STEP 2g: Synthetic BSP/world → Metal path (no game assets required).
 
 import SwiftUI
 
@@ -49,6 +49,20 @@ struct DashboardView: View {
                             else { Image(systemName: "chevron.right") }
                         }
                         .padding().background(Color.blue)
+                        .foregroundColor(.white).cornerRadius(12)
+                    }.padding(.horizontal).disabled(isLoadingMap)
+
+                    // MARK: - Synthetic demo world (no game assets)
+                    Button(action: startDemoWorld) {
+                        HStack {
+                            Image(systemName: "square.stack.3d.up.fill")
+                            Text(isLoadingMap ? "Loading…" : "Start Demo World (synthetic BSP)")
+                                .fontWeight(.semibold)
+                            Spacer()
+                            if isLoadingMap { ProgressView() }
+                            else { Image(systemName: "chevron.right") }
+                        }
+                        .padding().background(Color.purple.opacity(0.85))
                         .foregroundColor(.white).cornerRadius(12)
                     }.padding(.horizontal).disabled(isLoadingMap)
 
@@ -213,28 +227,48 @@ struct DashboardView: View {
     private func loadMapOnly() {
         isLoadingMap = true
         "valve".withCString { engine_launch_game($0) }
-        let ok = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build($0) }
+        let ok = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build_or_synthetic($0) }
         isLoadingMap = false
         if ok == 1 {
-            alertTitle = "Map Loaded"
-            alertMessage = "Vertices: \(engine_bsp_mesh_vertex_count())\nTriangles: \(engine_bsp_mesh_triangle_count())"
+            let synth = engine_bsp_mesh_is_synthetic() != 0
+            alertTitle = synth ? "Synthetic Demo Room" : "Map Loaded"
+            alertMessage = "Vertices: \(engine_bsp_mesh_vertex_count())\nTriangles: \(engine_bsp_mesh_triangle_count())\nEntities: \(engine_entity_count())\nMonsters: \(engine_entity_monster_count())\nSource: \(synth ? "synthetic:demo_room" : "maps/c0a0.bsp")"
         } else {
-            alertTitle = "Failed"; alertMessage = "Could not load c0a0.bsp"
+            alertTitle = "Failed"; alertMessage = "Could not build world mesh"
         }
         showAlert = true
+    }
+
+    private func startDemoWorld() {
+        isLoadingMap = true
+        "valve".withCString { engine_launch_game($0) }
+        let ok = engine_bsp_mesh_build_synthetic()
+        isLoadingMap = false
+        if ok == 1 {
+            engine_vgui_show_main()
+            showClassicMenu = false
+            showRenderer = true
+        } else {
+            alertTitle = "Demo Failed"
+            alertMessage = "Synthetic BSP room could not be built"
+            showAlert = true
+        }
     }
 
     private func startGame() {
         isLoadingMap = true
         "valve".withCString { engine_launch_game($0) }
-        let ok = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build($0) }
+        let ok = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build_or_synthetic($0) }
         isLoadingMap = false
         if ok == 1 {
             engine_vgui_show_main()
             showClassicMenu = true
             showRenderer = true
+        } else {
+            alertTitle = "Load Failed"
+            alertMessage = "Neither c0a0.bsp nor synthetic room available"
+            showAlert = true
         }
-        else { alertTitle = "Load Failed"; alertMessage = "c0a0.bsp could not be loaded"; showAlert = true }
     }
 
     private func inspectTextures() {
@@ -294,11 +328,11 @@ struct DashboardView: View {
         "valve".withCString { engine_launch_game($0) }
 
         // 1. Load map
-        let mapOk = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build($0) }
+        let mapOk = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build_or_synthetic($0) }
         if mapOk != 1 {
             isLoadingMap = false
             alertTitle = "Map Load Failed"
-            alertMessage = "Could not load c0a0.bsp"
+            alertMessage = "Could not build world mesh"
             showAlert = true
             return
         }
@@ -334,11 +368,11 @@ struct DashboardView: View {
     private func inspectEntities() {
         // Load a map first (this triggers entity parsing)
         "valve".withCString { engine_launch_game($0) }
-        let mapOk = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build($0) }
+        let mapOk = "maps/c0a0.bsp".withCString { engine_bsp_mesh_build_or_synthetic($0) }
 
         if mapOk != 1 {
             alertTitle = "Map Load Failed"
-            alertMessage = "Could not load c0a0.bsp"
+            alertMessage = "Could not build world mesh"
             showAlert = true
             return
         }
