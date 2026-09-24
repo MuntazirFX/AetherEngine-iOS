@@ -928,4 +928,35 @@ int  engine_mdl_skinref_remap_draw(unsigned draw_slot,
 int  engine_mdl_skinref_remap_uv(float u, float v, float *out_u, float *out_v);
 int  engine_mdl_skinref_remap_sample(float u, float v, float *out_rgba4);
 
+/* ---------- Batch: hiz-depth-attach / portal-stack / studio-draw / ipa-device ---------- */
+int  engine_depth_hiz_mtk_attach_plan(unsigned w, unsigned h,
+                                      unsigned *out_passes, int *out_needed);
+int  engine_depth_hiz_mtk_attach_wire(void);
+int  engine_depth_hiz_mtk_attach_mark(void);
+int  engine_depth_hiz_mtk_attach_was_attached(void);
+int  engine_depth_hiz_mtk_attach_encode_ready(void);
+int  engine_mdl_hiz_encode_from_mtk_attach(unsigned w, unsigned h,
+                                           unsigned *out_slices, unsigned *out_passes,
+                                           unsigned *out_samples, int *out_needed);
+
+int  engine_portal_clip_stack_push_reflect(unsigned *out_count);
+int  engine_portal_clip_stack_clip(unsigned *out_verts);
+unsigned engine_water_reflect_portal_stack_plan(float eye_x, float eye_y, float eye_z,
+                                                unsigned max_depth,
+                                                unsigned *out_views,
+                                                unsigned *out_stack,
+                                                unsigned *out_clip_verts);
+int  engine_portal_clip_stack_pop(void);
+int  engine_portal_clip_stack_count(void);
+
+int  engine_mdl_skinref_metal_bind_draw(unsigned draw_slot,
+                                        unsigned *out_family, unsigned *out_ref,
+                                        unsigned *out_slot, unsigned *out_w,
+                                        unsigned *out_h, unsigned *out_bytes);
+int  engine_mdl_skinref_metal_atlas_rgba(unsigned char *out_rgba, unsigned cap,
+                                         unsigned *out_w, unsigned *out_h,
+                                         unsigned *out_bytes);
+int  engine_mdl_skinref_metal_bind_mark(void);
+int  engine_mdl_skinref_metal_bind_was_bound(void);
+
 #endif /* ENGINE_BRIDGE_H */

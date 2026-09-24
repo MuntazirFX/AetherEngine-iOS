@@ -65,6 +65,10 @@ write_dry_run_notes() {
     echo "notes_only_flag=--notes-only"
     echo "sign_check_flag=--sign-check"
     echo "sideload=AltStore|Sideloadly|TrollStore|ideviceinstaller"
+    echo "DEVICE_SIDELOAD_CHECKLIST=AppleConfigurator|XcodeDevices|ideviceinstaller|AltStore"
+    echo "device_sideload_a=Apple Configurator 2 → Add Apps → IPA"
+    echo "device_sideload_b=Xcode Devices and Simulators → Installed Apps +"
+    echo "device_sideload_c=ideviceinstaller -i build/out/AetherEngine.ipa"
     echo "dispatch_dry_run=gh workflow run 'Build AetherEngine IPA' -f version=v0.0.0-dry -f publish_release=false -f dry_run_validate=true"
     echo "dispatch_input=dry_run_validate"
     echo "workflow_file=.github/workflows/build-arm64.yml"
@@ -237,3 +241,33 @@ log "Done ✔"
 # Example Linux gate:
 #   bash build/scripts/package_ipa.sh --dry-run --sign-check
 #   test -f build/out/DRY_RUN_NOTES.txt
+
+
+# ---------- Device IPA sideload checklist (batch19) ----------
+# After you have build/out/AetherEngine.ipa (macOS/Xcode or Actions artifact):
+#
+# A) Apple Configurator 2 (macOS App Store)
+#    1. Connect iPhone/iPad via USB; trust the computer
+#    2. Select the device → Add → Apps → choose AetherEngine.ipa
+#    3. Or: drag-drop the IPA onto the device in Configurator
+#    4. On device: Settings → General → VPN & Device Management → trust developer
+#    Note: unsigned IPAs may need a free/paid Apple ID resign via Configurator
+#          "Prepare" / pairing, or resign with a development cert first.
+#
+# B) Xcode → Window → Devices and Simulators
+#    1. Select connected device
+#    2. Installed Apps → + → pick AetherEngine.app (unzip IPA → Payload/)
+#    3. Or Product → Destination → device, then Run (signed debug build)
+#    4. Prefer a development-signed .app for day-to-day; unsigned IPA is for
+#       sideload tools / TestFlight-less distribution experiments.
+#
+# C) ideviceinstaller (libimobiledevice; Homebrew: brew install libimobiledevice ideviceinstaller)
+#    idevice_id -l
+#    ideviceinstaller -i build/out/AetherEngine.ipa
+#    ideviceinstaller -l | grep -i aether
+#    ideviceinstaller -U <bundle-id>   # uninstall
+#
+# D) Also: AltStore / Sideloadly / TrollStore (see earlier sideload notes)
+#
+# Linux/CI host: cannot sideload; this checklist is documentation only.
+# DEVICE_SIDELOAD_CHECKLIST=AppleConfigurator|XcodeDevices|ideviceinstaller|AltStore

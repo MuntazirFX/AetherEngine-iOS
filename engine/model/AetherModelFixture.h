@@ -710,4 +710,45 @@ int  aether_mdl_skinref_remap_sample(const aether_mdl_skinref_remap_t *r,
                                      const aether_mdl_skin_page_set_t *pages,
                                      f32 u, f32 v, f32 out_rgba[4]);
 
+/* ---------- MTK depth attach → Hi-Z encode (host plan mirror) ---------- */
+u32  aether_mdl_hiz_encode_from_mtk_attach(aether_mdl_hiz_pyramid_t *pyr,
+                                           aether_mdl_hiz_array_t *arr,
+                                           aether_mdl_hiz_array_downsample_t *ds,
+                                           const f32 *depth_lin, u32 depth_count,
+                                           u32 w, u32 h,
+                                           int mtk_attached, int shader_read,
+                                           aether_mdl_hiz_live_encode_plan_t *plan);
+
+/* ---------- Studio skinref → Metal texture bind on draw ---------- */
+typedef struct aether_mdl_skinref_metal_bind {
+    u32 family;
+    u32 ref;
+    u8  group;
+    u8  tex;
+    u16 skin_index;
+    u32 draw_slot;          /* Metal fragment texture index */
+    u32 tex_width;
+    u32 tex_height;
+    u32 bytes_per_row;
+    u32 page_count;
+    u32 rgba_bytes;         /* atlas byte count for upload */
+    bool texture_ready;     /* atlas RGBA prepared */
+    bool bound;             /* Metal setFragmentTexture done */
+    bool valid;
+} aether_mdl_skinref_metal_bind_t;
+
+void aether_mdl_skinref_metal_bind_init(aether_mdl_skinref_metal_bind_t *b);
+/* Pack skin pages into a contiguous RGBA atlas for MTLTexture upload. */
+u32  aether_mdl_skinref_metal_atlas_rgba(const aether_mdl_skin_page_set_t *pages,
+                                         u8 *out_rgba, u32 cap,
+                                         u32 *out_w, u32 *out_h);
+/* Resolve remap + fill Metal bind descriptor (slot + atlas size). */
+int  aether_mdl_skinref_metal_bind_draw(const aether_mdl_skinref_table_t *t,
+                                        const aether_mdl_skin_page_set_t *pages,
+                                        u32 draw_slot,
+                                        aether_mdl_skinref_remap_t *remap,
+                                        aether_mdl_skinref_metal_bind_t *bind);
+void aether_mdl_skinref_metal_bind_mark(aether_mdl_skinref_metal_bind_t *b);
+bool aether_mdl_skinref_metal_bind_was_bound(const aether_mdl_skinref_metal_bind_t *b);
+
 #endif /* AETHER_MODEL_FIXTURE_H */

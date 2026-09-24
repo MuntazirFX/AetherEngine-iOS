@@ -196,4 +196,34 @@ void aether_depth_hiz_live_encode_mark(aether_depth_hiz_live_encode_t *e);
 bool aether_depth_hiz_live_encode_was_encoded(const aether_depth_hiz_live_encode_t *e);
 bool aether_depth_hiz_live_encode_needed(const aether_depth_hiz_live_encode_t *e);
 
+/* ---------- MTK depth attachment → Hi-Z encode wire (batch19) ---------- */
+#define AETHER_DEPTH_HIZ_FMT_DEPTH32F  1u
+#define AETHER_DEPTH_HIZ_STORE_STORE   1u
+#define AETHER_DEPTH_HIZ_STORE_DONTCARE 0u
+
+typedef struct aether_depth_hiz_mtk_attach {
+    bool depth_texture_ready;  /* MTK sceneDepthTexture allocated */
+    bool shader_read_usage;    /* .shaderRead so compute can sample depth */
+    bool store_action_store;   /* depthAttachment.storeAction = .store */
+    bool attached;             /* Metal marked attach complete this frame */
+    bool encode_wired;         /* live Hi-Z encode path connected */
+    bool needed;
+    u32  width, height;
+    u32  pixel_format;         /* AETHER_DEPTH_HIZ_FMT_* */
+    u32  store_action;         /* AETHER_DEPTH_HIZ_STORE_* */
+    u32  encode_passes;
+} aether_depth_hiz_mtk_attach_t;
+
+void aether_depth_hiz_mtk_attach_init(aether_depth_hiz_mtk_attach_t *a);
+/* Plan MTK depth attach for Hi-Z: size + format + store + shaderRead. */
+int  aether_depth_hiz_mtk_attach_plan(u32 w, u32 h, u32 pixel_format,
+                                      u32 store_action, int shader_read,
+                                      aether_depth_hiz_mtk_attach_t *out);
+/* Wire live encode plan onto an MTK depth attach (host/Metal). */
+int  aether_depth_hiz_mtk_attach_wire_encode(aether_depth_hiz_mtk_attach_t *attach,
+                                             const aether_depth_hiz_live_encode_t *live);
+void aether_depth_hiz_mtk_attach_mark(aether_depth_hiz_mtk_attach_t *a);
+bool aether_depth_hiz_mtk_attach_was_attached(const aether_depth_hiz_mtk_attach_t *a);
+bool aether_depth_hiz_mtk_attach_encode_ready(const aether_depth_hiz_mtk_attach_t *a);
+
 #endif /* AETHER_DEPTH_PREPASS_H */

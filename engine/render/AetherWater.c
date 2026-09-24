@@ -1031,3 +1031,87 @@ u32 aether_water_reflect_portal_clip_plan(const aether_water_t *water,
     }
     return views;
 }
+
+
+/* ===== Fuller portal clip stack (multi-plane clip buffer, batch19) ===== */
+
+void aether_portal_clip_stack_init(aether_portal_clip_stack_t *s) {
+    if (!s) return;
+    memset(s, 0, sizeof(*s));
+}
+
+int aether_portal_clip_stack_push(aether_portal_clip_stack_t *s, const f32 plane[4]) {
+    if (!s || !plane) return 0;
+    if (s->count >= AETHER_PORTAL_CLIP_STACK_MAX) return 0;
+    memcpy(s->planes[s->count], plane, 4 * sizeof(f32));
+    s->count++;
+    s->push_count++;
+    s->valid = (s->count > 0);
+    return 1;
+}
+
+int aether_portal_clip_stack_pop(aether_portal_clip_stack_t *s) {
+    if (!s || s->count == 0) return 0;
+    s->count--;
+    s->pop_count++;
+    s->valid = (s->count > 0);
+    return 1;
+}
+
+u32 aether_portal_clip_stack_push_reflect(aether_portal_clip_stack_t *s,
+                                          const aether_portal_reflect_plan_t *reflect) {
+    if (!s) return 0;
+    aether_portal_clip_stack_init(s);
+    if (!reflect || reflect->view_count == 0) return 0;
+    u32 n = 0;
+    for (u32 i = 0; i < reflect->view_count; ++i) {
+        if (!reflect->views[i].active) continue;
+        if (!aether_portal_clip_stack_push(s, reflect->views[i].clip_plane)) break;
+        n++;
+    }
+    return n;
+}
+
+u32 aether_portal_clip_stack_clip(const aether_portal_clip_stack_t *s,
+                                  const aether_portal_winding_t *in,
+                                  aether_portal_winding_t *out) {
+    if (!out) return 0;
+    aether_portal_winding_init(out);
+    if (!s || !in || !in->valid) return 0;
+    if (s->count == 0) {
+        *out = *in;
+        return out->count;
+    }
+    /* Cast away const for clip_planes API that takes planes[][4] */
+    u32 verts = aether_portal_winding_clip_planes(in,
+        (const f32 (*)[4])s->planes, s->count, out);
+    /* clip_ops is on non-const stack — caller may bump via water plan */
+    (void)verts;
+    return out->valid ? out->count : 0;
+}
+
+u32 aether_water_reflect_portal_stack_plan(const aether_water_t *water,
+                                           const f32 eye[3],
+                                           const aether_portal_winding_t *portal,
+                                           u32 max_depth,
+                                           aether_portal_reflect_plan_t *out_plan,
+                                           aether_portal_clip_stack_t *out_stack,
+                                           aether_portal_winding_t *out_clipped) {
+    if (out_plan) aether_portal_reflect_plan_init(out_plan);
+    if (out_stack) aether_portal_clip_stack_init(out_stack);
+    if (out_clipped) aether_portal_winding_init(out_clipped);
+    if (!water || !eye || !portal || !portal->valid || !out_plan || !out_stack) return 0;
+
+    u32 views = aether_water_reflect_recursive_plan(water, eye, portal, max_depth, out_plan);
+    if (views == 0) return 0;
+
+    u32 pushed = aether_portal_clip_stack_push_reflect(out_stack, out_plan);
+    if (pushed == 0) return views;
+
+    if (out_clipped) {
+        u32 cv = aether_portal_clip_stack_clip(out_stack, portal, out_clipped);
+        out_stack->clip_ops++;
+        (void)cv;
+    }
+    return views;
+}

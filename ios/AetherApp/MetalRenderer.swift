@@ -86,6 +86,14 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     /* Offscreen color + depth for PostFX (scene → texture → brightness/gamma). */
     private var sceneColorTexture: MTLTexture?
     private var sceneDepthTexture: MTLTexture?
+    /* Hi-Z array filled from MTK depth attachment (batch19). */
+    private var hizArrayTexture: MTLTexture?
+    private var hizArraySize: (Int, Int, Int) = (0, 0, 0) /* w,h,slices */
+    private var hizEncodePipeline: MTLComputePipelineState?
+    /* Studio skinref atlas bound on MDL draw (batch19). */
+    private var studioSkinTexture: MTLTexture?
+    private var studioSkinSampler: MTLSamplerState?
+    private var skinrefRemapPipeline: MTLRenderPipelineState?
     private var waterReflectTexture: MTLTexture?
     private var waterReflectSize: (Int, Int) = (0, 0)
     private var depthPrepassBoundThisFrame = false
@@ -600,6 +608,33 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             _ = engine_mdl_skinref_remap_uv(0.25, 0.75, &rmU, &rmV)
             var rmRgba = [Float](repeating: 0, count: 4)
             _ = engine_mdl_skinref_remap_sample(0.25, 0.75, &rmRgba)
+            // Batch19: MTK depth attach → Hi-Z encode wire + portal clip stack + skin Metal bind
+            var mtkPasses: UInt32 = 0
+            var mtkNeeded: Int32 = 0
+            _ = engine_depth_hiz_mtk_attach_plan(UInt32(max(dw / 2, 64)), UInt32(max(dh / 2, 64)),
+                                                 &mtkPasses, &mtkNeeded)
+            _ = engine_depth_hiz_mtk_attach_wire()
+            _ = engine_depth_hiz_mtk_attach_mark()
+            let mtkReady = engine_depth_hiz_mtk_attach_encode_ready()
+            var mtkSlices: UInt32 = 0, mtkEncPasses: UInt32 = 0, mtkSamples: UInt32 = 0
+            var mtkEncNeeded: Int32 = 0
+            _ = engine_mdl_hiz_encode_from_mtk_attach(64, 64, &mtkSlices, &mtkEncPasses,
+                                                      &mtkSamples, &mtkEncNeeded)
+            var stackCount: UInt32 = 0
+            _ = engine_portal_clip_stack_push_reflect(&stackCount)
+            var stackVerts: UInt32 = 0
+            _ = engine_portal_clip_stack_clip(&stackVerts)
+            var stViews: UInt32 = 0, stStack: UInt32 = 0, stClip: UInt32 = 0
+            _ = engine_water_reflect_portal_stack_plan(0, 0, 64, 3, &stViews, &stStack, &stClip)
+            var mbFam: UInt32 = 0, mbRef: UInt32 = 0, mbSlot: UInt32 = 0
+            var mbW: UInt32 = 0, mbH: UInt32 = 0, mbBytes: UInt32 = 0
+            _ = engine_mdl_skinref_metal_bind_draw(3, &mbFam, &mbRef, &mbSlot, &mbW, &mbH, &mbBytes)
+            _ = engine_mdl_skinref_metal_bind_mark()
+            let mbBound = engine_mdl_skinref_metal_bind_was_bound()
+            _ = mtkPasses; _ = mtkNeeded; _ = mtkReady; _ = mtkSlices; _ = mtkEncPasses
+            _ = mtkSamples; _ = mtkEncNeeded; _ = stackCount; _ = stackVerts
+            _ = stViews; _ = stStack; _ = stClip
+            _ = mbFam; _ = mbRef; _ = mbSlot; _ = mbW; _ = mbH; _ = mbBytes; _ = mbBound
             _ = arrSlices; _ = arrW; _ = arrH; _ = dhArrSlices; _ = dhArrBound
             _ = aqVis; _ = aqOcc; _ = aqZ; _ = aqMip
             _ = pgLeaves; _ = pgEdges; _ = pgReached; _ = pgDepth; _ = pgViews; _ = pgFlood
@@ -1228,8 +1263,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             }
         }
 
-        // ---- MDL (test model) ----
-        if let pipeline = mdlPipeline, let vb = mdlVertexBuf, let ib = mdlIndexBuf, mdlIndexCount > 0 {
+        // ---- MDL (test model) + studio skinref Metal texture bind ----
+        if let pipeline = (skinrefRemapPipeline ?? mdlPipeline),
+           let vb = mdlVertexBuf, let ib = mdlIndexBuf, mdlIndexCount > 0 {
             enc.setRenderPipelineState(pipeline)
             var pos = [Float](repeating: 0, count: 3)
             engine_mdl_mesh_get_render_pos(&pos)
@@ -1239,10 +1275,33 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                              lightDir: simd_normalize(simd_float3(0.3, 0.8, 0.5)),
                              pad0: 0,
                              baseColor: simd_float4(0.85, 0.75, 0.55, 1.0),
-                             useTexture: 0.0, useLightmap: 0.0, pad2: 0, pad3: 0)
+                             useTexture: (studioSkinTexture != nil) ? 1.0 : 0.0,
+                             useLightmap: 0.0, pad2: 0, pad3: 0)
             enc.setVertexBuffer(vb, offset: 0, index: 0)
             enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
             enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+            // Skinref remap → actual Metal texture bind on studio draw (slot 3)
+            var bf: UInt32 = 0, br: UInt32 = 0, bs: UInt32 = 0, bw: UInt32 = 0, bh: UInt32 = 0, bb: UInt32 = 0
+            if engine_mdl_skinref_metal_bind_draw(3, &bf, &br, &bs, &bw, &bh, &bb) != 0 {
+                if let skin = studioSkinTexture {
+                    enc.setFragmentTexture(skin, index: Int(bs))
+                    if let samp = studioSkinSampler ?? samplerState {
+                        enc.setFragmentSamplerState(samp, index: Int(bs))
+                    }
+                }
+                struct SkinBindU {
+                    var family: UInt32; var refIndex: UInt32; var group: UInt32; var tex: UInt32
+                    var drawSlot: UInt32; var uvScaleX: Float; var uvScaleY: Float
+                    var uvOffX: Float; var uvOffY: Float; var pad0: Float; var pad1: Float; var pad2: Float
+                }
+                var SU = SkinBindU(family: bf, refIndex: br, group: 0, tex: 0,
+                                   drawSlot: bs, uvScaleX: 0.5, uvScaleY: 0.5,
+                                   uvOffX: 0, uvOffY: 0, pad0: 0, pad1: 0, pad2: 0)
+                enc.setFragmentBytes(&SU, length: MemoryLayout<SkinBindU>.stride, index: 2)
+                var tint = simd_float4(0.85, 0.75, 0.55, 1.0)
+                enc.setFragmentBytes(&tint, length: MemoryLayout<simd_float4>.stride, index: 3)
+                _ = engine_mdl_skinref_metal_bind_mark()
+            }
             enc.drawIndexedPrimitives(type: .triangle, indexCount: mdlIndexCount,
                                       indexType: .uint32, indexBuffer: ib, indexBufferOffset: 0)
         }
@@ -1280,6 +1339,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         _ = engine_postfx_set_from_settings()
 
         enc.endEncoding()
+
+        // Live MTK depth attachment → Hi-Z encode (compute from sceneDepth)
+        encodeHizFromMtkDepthAttach(cmd: cmd, depth: sceneDepth)
 
         // Pass 2: PostFX (± bloom bright/blur/combine) → drawable.
         encodePostFXChain(commandBuffer: cmd, view: view, sceneTex: sceneColorTexture)
@@ -1620,10 +1682,13 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
         let depthDesc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .depth32Float, width: width, height: height, mipmapped: false)
-        depthDesc.usage = [.renderTarget]
+        /* shaderRead so Hi-Z encode kernel can sample the live MTK depth attachment */
+        depthDesc.usage = [.renderTarget, .shaderRead]
         depthDesc.storageMode = .private
         sceneDepthTexture = device.makeTexture(descriptor: depthDesc)
         postfxOffscreenSize = (width, height)
+        ensureHizArrayTexture(width: max(width / 2, 64), height: max(height / 2, 64), slices: 4)
+        ensureStudioSkinAtlas()
 
         if postfxSampler == nil {
             let sd = MTLSamplerDescriptor()
@@ -1895,4 +1960,116 @@ struct MetalView: UIViewRepresentable {
     }
     func updateUIView(_ uiView: MTKView, context: Context) {}
     final class Coordinator { var renderer: MetalRenderer? }
+
+
+    // MARK: - Batch19 Hi-Z from MTK depth + studio skin atlas
+
+    private func ensureHizEncodePipeline() {
+        guard hizEncodePipeline == nil, let lib = device.makeDefaultLibrary(),
+              let fn = lib.makeFunction(name: "aether_hiz_encode_from_depth") else { return }
+        do { hizEncodePipeline = try device.makeComputePipelineState(function: fn) }
+        catch { print("[MetalRenderer] hiz encode pipeline: \(error)") }
+    }
+
+    private func ensureHizArrayTexture(width: Int, height: Int, slices: Int) {
+        let w = max(width, 8), h = max(height, 8), s = max(slices, 2)
+        if hizArraySize == (w, h, s), hizArrayTexture != nil { return }
+        let td = MTLTextureDescriptor()
+        td.textureType = .type2DArray
+        td.pixelFormat = .r32Float
+        td.width = w; td.height = h; td.arrayLength = s
+        td.usage = [.shaderWrite, .shaderRead]
+        td.storageMode = .private
+        hizArrayTexture = device.makeTexture(descriptor: td)
+        hizArraySize = (w, h, s)
+        ensureHizEncodePipeline()
+    }
+
+    /// Wire live MTK depth attachment into Hi-Z encode compute path.
+    private func encodeHizFromMtkDepthAttach(cmd: MTLCommandBuffer, depth: MTLTexture) {
+        let dw = UInt32(depth.width), dh = UInt32(depth.height)
+        var passes: UInt32 = 0; var needed: Int32 = 0
+        _ = engine_depth_hiz_mtk_attach_plan(dw, dh, &passes, &needed)
+        _ = engine_depth_hiz_mtk_attach_wire()
+        ensureHizArrayTexture(width: Int(max(dw / 2, 64)), height: Int(max(dh / 2, 64)), slices: 4)
+        guard let pipe = hizEncodePipeline, let hiz = hizArrayTexture,
+              let enc = cmd.makeComputeCommandEncoder() else {
+            _ = engine_depth_hiz_mtk_attach_mark()
+            return
+        }
+        enc.setComputePipelineState(pipe)
+        enc.setTexture(depth, index: 0)
+        enc.setTexture(hiz, index: 1)
+        struct HizU {
+            var srcWidth: UInt32; var srcHeight: UInt32
+            var dstWidth: UInt32; var dstHeight: UInt32
+            var srcSlice: UInt32; var dstSlice: UInt32
+            var passIndex: UInt32; var fromDepth: UInt32
+        }
+        var U = HizU(srcWidth: dw, srcHeight: dh,
+                     dstWidth: UInt32(hiz.width), dstHeight: UInt32(hiz.height),
+                     srcSlice: 0, dstSlice: 0, passIndex: 0, fromDepth: 1)
+        enc.setBytes(&U, length: MemoryLayout<HizU>.stride, index: 0)
+        let tw = pipe.threadExecutionWidth
+        let th = max(pipe.maxTotalThreadsPerThreadgroup / tw, 1)
+        let tg = MTLSize(width: tw, height: th, depth: 1)
+        let grid = MTLSize(width: hiz.width, height: hiz.height, depth: 1)
+        enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        enc.endEncoding()
+        _ = engine_depth_hiz_mtk_attach_mark()
+        _ = engine_mdl_hiz_live_encode_mark()
+    }
+
+    private func ensureStudioSkinAtlas() {
+        if studioSkinTexture != nil { return }
+        var w: UInt32 = 0, h: UInt32 = 0, nbytes: UInt32 = 0
+        // Probe size first
+        let probeCap: UInt32 = 64 * 16 * 4
+        var probe = [UInt8](repeating: 0, count: Int(probeCap))
+        guard engine_mdl_skinref_metal_atlas_rgba(&probe, probeCap, &w, &h, &nbytes) != 0,
+              w > 0, h > 0, nbytes > 0 else { return }
+        var rgba = [UInt8](repeating: 0, count: Int(nbytes))
+        guard engine_mdl_skinref_metal_atlas_rgba(&rgba, nbytes, &w, &h, &nbytes) != 0 else { return }
+        let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm,
+                                                          width: Int(w), height: Int(h),
+                                                          mipmapped: false)
+        td.usage = [.shaderRead]
+        td.storageMode = .shared
+        guard let tex = device.makeTexture(descriptor: td) else { return }
+        rgba.withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                tex.replace(region: MTLRegionMake2D(0, 0, Int(w), Int(h)),
+                            mipmapLevel: 0,
+                            withBytes: base,
+                            bytesPerRow: Int(w) * 4)
+            }
+        }
+        studioSkinTexture = tex
+        if studioSkinSampler == nil {
+            let sd = MTLSamplerDescriptor()
+            sd.minFilter = .linear; sd.magFilter = .linear
+            sd.sAddressMode = .clampToEdge; sd.tAddressMode = .clampToEdge
+            studioSkinSampler = device.makeSamplerState(descriptor: sd)
+        }
+        // Optional skinref remap fragment pipeline (falls back to mdlPipeline)
+        if skinrefRemapPipeline == nil, let lib = device.makeDefaultLibrary(),
+           let vert = lib.makeFunction(name: "aether_model_vertex"),
+           let frag = lib.makeFunction(name: "aether_mdl_skinref_bind_fragment") {
+            let d = MTLRenderPipelineDescriptor()
+            d.vertexFunction = vert; d.fragmentFunction = frag
+            d.colorAttachments[0].pixelFormat = .bgra8Unorm
+            d.depthAttachmentPixelFormat = .depth32Float
+            let v = MTLVertexDescriptor()
+            v.attributes[0].format = .float3; v.attributes[0].offset = 0; v.attributes[0].bufferIndex = 0
+            v.attributes[1].format = .float3; v.attributes[1].offset = 12; v.attributes[1].bufferIndex = 0
+            v.attributes[2].format = .float2; v.attributes[2].offset = 24; v.attributes[2].bufferIndex = 0
+            v.layouts[0].stride = 44
+            d.vertexDescriptor = v
+            do { skinrefRemapPipeline = try device.makeRenderPipelineState(descriptor: d) }
+            catch { /* keep mdlPipeline fallback */ }
+        }
+        _ = engine_mdl_skinref_metal_bind_draw(3, nil, nil, nil, nil, nil, nil)
+        _ = engine_mdl_skinref_metal_bind_mark()
+    }
+
 }

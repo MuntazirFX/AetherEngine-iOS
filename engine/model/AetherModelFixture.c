@@ -2555,3 +2555,110 @@ int aether_mdl_skinref_remap_sample(const aether_mdl_skinref_remap_t *r,
     out_rgba[3] = 1.f;
     return 1;
 }
+
+
+/* ===== MTK depth attach encode + skinref Metal bind (batch19) ===== */
+
+u32 aether_mdl_hiz_encode_from_mtk_attach(aether_mdl_hiz_pyramid_t *pyr,
+                                          aether_mdl_hiz_array_t *arr,
+                                          aether_mdl_hiz_array_downsample_t *ds,
+                                          const f32 *depth_lin, u32 depth_count,
+                                          u32 w, u32 h,
+                                          int mtk_attached, int shader_read,
+                                          aether_mdl_hiz_live_encode_plan_t *plan) {
+    if (!mtk_attached || !shader_read) {
+        if (plan) aether_mdl_hiz_live_encode_plan_init(plan);
+        return 0;
+    }
+    u32 slices = aether_mdl_hiz_encode_from_depth(pyr, arr, ds, depth_lin, depth_count,
+                                                   w, h, plan);
+    if (plan && slices > 0) {
+        plan->from_depth_texture = true;
+        plan->fill_mip0_from_depth = true;
+        plan->needed = true;
+    }
+    return slices;
+}
+
+void aether_mdl_skinref_metal_bind_init(aether_mdl_skinref_metal_bind_t *b) {
+    if (!b) return;
+    memset(b, 0, sizeof(*b));
+}
+
+u32 aether_mdl_skinref_metal_atlas_rgba(const aether_mdl_skin_page_set_t *pages,
+                                        u8 *out_rgba, u32 cap,
+                                        u32 *out_w, u32 *out_h) {
+    if (out_w) *out_w = 0;
+    if (out_h) *out_h = 0;
+    if (!pages || pages->count == 0 || !out_rgba) return 0;
+    u32 pc = pages->count;
+    if (pc > AETHER_MDL_SKIN_PAGE_MAX) pc = AETHER_MDL_SKIN_PAGE_MAX;
+    /* Horizontal strip of pages: W = PAGE_W * pc, H = PAGE_H */
+    u32 aw = AETHER_MDL_SKIN_PAGE_W * pc;
+    u32 ah = AETHER_MDL_SKIN_PAGE_H;
+    u32 need = aw * ah * 4u;
+    if (cap < need) return 0;
+    memset(out_rgba, 0, need);
+    for (u32 p = 0; p < pc; ++p) {
+        const aether_mdl_skin_page_t *pg = &pages->pages[p];
+        for (u32 y = 0; y < AETHER_MDL_SKIN_PAGE_H; ++y) {
+            for (u32 x = 0; x < AETHER_MDL_SKIN_PAGE_W; ++x) {
+                u32 src = (y * AETHER_MDL_SKIN_PAGE_W + x) * 4u;
+                u32 dst_x = p * AETHER_MDL_SKIN_PAGE_W + x;
+                u32 dst = (y * aw + dst_x) * 4u;
+                out_rgba[dst + 0] = pg->rgba[src + 0];
+                out_rgba[dst + 1] = pg->rgba[src + 1];
+                out_rgba[dst + 2] = pg->rgba[src + 2];
+                out_rgba[dst + 3] = pg->rgba[src + 3];
+            }
+        }
+    }
+    if (out_w) *out_w = aw;
+    if (out_h) *out_h = ah;
+    return need;
+}
+
+int aether_mdl_skinref_metal_bind_draw(const aether_mdl_skinref_table_t *t,
+                                       const aether_mdl_skin_page_set_t *pages,
+                                       u32 draw_slot,
+                                       aether_mdl_skinref_remap_t *remap,
+                                       aether_mdl_skinref_metal_bind_t *bind) {
+    if (!bind) return 0;
+    aether_mdl_skinref_metal_bind_init(bind);
+    aether_mdl_skinref_remap_t local;
+    aether_mdl_skinref_remap_t *rm = remap ? remap : &local;
+    if (!aether_mdl_skinref_remap_draw(t, draw_slot, rm) || !rm->valid) return 0;
+
+    bind->family = rm->family;
+    bind->ref = rm->ref;
+    bind->group = rm->group;
+    bind->tex = rm->tex;
+    bind->skin_index = rm->skin_index;
+    bind->draw_slot = draw_slot;
+    bind->page_count = pages ? pages->count : 0;
+    if (pages && pages->count > 0) {
+        bind->tex_width = AETHER_MDL_SKIN_PAGE_W * pages->count;
+        bind->tex_height = AETHER_MDL_SKIN_PAGE_H;
+        bind->bytes_per_row = bind->tex_width * 4u;
+        bind->rgba_bytes = bind->bytes_per_row * bind->tex_height;
+        bind->texture_ready = true;
+    } else {
+        bind->tex_width = AETHER_MDL_SKIN_PAGE_W;
+        bind->tex_height = AETHER_MDL_SKIN_PAGE_H;
+        bind->bytes_per_row = bind->tex_width * 4u;
+        bind->rgba_bytes = bind->bytes_per_row * bind->tex_height;
+        bind->texture_ready = false;
+    }
+    bind->valid = true;
+    bind->bound = false;
+    return 1;
+}
+
+void aether_mdl_skinref_metal_bind_mark(aether_mdl_skinref_metal_bind_t *b) {
+    if (!b) return;
+    b->bound = b->valid && b->texture_ready && b->draw_slot > 0;
+}
+
+bool aether_mdl_skinref_metal_bind_was_bound(const aether_mdl_skinref_metal_bind_t *b) {
+    return b && b->bound;
+}
