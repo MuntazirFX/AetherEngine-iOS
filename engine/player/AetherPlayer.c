@@ -33,6 +33,7 @@ void aether_player_init(aether_player_t *p) {
     p->on_ground   = false;
     p->crouching   = false;
     p->hull_index  = 1;
+    p->step_height = AETHER_DEFAULT_STEP_HEIGHT;
 }
 
 void aether_player_set_position(aether_player_t *p, aether_vec3_t pos) {
@@ -146,7 +147,7 @@ void aether_player_update(aether_player_t *p,
     bool on_ground = false;
     if (collision) {
         final = aether_collision_move(collision, p->position, target,
-                                      p->hull_index, &on_ground);
+                                      p->hull_index, p->step_height, &on_ground);
     }
     p->position = final;
     p->on_ground = on_ground;

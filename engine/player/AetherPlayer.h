@@ -26,6 +26,7 @@ typedef struct aether_player {
     bool          on_ground;
     bool          crouching;
     i32           hull_index;    /* 1 or 2 */
+    f32           step_height;   /* max auto-step (Quake 18); 0 disables */
 } aether_player_t;
 
 void aether_player_init(aether_player_t *p);

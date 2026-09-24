@@ -276,6 +276,11 @@ void  engine_player_set_angles(float y, float p) { g_player.yaw = y; g_player.pi
 float engine_player_get_yaw(void)   { return g_player.yaw; }
 float engine_player_get_pitch(void) { return g_player.pitch; }
 int engine_player_on_ground(void)   { return g_player.on_ground ? 1 : 0; }
+float engine_player_get_step_height(void) { return g_player.step_height; }
+void engine_player_set_step_height(float height) {
+    if (height < 0.f) height = 0.f;
+    g_player.step_height = height;
+}
 
 /* ---------- Collision ---------- */
 int engine_collision_ready(void) {
@@ -294,13 +299,13 @@ int engine_collision_point_in_solid(float x, float y, float z, int hull_index) {
 }
 int engine_collision_move(float from_x, float from_y, float from_z,
                           float to_x, float to_y, float to_z,
-                          int hull_index, float out_xyz[3]) {
+                          int hull_index, float max_step, float out_xyz[3]) {
     aether_vec3_t from = { from_x, from_y, from_z };
     aether_vec3_t to   = { to_x, to_y, to_z };
     bool on_ground = false;
     aether_vec3_t r = to;
     if (g_collision)
-        r = aether_collision_move(g_collision, from, to, hull_index, &on_ground);
+        r = aether_collision_move(g_collision, from, to, hull_index, max_step, &on_ground);
     if (out_xyz) { out_xyz[0] = r.x; out_xyz[1] = r.y; out_xyz[2] = r.z; }
     return on_ground ? 1 : 0;
 }

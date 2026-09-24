@@ -136,15 +136,13 @@ static f32 collision_slide_axis(const aether_collision_t *c,
     return lo;
 }
 
-/* ---------- Axis-separated movement (move-and-slide) ---------- */
-aether_vec3_t aether_collision_move(aether_collision_t *c,
-                                     aether_vec3_t from,
-                                     aether_vec3_t to,
-                                     i32 hull_index,
-                                     bool *out_on_ground) {
+/* Axis-separated slide without step-up. */
+static aether_vec3_t collision_slide_move(const aether_collision_t *c,
+                                          aether_vec3_t from,
+                                          aether_vec3_t to,
+                                          i32 hull_index,
+                                          bool *out_on_ground) {
     if (out_on_ground) *out_on_ground = false;
-    if (!c) return to;
-
     aether_vec3_t result = from;
 
     if (to.x != from.x)
@@ -153,13 +151,90 @@ aether_vec3_t aether_collision_move(aether_collision_t *c,
         result.y = collision_slide_axis(c, result, 1, to.y, hull_index);
     if (to.z != from.z) {
         f32 nz = collision_slide_axis(c, result, 2, to.z, hull_index);
-        if (to.z < from.z && nz > to.z + 1e-3f && out_on_ground) {
-            /* Downward motion clipped → landed on ground. */
+        if (to.z < from.z && nz > to.z + 1e-3f && out_on_ground)
             *out_on_ground = true;
-        }
         result.z = nz;
     }
+    return result;
+}
 
+/* ---------- Axis-separated movement + Quake-style step-up ---------- */
+aether_vec3_t aether_collision_move(aether_collision_t *c,
+                                     aether_vec3_t from,
+                                     aether_vec3_t to,
+                                     i32 hull_index,
+                                     f32 max_step,
+                                     bool *out_on_ground) {
+    if (out_on_ground) *out_on_ground = false;
+    if (!c) return to;
+
+    bool ground = false;
+    aether_vec3_t slid = collision_slide_move(c, from, to, hull_index, &ground);
+
+    /* Detect horizontal blockage (wish further than we got). */
+    const f32 eps = 1e-3f;
+    f32 wish_hx = to.x - from.x;
+    f32 wish_hy = to.y - from.y;
+    f32 got_hx  = slid.x - from.x;
+    f32 got_hy  = slid.y - from.y;
+    bool blocked = false;
+    if (wish_hx >  eps && got_hx < wish_hx - eps) blocked = true;
+    if (wish_hx < -eps && got_hx > wish_hx + eps) blocked = true;
+    if (wish_hy >  eps && got_hy < wish_hy - eps) blocked = true;
+    if (wish_hy < -eps && got_hy > wish_hy + eps) blocked = true;
+
+    if (!blocked || max_step <= 0.0f) {
+        if (out_on_ground) *out_on_ground = ground;
+        return slid;
+    }
+
+    /* 1) Raise up to max_step (abort if we barely rise). */
+    f32 up_z = collision_slide_axis(c, from, 2, from.z + max_step, hull_index);
+    if (up_z < from.z + 1.0f) {
+        if (out_on_ground) *out_on_ground = ground;
+        return slid;
+    }
+    aether_vec3_t elevated = from;
+    elevated.z = up_z;
+
+    /* 2) Horizontal from elevated toward wish XY. */
+    aether_vec3_t mid = elevated;
+    if (to.x != from.x)
+        mid.x = collision_slide_axis(c, mid, 0, to.x, hull_index);
+    if (to.y != from.y)
+        mid.y = collision_slide_axis(c, mid, 1, to.y, hull_index);
+
+    f32 step_hx = mid.x - from.x;
+    f32 step_hy = mid.y - from.y;
+    f32 slid_h2 = got_hx * got_hx + got_hy * got_hy;
+    f32 step_h2 = step_hx * step_hx + step_hy * step_hy;
+    if (step_h2 <= slid_h2 + 1e-4f) {
+        /* No extra horizontal progress (wall taller than step). */
+        if (out_on_ground) *out_on_ground = ground;
+        return slid;
+    }
+
+    /* 3) Drop by max_step to find the new floor; then honor remaining vertical wish. */
+    bool step_ground = false;
+    aether_vec3_t result = mid;
+    f32 drop_to = mid.z - max_step;
+    f32 nz = collision_slide_axis(c, mid, 2, drop_to, hull_index);
+    if (nz > drop_to + eps) step_ground = true;
+    result.z = nz;
+
+    if (to.z > result.z + eps) {
+        /* Still rising (jump) after the step. */
+        result.z = collision_slide_axis(c, result, 2, to.z, hull_index);
+        step_ground = false;
+    } else if (to.z < result.z - eps) {
+        /* Continue falling past the step land height. */
+        f32 z2 = collision_slide_axis(c, result, 2, to.z, hull_index);
+        if (z2 > to.z + eps) step_ground = true;
+        else step_ground = false;
+        result.z = z2;
+    }
+
+    if (out_on_ground) *out_on_ground = step_ground;
     return result;
 }
 
