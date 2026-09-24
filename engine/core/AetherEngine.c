@@ -17,6 +17,7 @@ struct aether_engine {
     f64                t_start;
     f64                t_last;
     f32                fixed_dt;
+    f32                last_dt;
 };
 
 static f64 now_seconds(void) {
@@ -37,6 +38,7 @@ aether_engine_t *aether_engine_create(const aether_engine_desc_t *desc) {
     aether_str_copy(e->base_path,  sizeof e->base_path,  desc->base_path);
     aether_str_copy(e->asset_path, sizeof e->asset_path, desc->asset_path);
     e->fixed_dt = 1.0f / 120.0f;
+    e->last_dt  = 0.0f;
     aether_log(AETHER_LOG_INFO, "engine", "created: base='%s' asset='%s'", e->base_path, e->asset_path);
     return e;
 }
@@ -91,6 +93,7 @@ aether_result_t aether_engine_start(aether_engine_t *e) {
     }
     e->t_start = now_seconds(); e->t_last = e->t_start;
     e->frame = 0; e->running = true; e->exit_requested = false;
+    e->last_dt = 0.0f;
     aether_log(AETHER_LOG_INFO, "engine", "started (%u subsystems)", e->sub_count);
     return AETHER_OK;
 }
@@ -111,6 +114,8 @@ aether_result_t aether_engine_stop(aether_engine_t *e) {
 aether_result_t aether_engine_step(aether_engine_t *e, f32 dt) {
     if (!e) return AETHER_ERR_INVALID_ARG;
     if (!e->running) return AETHER_ERR_NOT_READY;
+    if (dt < 0.0f) dt = 0.0f;
+    e->last_dt = dt;
     for (u32 i = 0; i < e->sub_count; ++i) {
         aether_subsystem_t *s = &e->subs[i];
         if (!s->ready || !s->tick) continue;
@@ -121,6 +126,20 @@ aether_result_t aether_engine_step(aether_engine_t *e, f32 dt) {
     }
     e->frame++;
     return AETHER_OK;
+}
+
+aether_result_t aether_engine_host_frame(aether_engine_t *e, f32 real_dt) {
+    if (!e) return AETHER_ERR_INVALID_ARG;
+    if (!e->running) return AETHER_ERR_NOT_READY;
+    f64 t_now = now_seconds();
+    f32 dt = real_dt;
+    if (dt <= 0.0f) {
+        dt = (f32)(t_now - e->t_last);
+    }
+    e->t_last = t_now;
+    if (dt > 0.25f) dt = 0.25f;
+    if (dt < 0.0f) dt = 0.0f;
+    return aether_engine_step(e, dt);
 }
 
 aether_result_t aether_engine_run(aether_engine_t *e) {
@@ -148,3 +167,13 @@ f64         aether_engine_elapsed    (const aether_engine_t *e) {
     if (!e || !e->running) return 0.0;
     return now_seconds() - e->t_start;
 }
+f32  aether_engine_last_dt   (const aether_engine_t *e) { return e ? e->last_dt : 0.0f; }
+bool aether_engine_is_running(const aether_engine_t *e) { return e ? e->running : false; }
+
+void aether_engine_set_fixed_dt(aether_engine_t *e, f32 dt) {
+    if (!e) return;
+    if (dt < 1.0f / 1000.0f) dt = 1.0f / 1000.0f;
+    if (dt > 0.25f) dt = 0.25f;
+    e->fixed_dt = dt;
+}
+f32 aether_engine_fixed_dt(const aether_engine_t *e) { return e ? e->fixed_dt : (1.0f / 120.0f); }

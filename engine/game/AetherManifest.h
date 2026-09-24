@@ -11,18 +11,19 @@
 extern "C" {
 #endif
 
-/* Maximum buffer size for reading manifest files */
 #define AETHER_MANIFEST_MAX_SIZE 4096
+#define AETHER_MANIFEST_MAX_SLOTS 8
 
-/* Parse a single manifest file and fill the provided game info struct.
- * Returns AETHER_OK on success, AETHER_ERR_IO if file cannot be read.
- */
+/* Parse a single manifest file into an owned slot (safe for multiple loads). */
 aether_result_t aether_manifest_load(const char *filepath, aether_game_info_t *out_info);
 
-/* Find and load all manifests from a directory (e.g. "engine/game/manifests").
- * Returns number of manifests loaded, or -1 on error.
- */
+/* Load known 5-game manifests from a directory. Returns count loaded, or -1. */
 i32 aether_manifest_load_all(const char *dir_path);
+
+/* Access previously loaded manifests (from load / load_all). */
+u32 aether_manifest_count(void);
+const aether_game_info_t *aether_manifest_at(u32 index);
+void aether_manifest_clear(void);
 
 #ifdef __cplusplus
 }

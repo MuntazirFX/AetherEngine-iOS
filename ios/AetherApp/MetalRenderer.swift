@@ -525,6 +525,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         lastTime = now
         if dt < 0.0 || dt > 0.25 { dt = 1.0/60.0 }
 
+        engine_host_frame(dt)
         engine_player_tick(dt)
 
         guard let drawable = view.currentDrawable,

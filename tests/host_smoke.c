@@ -38,6 +38,10 @@
 #include "AetherPlayerHealth.h"
 #include "AetherPlayerDamage.h"
 #include "AetherInput.h"
+#include "AetherCVar.h"
+#include "AetherSettings.h"
+#include "AetherAudio.h"
+#include "AetherFS.h"
 #include "AetherMath.h"
 
 /* Host stubs for Metal backend entry points (Swift provides these on iOS). */
@@ -91,6 +95,95 @@ int main(void) {
     expect(aether_engine_frame_count(eng) >= 1, "engine_frame_count");
     expect(aether_engine_stop(eng) == AETHER_OK, "engine_stop");
     expect(aether_engine_destroy(eng) == AETHER_OK, "engine_destroy");
+
+    /* STEP 3: host frame + subsystem + timebase */
+    {
+        aether_engine_desc_t d2 = { .base_path = ".", .asset_path = ".", .flags = 0 };
+        aether_engine_t *e2 = aether_engine_create(&d2);
+        expect(e2 != NULL, "engine_create_host");
+        aether_game_manager_t *gm = aether_game_manager_create(e2, ".");
+        expect(gm != NULL, "game_manager_create");
+        aether_subsystem_t sub = aether_game_manager_as_subsystem(gm);
+        expect(aether_engine_register_subsystem(e2, &sub) == AETHER_OK, "register_game_sub");
+        expect(aether_engine_start(e2) == AETHER_OK, "engine_start_with_game");
+        expect(aether_engine_is_running(e2), "engine_is_running");
+        expect(aether_game_select_by_dir(gm, "valve") == AETHER_OK, "select_valve");
+        expect(aether_game_initialize(gm) == AETHER_OK, "game_init");
+        expect(aether_game_launch(gm) == AETHER_OK, "game_launch");
+        expect(aether_engine_host_frame(e2, 1.f / 60.f) == AETHER_OK, "host_frame");
+        expect(aether_engine_host_frame(e2, 1.f / 60.f) == AETHER_OK, "host_frame2");
+        expect(aether_engine_frame_count(e2) >= 2, "host_frame_count");
+        expect(aether_engine_last_dt(e2) > 0.f, "last_dt");
+        expect(aether_game_run_frames(gm) >= 2, "game_run_frames");
+        expect(aether_game_active_dir(gm) && strcmp(aether_game_active_dir(gm), "valve") == 0,
+               "active_dir_valve");
+        expect(aether_game_start_map(gm) != NULL, "start_map");
+        aether_engine_set_fixed_dt(e2, 1.f / 60.f);
+        expect(fabsf(aether_engine_fixed_dt(e2) - (1.f / 60.f)) < 1e-5f, "fixed_dt");
+        expect(aether_game_shutdown(gm) == AETHER_OK, "game_shutdown");
+        expect(aether_engine_stop(e2) == AETHER_OK, "engine_stop_host");
+        expect(aether_game_manager_destroy(gm) == AETHER_OK, "game_manager_destroy");
+        expect(aether_engine_destroy(e2) == AETHER_OK, "engine_destroy_host");
+    }
+
+    /* STEP 5: manifests load_all (5 games) */
+    {
+        aether_manifest_clear();
+        i32 n = aether_manifest_load_all("engine/game/manifests");
+        expect(n == 5, "manifest_load_all==5");
+        expect(aether_manifest_count() == 5u, "manifest_count==5");
+        const aether_game_info_t *m0 = aether_manifest_at(0);
+        expect(m0 && m0->dir_name && strcmp(m0->dir_name, "valve") == 0, "manifest_at0_valve");
+        aether_manifest_clear();
+        expect(aether_manifest_count() == 0u, "manifest_clear");
+    }
+
+    /* STEP 7: FS setup_game (no assets; roots still mount) */
+    {
+        aether_fs_t *fs = aether_fs_create(".");
+        expect(fs != NULL, "fs_create");
+        expect(aether_fs_basedir(fs) && strcmp(aether_fs_basedir(fs), ".") == 0, "fs_basedir");
+        expect(aether_fs_setup_game(fs, ".", "valve") == AETHER_OK, "fs_setup_valve");
+        expect(aether_fs_root_count(fs) >= 1, "fs_root_count");
+        expect(aether_fs_setup_game(fs, ".", "cstrike") == AETHER_OK, "fs_setup_cstrike");
+        expect(aether_fs_root_count(fs) >= 1, "fs_root_cstrike");
+        aether_fs_destroy(fs);
+    }
+
+    /* STEP 6/7: settings + audio + cvars */
+    {
+        aether_settings_t *s = aether_settings_create();
+        expect(s != NULL, "settings_create");
+        aether_settings_register_engine_defaults(s);
+        expect(aether_settings_set_float(s, "in_look_sensitivity", 2.0f) == AETHER_OK, "set_sens");
+        f32 sens = 0.f;
+        expect(aether_settings_get_float(s, "in_look_sensitivity", &sens) && fabsf(sens - 2.f) < 1e-5f,
+               "get_sens");
+        expect(aether_settings_save(s, "build/out/test_aether.cfg") == AETHER_OK, "settings_save");
+        expect(aether_settings_set_float(s, "in_look_sensitivity", 1.0f) == AETHER_OK, "set_sens_reset");
+        expect(aether_settings_load(s, "build/out/test_aether.cfg") == AETHER_OK, "settings_load");
+        expect(aether_settings_get_float(s, "in_look_sensitivity", &sens) && fabsf(sens - 2.f) < 1e-5f,
+               "settings_persist");
+        aether_settings_destroy(s);
+
+        aether_audio_t *au = aether_audio_create();
+        expect(au != NULL, "audio_create");
+        expect(aether_audio_init(au) == AETHER_OK, "audio_init");
+        expect(aether_audio_is_ready(au), "audio_ready");
+        aether_audio_set_master_volume(au, 0.5f);
+        expect(fabsf(aether_audio_get_master_volume(au) - 0.5f) < 1e-5f, "audio_vol");
+        aether_audio_flush(au);
+        expect(aether_audio_shutdown(au) == AETHER_OK, "audio_shutdown");
+        aether_audio_destroy(au);
+
+        aether_cvar_registry_t *cv = aether_cvar_create();
+        expect(cv != NULL, "cvar_create");
+        expect(aether_cvar_register(cv, "in_look_sensitivity", AETHER_CVAR_FLOAT, "1.0",
+                                    AETHER_CVAR_ARCHIVE) != NULL, "cvar_reg");
+        expect(aether_cvar_set(cv, "in_look_sensitivity", "1.5") == AETHER_OK, "cvar_set");
+        expect(fabsf(aether_cvar_float(cv, "in_look_sensitivity", 0.f) - 1.5f) < 1e-5f, "cvar_float");
+        aether_cvar_destroy(cv);
+    }
 
     expect(aether_game_count() == 5, "game_count==5");
     expect(aether_game_info_by_dir("valve") != NULL, "game valve");

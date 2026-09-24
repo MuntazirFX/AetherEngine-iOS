@@ -45,6 +45,8 @@
 #include "../../engine/vgui/AetherVGUIRuntime.h"
 #include "../../engine/net/AetherNetScoreboard.h"
 #include "../../engine/net/AetherNetChat.h"
+#include "../../engine/console/AetherCVar.h"
+#include "../../engine/game/AetherManifest.h"
 
 /* ---------- Globals ---------- */
 static aether_engine_t         *g_engine       = NULL;
@@ -87,6 +89,8 @@ static aether_scoreboard_t      g_scoreboard;
 static aether_chat_log_t        g_chat;
 static bool                     g_scoreboard_init = false;
 static bool                     g_chat_init = false;
+static aether_cvar_registry_t  *g_cvars        = NULL;
+static char                     g_settings_path[600] = {0};
 
 /* ---------- Metal hooks ---------- */
 extern int32_t aether_metal_init_swift    (void *user, uint32_t w, uint32_t h);
@@ -140,13 +144,54 @@ void engine_init(const char *base_path, const char *asset_path) {
     aether_engine_desc_t desc = { .base_path = base_path, .asset_path = asset_path, .flags = 0 };
     g_engine = aether_engine_create(&desc);
     if (!g_engine) return;
+
+    g_cvars = aether_cvar_create();
+    if (g_cvars) {
+        aether_cvar_register(g_cvars, "s_master_volume", AETHER_CVAR_FLOAT, "1.0", AETHER_CVAR_ARCHIVE);
+        aether_cvar_register(g_cvars, "s_music_volume", AETHER_CVAR_FLOAT, "0.7", AETHER_CVAR_ARCHIVE);
+        aether_cvar_register(g_cvars, "s_effects_volume", AETHER_CVAR_FLOAT, "1.0", AETHER_CVAR_ARCHIVE);
+        aether_cvar_register(g_cvars, "s_mute", AETHER_CVAR_BOOL, "0", AETHER_CVAR_ARCHIVE);
+        aether_cvar_register(g_cvars, "in_look_sensitivity", AETHER_CVAR_FLOAT, "1.0", AETHER_CVAR_ARCHIVE);
+        aether_cvar_register(g_cvars, "in_invert_y", AETHER_CVAR_BOOL, "0", AETHER_CVAR_ARCHIVE);
+        aether_cvar_register(g_cvars, "r_fps_limit", AETHER_CVAR_INT, "120", AETHER_CVAR_ARCHIVE);
+        aether_cvar_register(g_cvars, "touch_layout", AETHER_CVAR_INT, "0", AETHER_CVAR_ARCHIVE);
+        aether_cvar_register(g_cvars, "touch_opacity", AETHER_CVAR_FLOAT, "0.75", AETHER_CVAR_ARCHIVE);
+    }
+
+    snprintf(g_settings_path, sizeof g_settings_path, "%s/aether.cfg", base_path);
+    (void)aether_settings_load(g_settings, g_settings_path);
+
+    g_game_manager = aether_game_manager_create(g_engine, base_path);
+    if (g_game_manager) {
+        aether_subsystem_t game_sub = aether_game_manager_as_subsystem(g_game_manager);
+        (void)aether_engine_register_subsystem(g_engine, &game_sub);
+    }
+
     if (aether_engine_start(g_engine) != AETHER_OK) return;
+
+    {
+        f32 vol = 1.0f; bool muted = false; f32 sens = 1.0f;
+        aether_settings_get_float(g_settings, "s_master_volume", &vol);
+        aether_settings_get_bool(g_settings, "s_mute", &muted);
+        aether_settings_get_float(g_settings, "in_look_sensitivity", &sens);
+        aether_audio_set_master_volume(g_audio, vol);
+        aether_audio_set_mute(g_audio, muted);
+        g_player.look_speed = 0.0035f * (sens > 0.01f ? sens : 1.0f);
+        if (g_cvars) {
+            char buf[64];
+            snprintf(buf, sizeof buf, "%g", (double)vol);
+            aether_cvar_set(g_cvars, "s_master_volume", buf);
+            aether_cvar_set(g_cvars, "s_mute", muted ? "1" : "0");
+            snprintf(buf, sizeof buf, "%g", (double)sens);
+            aether_cvar_set(g_cvars, "in_look_sensitivity", buf);
+        }
+    }
+
     (void)aether_vgui_runtime_init();
     aether_scoreboard_init(&g_scoreboard);
     aether_chat_init(&g_chat);
     g_scoreboard_init = true;
     g_chat_init = true;
-    g_game_manager = aether_game_manager_create(g_engine, base_path);
     aether_log(AETHER_LOG_INFO, "bridge", "engine initialized (%s)", AETHER_VERSION_STRING);
 }
 
@@ -166,6 +211,7 @@ void engine_shutdown(void) {
     g_mesh_is_synthetic = false;
     if (g_game_manager) { aether_game_manager_destroy(g_game_manager); g_game_manager = NULL; }
     if (g_engine)       { aether_engine_stop(g_engine); aether_engine_destroy(g_engine); g_engine = NULL; }
+    if (g_cvars)        { aether_cvar_destroy(g_cvars); g_cvars = NULL; }
     if (g_input)        { aether_input_destroy(g_input); g_input = NULL; }
     if (g_fs)           { aether_fs_destroy(g_fs); g_fs = NULL; }
     if (g_settings)     { aether_settings_destroy(g_settings); g_settings = NULL; }
@@ -181,19 +227,7 @@ void engine_launch_game(const char *game_dir) {
     if (aether_game_select(g_game_manager, info->id) != AETHER_OK) return;
     if (aether_game_initialize(g_game_manager)      != AETHER_OK) return;
 
-    aether_fs_clear_roots(g_fs);
-    char valve_dir[600];
-    snprintf(valve_dir, sizeof valve_dir, "%s/valve", g_base_path);
-    if (aether_fs_add_root(g_fs, valve_dir) == AETHER_OK)
-        (void)aether_fs_auto_mount_paks(g_fs, valve_dir);
-
-    if (!aether_str_eq(info->dir_name, "valve")) {
-        char gd[600];
-        if (aether_game_resolve_path(g_game_manager, info->id, gd, sizeof gd) == AETHER_OK) {
-            if (aether_fs_add_root(g_fs, gd) == AETHER_OK)
-                (void)aether_fs_auto_mount_paks(g_fs, gd);
-        }
-    }
+    (void)aether_fs_setup_game(g_fs, g_base_path, info->dir_name);
     aether_game_launch(g_game_manager);
     aether_player_health_reset(&g_player_health);
     aether_player_inv_reset(&g_player_inventory);
@@ -205,9 +239,81 @@ void engine_launch_game(const char *game_dir) {
 
 void engine_stop_game(void) { if (g_game_manager) aether_game_shutdown(g_game_manager); }
 
+void engine_host_frame(float dt) {
+    if (g_engine && aether_engine_is_running(g_engine))
+        (void)aether_engine_host_frame(g_engine, dt);
+    if (g_audio) aether_audio_flush(g_audio);
+}
+
+int engine_is_running(void) {
+    return (g_engine && aether_engine_is_running(g_engine)) ? 1 : 0;
+}
+unsigned long long engine_frame_count(void) {
+    return g_engine ? (unsigned long long)aether_engine_frame_count(g_engine) : 0ULL;
+}
+double engine_elapsed(void) {
+    return g_engine ? aether_engine_elapsed(g_engine) : 0.0;
+}
+float engine_last_dt(void) {
+    return g_engine ? aether_engine_last_dt(g_engine) : 0.0f;
+}
+
+int engine_game_count(void) { return (int)aether_game_count(); }
+
+int engine_game_info(int index, char *name, int name_cap,
+                     char *dir, int dir_cap, char *start_map, int map_cap) {
+    const aether_game_info_t *info = aether_game_at((u32)index);
+    if (!info) return 0;
+    if (name && name_cap > 0)
+        aether_str_copy(name, (size_t)name_cap, info->display_name ? info->display_name : "");
+    if (dir && dir_cap > 0)
+        aether_str_copy(dir, (size_t)dir_cap, info->dir_name ? info->dir_name : "");
+    if (start_map && map_cap > 0)
+        aether_str_copy(start_map, (size_t)map_cap, info->start_map ? info->start_map : "");
+    return 1;
+}
+
+int engine_game_select(const char *game_dir) {
+    if (!g_game_manager || !game_dir) return 0;
+    if (aether_game_state_get(g_game_manager) == AETHER_GAME_STATE_RUNNING)
+        (void)aether_game_shutdown(g_game_manager);
+    return aether_game_select_by_dir(g_game_manager, game_dir) == AETHER_OK ? 1 : 0;
+}
+
+const char *engine_game_active_dir(void) {
+    return g_game_manager ? aether_game_active_dir(g_game_manager) : NULL;
+}
+const char *engine_game_start_map(void) {
+    return g_game_manager ? aether_game_start_map(g_game_manager) : NULL;
+}
+int engine_game_state(void) {
+    return g_game_manager ? (int)aether_game_state_get(g_game_manager) : 0;
+}
+int engine_game_data_present(const char *game_dir) {
+    if (!g_game_manager || !game_dir) return 0;
+    const aether_game_info_t *info = aether_game_info_by_dir(game_dir);
+    if (!info) return 0;
+    return aether_game_data_present(g_game_manager, info->id) ? 1 : 0;
+}
+unsigned long long engine_game_run_frames(void) {
+    return g_game_manager ? (unsigned long long)aether_game_run_frames(g_game_manager) : 0ULL;
+}
+int engine_manifest_load_all(const char *dir_path) {
+    if (!dir_path) return -1;
+    aether_manifest_clear();
+    return (int)aether_manifest_load_all(dir_path);
+}
+int engine_manifest_count(void) { return (int)aether_manifest_count(); }
+
 /* ---------- Input ---------- */
 void engine_input_set_move(float x, float y)   { if (g_input) aether_input_set_move(g_input, x, y); }
-void engine_input_add_look(float dx, float dy) { if (g_input) aether_input_add_look(g_input, dx, dy); }
+void engine_input_add_look(float dx, float dy) {
+    if (!g_input) return;
+    bool invert = false;
+    if (g_settings) aether_settings_get_bool(g_settings, "in_invert_y", &invert);
+    if (invert) dy = -dy;
+    aether_input_add_look(g_input, dx, dy);
+}
 void engine_input_set_action(const char *n, bool p) {
     if (!g_input || !n) return;
     aether_input_action_t a = map_action_name(n);
@@ -457,17 +563,124 @@ void engine_hud_give_demo_loadout(void) {
     engine_hud_set_clip(17, 17);
 }
 
-/* ---------- Settings ---------- */
+/* ---------- Settings / CVars / Audio / FS ---------- */
+void engine_settings_apply(void);
 void engine_settings_save(const char *f) { if (g_settings && f) (void)aether_settings_save(g_settings, f); }
 void engine_settings_load(const char *f) { if (g_settings && f) (void)aether_settings_load(g_settings, f); }
 
-/* ---------- Audio ---------- */
+int engine_settings_save_default(void) {
+    if (!g_settings || !g_settings_path[0]) return 0;
+    return aether_settings_save(g_settings, g_settings_path) == AETHER_OK ? 1 : 0;
+}
+int engine_settings_load_default(void) {
+    if (!g_settings || !g_settings_path[0]) return 0;
+    aether_result_t r = aether_settings_load(g_settings, g_settings_path);
+    if (r == AETHER_OK) engine_settings_apply();
+    return r == AETHER_OK ? 1 : 0;
+}
+
+void engine_settings_apply(void) {
+    if (!g_settings) return;
+    f32 vol = 1.0f, music = 0.7f, fx = 1.0f, sens = 1.0f;
+    bool muted = false, inv = false;
+    aether_settings_get_float(g_settings, "s_master_volume", &vol);
+    aether_settings_get_float(g_settings, "s_music_volume", &music);
+    aether_settings_get_float(g_settings, "s_effects_volume", &fx);
+    aether_settings_get_bool(g_settings, "s_mute", &muted);
+    aether_settings_get_float(g_settings, "in_look_sensitivity", &sens);
+    aether_settings_get_bool(g_settings, "in_invert_y", &inv);
+    if (g_audio) {
+        aether_audio_set_master_volume(g_audio, vol);
+        aether_audio_set_channel_volume(g_audio, AETHER_AUDIO_CHANNEL_MUSIC, music);
+        aether_audio_set_channel_volume(g_audio, AETHER_AUDIO_CHANNEL_EFFECTS, fx);
+        aether_audio_set_mute(g_audio, muted);
+    }
+    g_player.look_speed = 0.0035f * (sens > 0.01f ? sens : 1.0f);
+    if (g_cvars) {
+        char buf[64];
+        snprintf(buf, sizeof buf, "%g", (double)vol); aether_cvar_set(g_cvars, "s_master_volume", buf);
+        snprintf(buf, sizeof buf, "%g", (double)music); aether_cvar_set(g_cvars, "s_music_volume", buf);
+        snprintf(buf, sizeof buf, "%g", (double)fx); aether_cvar_set(g_cvars, "s_effects_volume", buf);
+        aether_cvar_set(g_cvars, "s_mute", muted ? "1" : "0");
+        snprintf(buf, sizeof buf, "%g", (double)sens); aether_cvar_set(g_cvars, "in_look_sensitivity", buf);
+        aether_cvar_set(g_cvars, "in_invert_y", inv ? "1" : "0");
+    }
+}
+
+int engine_settings_set_float(const char *key, float v) {
+    if (!g_settings || !key) return 0;
+    if (aether_settings_set_float(g_settings, key, v) != AETHER_OK) return 0;
+    engine_settings_apply();
+    return 1;
+}
+int engine_settings_set_int(const char *key, int v) {
+    if (!g_settings || !key) return 0;
+    if (aether_settings_set_int(g_settings, key, (i32)v) != AETHER_OK) return 0;
+    engine_settings_apply();
+    return 1;
+}
+int engine_settings_set_bool(const char *key, bool v) {
+    if (!g_settings || !key) return 0;
+    if (aether_settings_set_bool(g_settings, key, v) != AETHER_OK) return 0;
+    engine_settings_apply();
+    return 1;
+}
+float engine_settings_get_float(const char *key, float fallback) {
+    f32 v = fallback;
+    if (g_settings && key) aether_settings_get_float(g_settings, key, &v);
+    return v;
+}
+int engine_settings_get_int(const char *key, int fallback) {
+    i32 v = (i32)fallback;
+    if (g_settings && key) aether_settings_get_int(g_settings, key, &v);
+    return (int)v;
+}
+bool engine_settings_get_bool(const char *key, bool fallback) {
+    bool v = fallback;
+    if (g_settings && key) aether_settings_get_bool(g_settings, key, &v);
+    return v;
+}
+
+int engine_cvar_set(const char *name, const char *value) {
+    if (!g_cvars || !name || !value) return 0;
+    return aether_cvar_set(g_cvars, name, value) == AETHER_OK ? 1 : 0;
+}
+float engine_cvar_float(const char *name, float fallback) {
+    return g_cvars ? aether_cvar_float(g_cvars, name, fallback) : fallback;
+}
+int engine_cvar_int(const char *name, int fallback) {
+    return g_cvars ? (int)aether_cvar_int(g_cvars, name, (i32)fallback) : fallback;
+}
+bool engine_cvar_bool(const char *name, bool fallback) {
+    return g_cvars ? aether_cvar_bool(g_cvars, name, fallback) : fallback;
+}
+
 void engine_audio_init(void)                 { if (!g_audio) g_audio = aether_audio_create(); aether_audio_init(g_audio); }
 void engine_audio_shutdown(void)             { if (g_audio) aether_audio_shutdown(g_audio); }
-void engine_audio_set_master_volume(float v) { if (g_audio) aether_audio_set_master_volume(g_audio, v); }
-void engine_audio_set_mute(bool m)           { if (g_audio) aether_audio_set_mute(g_audio, m); }
+int  engine_audio_ready(void)                { return (g_audio && aether_audio_is_ready(g_audio)) ? 1 : 0; }
+void engine_audio_flush(void)                { if (g_audio) aether_audio_flush(g_audio); }
+void engine_audio_set_master_volume(float v) {
+    if (g_audio) aether_audio_set_master_volume(g_audio, v);
+    if (g_settings) (void)aether_settings_set_float(g_settings, "s_master_volume", v);
+}
+void engine_audio_set_mute(bool m) {
+    if (g_audio) aether_audio_set_mute(g_audio, m);
+    if (g_settings) (void)aether_settings_set_bool(g_settings, "s_mute", m);
+}
 void engine_audio_play(const char *p, float v, bool l) { if (g_audio && p) (void)aether_audio_play_effect(g_audio, p, v, l); }
 void engine_audio_stop_all(void)             { if (g_audio) aether_audio_stop_all(g_audio); }
+
+int engine_fs_root_count(void) { return g_fs ? (int)aether_fs_root_count(g_fs) : 0; }
+int engine_fs_root_at(int index, char *out, int out_cap) {
+    if (!g_fs || !out || out_cap <= 0) return 0;
+    const char *r = aether_fs_root_at(g_fs, (u32)index);
+    if (!r) return 0;
+    aether_str_copy(out, (size_t)out_cap, r);
+    return 1;
+}
+int engine_fs_exists(const char *vpath) {
+    return (g_fs && vpath && aether_fs_exists(g_fs, vpath)) ? 1 : 0;
+}
 
 /* ---------- Renderer ---------- */
 void engine_renderer_attach_metal(void *v) {

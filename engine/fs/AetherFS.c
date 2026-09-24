@@ -15,6 +15,7 @@ typedef struct aether_fs_root {
 } aether_fs_root_t;
 
 struct aether_fs {
+    char             basedir[512];
     aether_fs_root_t roots[AETHER_FS_MAX_ROOTS];
     u32              root_count;
     char             resolve_cache[512];
@@ -24,8 +25,37 @@ aether_fs_t *aether_fs_create(const char *basedir) {
     if (!basedir) return NULL;
     aether_fs_t *fs = (aether_fs_t*)calloc(1, sizeof *fs);
     if (!fs) return NULL;
+    aether_str_copy(fs->basedir, sizeof fs->basedir, basedir);
     aether_log(AETHER_LOG_INFO, "fs", "vfs created: basedir='%s'", basedir);
     return fs;
+}
+
+const char *aether_fs_basedir(const aether_fs_t *fs) {
+    return fs ? fs->basedir : NULL;
+}
+
+aether_result_t aether_fs_setup_game(aether_fs_t *fs, const char *basedir,
+                                     const char *gamedir) {
+    if (!fs || !basedir || !gamedir || !gamedir[0]) return AETHER_ERR_INVALID_ARG;
+    aether_str_copy(fs->basedir, sizeof fs->basedir, basedir);
+    aether_fs_clear_roots(fs);
+
+    char valve_dir[600];
+    snprintf(valve_dir, sizeof valve_dir, "%s/valve", basedir);
+    if (aether_fs_add_root(fs, valve_dir) == AETHER_OK)
+        (void)aether_fs_auto_mount_paks(fs, valve_dir);
+
+    if (!aether_str_eq(gamedir, "valve")) {
+        char gd[600];
+        snprintf(gd, sizeof gd, "%s/%s", basedir, gamedir);
+        if (aether_fs_add_root(fs, gd) == AETHER_OK)
+            (void)aether_fs_auto_mount_paks(fs, gd);
+    }
+
+    aether_log(AETHER_LOG_INFO, "fs",
+               "setup_game basedir='%s' gamedir='%s' roots=%u",
+               basedir, gamedir, fs->root_count);
+    return AETHER_OK;
 }
 
 void aether_fs_destroy(aether_fs_t *fs) {

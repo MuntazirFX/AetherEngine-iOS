@@ -13,8 +13,11 @@ A brand-new, clean-room iOS game engine and application built from scratch.
 > **Note:** User must provide legally obtained game data. No copyrighted assets are bundled.
 
 ## Architecture
-- `engine/core` – Foundation: types, arena, logging, engine runtime
-- `engine/game` – Game registry & lifecycle manager
+- `engine/core` – Foundation: types, arena, logging, engine runtime / host frame
+- `engine/game` – Game registry, manifests, lifecycle + subsystem tick
+- `engine/fs` – Multi-root VFS (`setup_game` mounts valve + mod dir; no assets bundled)
+- `engine/audio` / `engine/input` / `engine/config` – Mixer queue, touch/input, settings+cvars
+- `ios/AetherApp` – SwiftUI + Metal + EngineBridge
 
 ## Host verification (STEP 2)
 
@@ -36,6 +39,28 @@ This compiles all `engine/**/*.c` sources, archives `libaether_engine.a`, and ru
 
 GitHub Actions workflow `.github/workflows/verify.yml` runs the same script on every push/PR to `main`.
 
+## STEPs 3–10 batch (`continue/steps-3-10-batch`)
+
+One PR advances the post-verify foundation without shipping Half-Life assets:
+
+| STEP | Status | What landed |
+|------|--------|-------------|
+| 3 Engine foundation | **done / partial** | `aether_engine_host_frame`, last_dt/fixed_dt, game manager as subsystem tick |
+| 4 iOS application | **partial** | Settings sheet, selected-game launch, `engine_host_frame` in Metal draw |
+| 5 5-game config | **done / partial** | Manifest `load_all` (5 JSON), select/launch/FS roots; empty→synthetic |
+| 6 Touch/Input/Settings | **done / partial** | Holdable touch actions, settings→C settings/cvars/audio, `Documents/aether.cfg` |
+| 7 Renderer/Audio/FS | **partial** | `aether_fs_setup_game`, audio ready/flush; Metal path already present |
+| 8 Build system | **done / partial** | `cmake_host.sh`, Info.plist path fix, verify path list |
+| 9 GA ARM64 | **partial** | workflow uses verify_host; IPA still manual macos dispatch |
+| 10 Verification | **done / partial** | smoke covers host_frame/FS/manifests/settings/audio/cvars |
+
+```bash
+bash build/scripts/verify_host.sh          # Linux/macOS host (required green)
+bash build/scripts/cmake_host.sh           # optional CMake host lib + smoke target
+# iOS IPA (macOS + Xcode + XcodeGen):
+bash build/scripts/build_ios.sh && bash build/scripts/package_ipa.sh
+```
+
 ## Build Status
 - [x] STEP 1: Core modules
 - [x] STEP 2: Verification (host compile + smoke via `build/scripts/verify_host.sh` / `.github/workflows/verify.yml`)
@@ -54,14 +79,14 @@ GitHub Actions workflow `.github/workflows/verify.yml` runs the same script on e
 - [x] STEP 2n: Waterlevel + splash / enter-exit FX — feet/waist/eye tiers, particle splash, air/drown stub (see `continue/bsp-waterlevel-splash`)
 - [x] STEP 2o: Drown → health damage + HEV air HUD — tick_drown wire, air meter bridge/ClassicHUD (see `continue/bsp-drown-health`)
 - [x] STEP 2p: Fall damage on land + HUD punch/flash — calc_fall_damage wire, water soft, view punch (see `continue/bsp-fall-damage`)
-- [ ] STEP 3: Engine foundation
-- [ ] STEP 4: iOS application
-- [ ] STEP 5: 5-game configuration
-- [ ] STEP 6: Touch/Input/Settings
-- [ ] STEP 7: Renderer/Audio/Filesystem
-- [ ] STEP 8: Build system
-- [ ] STEP 9: GitHub Actions ARM64
-- [ ] STEP 10: Complete verification
+- [x] STEP 3: Engine foundation — host_frame/timebase, subsystem registry, game manager tick (partial: no full mod DLL tick yet)
+- [x] STEP 4: iOS application — App/settings/game-select/host_frame wired into Metal loop (partial: playable demo loop exists; full campaign load still needs user assets)
+- [x] STEP 5: 5-game configuration — manifests load_all + Dashboard selection → launch/FS roots end-to-end (partial: empty dirs fall back to synthetic BSP)
+- [x] STEP 6: Touch/Input/Settings — touch hold buttons, settings→cvars/audio/look, aether.cfg persistence (partial: no controller profile UI yet)
+- [x] STEP 7: Renderer/Audio/Filesystem — `aether_fs_setup_game` (no bundled HL), audio ready/flush, Metal already primary (partial: no real WAV decode; lightmap still procedural stub)
+- [x] STEP 8: Build system — CMake host script + XcodeGen Info.plist path + verify_host path checks (partial: iOS IPA still requires macOS/Xcode)
+- [x] STEP 9: GitHub Actions ARM64 — `build-arm64.yml` runs `verify_host.sh`; IPA on `workflow_dispatch` only (partial: PR path is host-verify on macos-14, not a full device IPA)
+- [x] STEP 10: Complete verification — expanded `host_smoke` + verify_host API greps; README marks honest
 
 ## Target
 - iOS (iPhone / iPad)
