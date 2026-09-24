@@ -5,12 +5,14 @@ set(AETHER_BSP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/AetherBSP.c
     ${CMAKE_CURRENT_SOURCE_DIR}/AetherBSPGeometry.c
     ${CMAKE_CURRENT_SOURCE_DIR}/AetherBSPSynthetic.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/AetherBSPVis.c
 )
 
 set(AETHER_BSP_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/AetherBSP.h
     ${CMAKE_CURRENT_SOURCE_DIR}/AetherBSPGeometry.h
     ${CMAKE_CURRENT_SOURCE_DIR}/AetherBSPSynthetic.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/AetherBSPVis.h
 )
 
 target_sources(aether_engine PRIVATE

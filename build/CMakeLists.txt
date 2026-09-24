@@ -113,6 +113,8 @@ set(AETHER_ENGINE_SOURCES
     # -------- bsp --------
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSP.c
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPGeometry.c
+    ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPSynthetic.c
+    ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPVis.c
 
     # -------- player --------
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayer.c
@@ -257,6 +259,8 @@ set(AETHER_ENGINE_HEADERS
     # -------- bsp --------
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSP.h
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPGeometry.h
+    ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPSynthetic.h
+    ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPVis.h
 
     # -------- player --------
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayer.h

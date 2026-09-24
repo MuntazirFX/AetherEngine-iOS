@@ -157,6 +157,27 @@ int  engine_bsp_mesh_build_or_synthetic(const char *vpath);
 int  engine_bsp_mesh_is_synthetic(void);
 #define ENGINE_CMD_DRAW_WORLD 4
 
+/* ---------- BSP VIS / leaf culling ---------- */
+/* View origin used for leaf find (typically player eye). */
+void engine_bsp_vis_set_view_origin(float x, float y, float z);
+void engine_bsp_vis_get_view_origin(float out_xyz[3]);
+/* Debug: when set, cull treats every face as visible. */
+void engine_bsp_vis_set_force_full(bool enabled);
+int  engine_bsp_vis_force_full(void);
+/* 0=USE_PVS, 1=CURRENT_LEAF_ONLY, 2=FORCE_FULL (see aether_bsp_vis_mode_t). */
+void engine_bsp_vis_set_mode(int mode);
+int  engine_bsp_vis_mode(void);
+/* Leaf containing the current view origin (-1 if unknown / no tree). */
+int  engine_bsp_vis_find_leaf(void);
+int  engine_bsp_vis_find_leaf_at(float x, float y, float z);
+/* Recompute culled index list from active BSP+mesh + view origin. Returns visible index count. */
+int  engine_bsp_vis_update(void);
+int  engine_bsp_vis_visible_index_count(void);
+int  engine_bsp_vis_visible_face_count(void);
+int  engine_bsp_vis_total_face_count(void);
+int  engine_bsp_vis_visible_leaf_count(void);
+int  engine_bsp_vis_copy_indices(uint32_t *out, int max_indices);
+
 /* ---------- Lightmap (procedural stub atlas) ---------- */
 int  engine_lightmap_enabled(void);
 void engine_lightmap_set_enabled(bool enabled);

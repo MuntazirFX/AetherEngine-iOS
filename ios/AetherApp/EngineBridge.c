@@ -25,6 +25,7 @@
 #include "../../engine/bsp/AetherBSP.h"
 #include "../../engine/bsp/AetherBSPGeometry.h"
 #include "../../engine/bsp/AetherBSPSynthetic.h"
+#include "../../engine/bsp/AetherBSPVis.h"
 #include "../../engine/render/AetherWorld.h"
 #include "../../engine/player/AetherPlayer.h"
 #include "../../engine/player/AetherPlayerHealth.h"
@@ -53,7 +54,15 @@ static aether_fs_t             *g_fs           = NULL;
 static aether_audio_t          *g_audio        = NULL;
 static aether_renderer_t       *g_renderer     = NULL;
 static aether_mesh_t           *g_active_mesh  = NULL;
+static aether_bsp_t            *g_active_bsp   = NULL; /* kept for leaf/VIS queries + collision borrow */
 static bool                     g_mesh_is_synthetic = false;
+static float                    g_vis_view_origin[3] = {0.f, 0.f, 40.f};
+static bool                     g_vis_force_full = false;
+static aether_bsp_vis_mode_t    g_vis_mode = AETHER_BSP_VIS_USE_PVS;
+static u32                     *g_vis_indices = NULL;
+static u32                      g_vis_index_count = 0;
+static u32                      g_vis_index_cap = 0;
+static aether_bsp_vis_stats_t   g_vis_stats;
 static aether_collision_t      *g_collision    = NULL;
 static aether_texture_atlas_t  *g_atlas        = NULL;
 static aether_model_mesh_t     *g_mdl_mesh     = NULL;
@@ -151,6 +160,9 @@ void engine_shutdown(void) {
     if (g_atlas)        { aether_texture_atlas_free(g_atlas); g_atlas = NULL; }
     if (g_collision)    { aether_collision_free(g_collision); g_collision = NULL; }
     if (g_active_mesh)  { aether_mesh_free(g_active_mesh); g_active_mesh = NULL; }
+    if (g_active_bsp)   { aether_bsp_free(g_active_bsp); g_active_bsp = NULL; }
+    free(g_vis_indices); g_vis_indices = NULL; g_vis_index_count = 0; g_vis_index_cap = 0;
+    g_mesh_is_synthetic = false;
     if (g_game_manager) { aether_game_manager_destroy(g_game_manager); g_game_manager = NULL; }
     if (g_engine)       { aether_engine_stop(g_engine); aether_engine_destroy(g_engine); g_engine = NULL; }
     if (g_input)        { aether_input_destroy(g_input); g_input = NULL; }
@@ -371,6 +383,9 @@ void engine_renderer_draw_world(void) {
     if (feat && g_active_mesh) {
         aether_world_render_set_surface_count(&feat->world,
             g_active_mesh->index_count / 3u);
+        u32 vis_tris = g_vis_index_count ? (g_vis_index_count / 3u)
+                                         : (g_active_mesh->index_count / 3u);
+        aether_world_render_set_visible_surface_count(&feat->world, vis_tris);
     }
     (void)aether_renderer_draw_world(g_renderer);
 }
@@ -667,15 +682,19 @@ int engine_bsp_inspect_vfs_text(const char *vp, char *ob, int cap) {
 
 /* ---------- BSP mesh + collision + atlas + entities + monsters ---------- */
 
-/* Shared: activate a loaded BSP into mesh + entities + monsters. Takes ownership of bsp (frees it). */
+/* Shared: activate a loaded BSP into mesh + entities + monsters.
+ * Takes ownership of bsp and keeps it in g_active_bsp for leaf/VIS + collision. */
 static int bridge_activate_bsp(aether_bsp_t *b, bool synthetic) {
     if (!b) return 0;
 
     if (g_monsters_init) { aether_monster_registry_reset(&g_monsters); g_monsters_init = false; }
     if (g_entity_mgr) { aether_entity_mgr_destroy(g_entity_mgr); g_entity_mgr = NULL; }
     if (g_atlas)      { aether_texture_atlas_free(g_atlas);    g_atlas = NULL; }
-    if (g_active_mesh){ aether_mesh_free(g_active_mesh);       g_active_mesh = NULL; }
     if (g_collision)  { aether_collision_free(g_collision);    g_collision = NULL; }
+    if (g_active_mesh){ aether_mesh_free(g_active_mesh);       g_active_mesh = NULL; }
+    if (g_active_bsp) { aether_bsp_free(g_active_bsp);         g_active_bsp = NULL; }
+    free(g_vis_indices); g_vis_indices = NULL; g_vis_index_count = 0; g_vis_index_cap = 0;
+    memset(&g_vis_stats, 0, sizeof g_vis_stats);
     g_player_start_found = false;
     g_mesh_is_synthetic = false;
 
@@ -704,14 +723,15 @@ static int bridge_activate_bsp(aether_bsp_t *b, bool synthetic) {
     if (aether_mesh_from_bsp(b, g_atlas, &m) != AETHER_OK || !m) {
         aether_bsp_free(b); return 0;
     }
+    g_active_bsp = b;
     g_active_mesh = m;
     g_mesh_is_synthetic = synthetic;
 
-    g_collision = aether_collision_build(b);
+    g_collision = aether_collision_build(g_active_bsp);
 
     g_entity_mgr = aether_entity_mgr_create();
     if (g_entity_mgr) {
-        u32 spawned = aether_entity_spawn_from_bsp(g_entity_mgr, b);
+        u32 spawned = aether_entity_spawn_from_bsp(g_entity_mgr, g_active_bsp);
         aether_log(AETHER_LOG_INFO, "bridge", "spawned %u runtime entities%s",
                    spawned, synthetic ? " (synthetic)" : "");
     }
@@ -770,7 +790,25 @@ static int bridge_activate_bsp(aether_bsp_t *b, bool synthetic) {
         }
     }
 
-    aether_bsp_free(b);
+    /* Seed view origin at mesh center / player start height and build initial cull list. */
+    g_vis_view_origin[0] = m->bounds_center[0];
+    g_vis_view_origin[1] = m->bounds_center[1];
+    g_vis_view_origin[2] = m->bounds_center[2];
+    if (g_player_start_found && g_entity_mgr) {
+        aether_vec3_t ps, pa;
+        if (aether_entity_get_player_start(g_entity_mgr, &ps, &pa) == AETHER_OK) {
+            g_vis_view_origin[0] = ps.x;
+            g_vis_view_origin[1] = ps.y;
+            g_vis_view_origin[2] = ps.z + 36.f; /* eye-ish */
+        }
+    }
+    (void)engine_bsp_vis_update();
+    aether_log(AETHER_LOG_INFO, "bridge",
+               "VIS leaf=%d faces %u/%u indices %u/%u mode=%d",
+               g_vis_stats.view_leaf,
+               g_vis_stats.visible_faces, g_vis_stats.total_faces,
+               g_vis_stats.visible_indices, g_vis_stats.total_indices,
+               (int)g_vis_mode);
     return 1;
 }
 
@@ -833,10 +871,107 @@ void engine_bsp_mesh_release(void) {
     if (g_monsters_init) { aether_monster_registry_reset(&g_monsters); g_monsters_init = false; }
     if (g_entity_mgr) { aether_entity_mgr_destroy(g_entity_mgr); g_entity_mgr = NULL; }
     if (g_atlas)      { aether_texture_atlas_free(g_atlas); g_atlas = NULL; }
-    if (g_active_mesh){ aether_mesh_free(g_active_mesh); g_active_mesh = NULL; }
     if (g_collision)  { aether_collision_free(g_collision); g_collision = NULL; }
+    if (g_active_mesh){ aether_mesh_free(g_active_mesh); g_active_mesh = NULL; }
+    if (g_active_bsp) { aether_bsp_free(g_active_bsp); g_active_bsp = NULL; }
+    free(g_vis_indices); g_vis_indices = NULL; g_vis_index_count = 0; g_vis_index_cap = 0;
+    memset(&g_vis_stats, 0, sizeof g_vis_stats);
 }
 
+
+
+/* ---------- BSP VIS / leaf culling ---------- */
+void engine_bsp_vis_set_view_origin(float x, float y, float z) {
+    g_vis_view_origin[0] = x;
+    g_vis_view_origin[1] = y;
+    g_vis_view_origin[2] = z;
+}
+
+void engine_bsp_vis_get_view_origin(float out_xyz[3]) {
+    if (!out_xyz) return;
+    out_xyz[0] = g_vis_view_origin[0];
+    out_xyz[1] = g_vis_view_origin[1];
+    out_xyz[2] = g_vis_view_origin[2];
+}
+
+void engine_bsp_vis_set_force_full(bool enabled) {
+    g_vis_force_full = enabled;
+}
+
+int engine_bsp_vis_force_full(void) {
+    return g_vis_force_full ? 1 : 0;
+}
+
+void engine_bsp_vis_set_mode(int mode) {
+    if (mode < 0 || mode > 2) mode = 0;
+    g_vis_mode = (aether_bsp_vis_mode_t)mode;
+}
+
+int engine_bsp_vis_mode(void) {
+    return (int)g_vis_mode;
+}
+
+int engine_bsp_vis_find_leaf_at(float x, float y, float z) {
+    if (!g_active_bsp) return -1;
+    return aether_bsp_find_leaf(g_active_bsp, x, y, z);
+}
+
+int engine_bsp_vis_find_leaf(void) {
+    return engine_bsp_vis_find_leaf_at(
+        g_vis_view_origin[0], g_vis_view_origin[1], g_vis_view_origin[2]);
+}
+
+int engine_bsp_vis_update(void) {
+    g_vis_index_count = 0;
+    memset(&g_vis_stats, 0, sizeof g_vis_stats);
+    if (!g_active_bsp || !g_active_mesh || !g_active_mesh->indices) return 0;
+
+    u32 need = g_active_mesh->index_count;
+    if (need == 0) return 0;
+    if (g_vis_index_cap < need) {
+        u32 *nbuf = (u32 *)realloc(g_vis_indices, (size_t)need * sizeof(u32));
+        if (!nbuf) return 0;
+        g_vis_indices = nbuf;
+        g_vis_index_cap = need;
+    }
+
+    aether_bsp_vis_mode_t mode = g_vis_force_full ? AETHER_BSP_VIS_FORCE_FULL : g_vis_mode;
+    g_vis_index_count = aether_bsp_vis_cull_mesh(
+        g_active_bsp, g_active_mesh,
+        g_vis_view_origin[0], g_vis_view_origin[1], g_vis_view_origin[2],
+        mode, g_vis_indices, g_vis_index_cap, &g_vis_stats);
+    g_vis_stats.force_full_vis = g_vis_force_full || (mode == AETHER_BSP_VIS_FORCE_FULL);
+
+    if (g_renderer) {
+        aether_render_features_t *feat = aether_renderer_features(g_renderer);
+        if (feat) {
+            aether_world_render_set_surface_count(&feat->world,
+                g_active_mesh->index_count / 3u);
+            aether_world_render_set_visible_surface_count(&feat->world,
+                g_vis_index_count / 3u);
+        }
+    }
+    return (int)g_vis_index_count;
+}
+
+int engine_bsp_vis_visible_index_count(void) { return (int)g_vis_index_count; }
+int engine_bsp_vis_visible_face_count(void)  { return (int)g_vis_stats.visible_faces; }
+int engine_bsp_vis_total_face_count(void)    {
+    return g_active_bsp ? (int)aether_bsp_face_count(g_active_bsp) : (int)g_vis_stats.total_faces;
+}
+int engine_bsp_vis_visible_leaf_count(void)  { return (int)g_vis_stats.visible_leaf_count; }
+
+int engine_bsp_vis_copy_indices(uint32_t *out, int max_indices) {
+    if (!out || max_indices <= 0) return 0;
+    if (!g_vis_indices || g_vis_index_count == 0) {
+        /* Fallback: full mesh so Metal still draws if update was skipped. */
+        return engine_bsp_mesh_copy_indices(out, max_indices);
+    }
+    int n = (int)g_vis_index_count;
+    if (n > max_indices) n = max_indices;
+    memcpy(out, g_vis_indices, (size_t)n * sizeof(u32));
+    return n;
+}
 
 /* ---------- Lightmap ---------- */
 static aether_lightmap_t *bridge_lightmap(void) {

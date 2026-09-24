@@ -39,8 +39,10 @@ aether_result_t aether_mesh_from_bsp(const aether_bsp_t *bsp,
     if (!m) return AETHER_ERR_OUT_OF_MEM;
     m->vertices = (aether_mesh_vertex_t*)malloc((size_t)total_verts * sizeof(aether_mesh_vertex_t));
     m->indices  = (u32*)malloc((size_t)total_indices * sizeof(u32));
-    if (!m->vertices || !m->indices) {
-        free(m->vertices); free(m->indices); free(m); return AETHER_ERR_OUT_OF_MEM;
+    m->face_ranges = (aether_mesh_face_range_t*)calloc(face_count, sizeof(aether_mesh_face_range_t));
+    m->face_count = face_count;
+    if (!m->vertices || !m->indices || !m->face_ranges) {
+        free(m->vertices); free(m->indices); free(m->face_ranges); free(m); return AETHER_ERR_OUT_OF_MEM;
     }
 
     f32 inf = 1e30f;
@@ -122,11 +124,16 @@ aether_result_t aether_mesh_from_bsp(const aether_bsp_t *bsp,
             if (v->z > m->bounds_max[2]) m->bounds_max[2] = v->z;
         }
 
+        u32 face_index_start = icursor;
         for (u16 i = 1; i + 1 < face->num_edges; ++i) {
             m->indices[icursor++] = base_vertex + 0;
             m->indices[icursor++] = base_vertex + i;
             m->indices[icursor++] = base_vertex + i + 1;
         }
+        m->face_ranges[f].first_index = face_index_start;
+        m->face_ranges[f].index_count = icursor - face_index_start;
+        m->face_ranges[f].first_vertex = base_vertex;
+        m->face_ranges[f].vertex_count = vcursor - base_vertex;
     }
 
     m->vertex_count = vcursor;
@@ -146,6 +153,7 @@ void aether_mesh_free(aether_mesh_t *mesh) {
     if (!mesh) return;
     free(mesh->vertices);
     free(mesh->indices);
+    free(mesh->face_ranges);
     free(mesh);
 }
 

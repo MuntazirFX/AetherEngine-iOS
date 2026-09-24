@@ -1,5 +1,5 @@
 // DashboardView.swift — AetherEngine-iOS · Clean-room.
-// STEP 2g: Synthetic BSP/world → Metal path (no game assets required).
+// STEP 2i: Synthetic BSP/world → Metal + lightmap + VIS leaf cull.
 
 import SwiftUI
 
@@ -237,7 +237,10 @@ struct DashboardView: View {
             let lmInfo = (lmW > 0 && lmH > 0)
                 ? "\(lmW)x\(lmH) stub=\(engine_lightmap_is_stub() != 0)"
                 : "pending (Metal bake)"
-            alertMessage = "Vertices: \(engine_bsp_mesh_vertex_count())\nTriangles: \(engine_bsp_mesh_triangle_count())\nEntities: \(engine_entity_count())\nMonsters: \(engine_entity_monster_count())\nLightmap: \(lmInfo)\nSource: \(synth ? "synthetic:demo_room" : "maps/c0a0.bsp")"
+            let leaf = engine_bsp_vis_find_leaf()
+            let visFaces = engine_bsp_vis_visible_face_count()
+            let totFaces = engine_bsp_vis_total_face_count()
+            alertMessage = "Vertices: \(engine_bsp_mesh_vertex_count())\nTriangles: \(engine_bsp_mesh_triangle_count())\nEntities: \(engine_entity_count())\nMonsters: \(engine_entity_monster_count())\nLightmap: \(lmInfo)\nVIS: leaf=\(leaf) faces=\(visFaces)/\(totFaces)\nSource: \(synth ? "synthetic:demo_room" : "maps/c0a0.bsp")"
         } else {
             alertTitle = "Failed"; alertMessage = "Could not build world mesh"
         }
