@@ -1423,3 +1423,46 @@ u32 aether_mdl_lod_mesh_copy(const aether_mdl_lod_mesh_bucket_t *bucket,
     if (out_tri_count) *out_tri_count = tris;
     return tris;
 }
+
+i32 aether_mdl_lod_gpu_issue_draw(const aether_mdl_lod_table_t *table,
+                                  const aether_mdl_lod_mesh_set_t *meshes,
+                                  f32 distance,
+                                  aether_mdl_lod_gpu_draw_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!table || !meshes || !out) return -1;
+    const aether_mdl_lod_mesh_bucket_t *b = NULL;
+    i32 lod = aether_mdl_lod_mesh_select(table, meshes, distance, &b);
+    out->distance = distance;
+    out->lod = lod;
+    out->cpu_select = true;
+    if (lod < 0 || !b || b->vert_count == 0 || b->index_count < 3) {
+        out->issue = false;
+        return lod;
+    }
+    out->vert_count = b->vert_count;
+    out->index_count = b->index_count;
+    out->tri_count = b->index_count / 3;
+    out->first_vertex = 0;
+    out->first_index = 0;
+    out->issue = true;
+    return lod;
+}
+
+i32 aether_mdl_lod_gpu_issue_draw_copy(const aether_mdl_lod_table_t *table,
+                                       const aether_mdl_lod_mesh_set_t *meshes,
+                                       f32 distance,
+                                       aether_mdl_lod_gpu_draw_t *out,
+                                       f32 *out_pos, u32 max_verts,
+                                       u32 *out_idx, u32 max_idx) {
+    i32 lod = aether_mdl_lod_gpu_issue_draw(table, meshes, distance, out);
+    if (lod < 0 || !out || !out->issue) return lod;
+    const aether_mdl_lod_mesh_bucket_t *b = NULL;
+    aether_mdl_lod_mesh_select(table, meshes, distance, &b);
+    if (!b) { out->issue = false; return -1; }
+    u32 vc = 0, tc = 0;
+    aether_mdl_lod_mesh_copy(b, out_pos, max_verts, out_idx, max_idx, &vc, &tc);
+    out->vert_count = vc;
+    out->tri_count = tc;
+    out->index_count = tc * 3;
+    return lod;
+}

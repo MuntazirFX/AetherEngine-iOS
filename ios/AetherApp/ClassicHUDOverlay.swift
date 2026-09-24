@@ -16,6 +16,8 @@ struct ClassicHUDOverlay: View {
     @State private var airMax: Int = 100
     @State private var drowning: Bool = false
     @State private var crosshairSpread: CGFloat = 0
+    @State private var specLabel: String = ""
+    @State private var specVisible: Bool = false
 
     private let poll = Timer.publish(every: 1.0 / 15.0, on: .main, in: .common).autoconnect()
 
@@ -37,6 +39,20 @@ struct ClassicHUDOverlay: View {
                     }
                     .padding(.horizontal, 18)
                     .padding(.bottom, 18)
+                }
+
+                if specVisible && !specLabel.isEmpty {
+                    VStack {
+                        Text(specLabel)
+                            .font(.system(size: 16, weight: .bold, design: .serif))
+                            .foregroundColor(.cyan)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 6)
+                            .background(Color.black.opacity(0.55))
+                            .overlay(Rectangle().stroke(Color.cyan.opacity(0.35), lineWidth: 1))
+                        Spacer()
+                    }
+                    .padding(.top, 28)
                 }
 
                 if !alive {
@@ -154,6 +170,18 @@ struct ClassicHUDOverlay: View {
         }
         drowning = engine_hud_drowning() != 0
         crosshairSpread = CGFloat(engine_hud_crosshair_spread())
+        specVisible = engine_spectator_hud_visible() != 0
+        if specVisible {
+            var buf = [CChar](repeating: 0, count: 64)
+            let n = engine_spectator_hud_indicator(&buf, 64)
+            if n > 0 {
+                specLabel = String(cString: buf)
+            } else {
+                specLabel = ""
+            }
+        } else {
+            specLabel = ""
+        }
         _ = clipMax
     }
 }

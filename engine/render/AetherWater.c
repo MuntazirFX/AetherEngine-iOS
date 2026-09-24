@@ -378,3 +378,77 @@ bool aether_water_reflect_rt_was_resolved(const aether_water_reflect_rt_t *rt) {
 u32 aether_water_reflect_rt_mip_levels(const aether_water_reflect_rt_t *rt) {
     return rt ? rt->mip_levels : 0;
 }
+
+void aether_water_reflect_ent_list_init(aether_water_reflect_ent_list_t *list) {
+    aether_water_reflect_ent_list_clear(list);
+}
+void aether_water_reflect_ent_list_clear(aether_water_reflect_ent_list_t *list) {
+    if (!list) return;
+    memset(list, 0, sizeof(*list));
+}
+
+int aether_water_reflect_ent_list_push(aether_water_reflect_ent_list_t *list,
+                                       u32 ent_id, u8 kind,
+                                       const f32 origin[3], const f32 half_ext[3],
+                                       f32 water_height) {
+    if (!list || !origin || list->count >= AETHER_WATER_REFLECT_MAX_ENTS) return 0;
+    aether_water_reflect_ent_t *e = &list->items[list->count++];
+    e->ent_id = ent_id;
+    e->kind = kind;
+    e->origin[0] = origin[0]; e->origin[1] = origin[1]; e->origin[2] = origin[2];
+    if (half_ext) {
+        e->half_extents[0] = half_ext[0];
+        e->half_extents[1] = half_ext[1];
+        e->half_extents[2] = half_ext[2];
+    } else {
+        e->half_extents[0] = e->half_extents[1] = e->half_extents[2] = 8.f;
+    }
+    e->above_water = (origin[2] > water_height) ? 1 : 0;
+    if (kind == 1) list->monster_count++;
+    else list->entity_count++;
+    if (e->above_water) list->drawn++;
+    return 1;
+}
+
+u32 aether_water_reflect_ent_list_mark_above(aether_water_reflect_ent_list_t *list,
+                                             f32 water_height) {
+    if (!list) return 0;
+    u32 n = 0;
+    list->drawn = 0;
+    for (u32 i = 0; i < list->count; ++i) {
+        list->items[i].above_water = (list->items[i].origin[2] > water_height) ? 1 : 0;
+        if (list->items[i].above_water) { n++; list->drawn++; }
+    }
+    return n;
+}
+
+void aether_water_reflect_rt_draw_plan_ents(aether_water_reflect_rt_draw_t *plan,
+                                            const aether_water_reflect_ent_list_t *list) {
+    if (!plan) return;
+    if (!list || !plan->needed) {
+        plan->draw_entities = false;
+        plan->draw_monsters = false;
+        plan->entity_count = 0;
+        plan->monster_count = 0;
+        return;
+    }
+    u32 ec = 0, mc = 0;
+    for (u32 i = 0; i < list->count; ++i) {
+        if (!list->items[i].above_water) continue;
+        if (list->items[i].kind == 1) mc++;
+        else ec++;
+    }
+    plan->entity_count = ec;
+    plan->monster_count = mc;
+    plan->draw_entities = ec > 0;
+    plan->draw_monsters = mc > 0;
+}
+
+void aether_water_reflect_rt_draw_plan_full(const aether_water_reflect_rt_t *rt,
+                                            const aether_water_reflect_t *reflect,
+                                            const f32 view[16], const f32 proj[16],
+                                            const aether_water_reflect_ent_list_t *ents,
+                                            aether_water_reflect_rt_draw_t *out) {
+    aether_water_reflect_rt_draw_plan(rt, reflect, view, proj, out);
+    aether_water_reflect_rt_draw_plan_ents(out, ents);
+}

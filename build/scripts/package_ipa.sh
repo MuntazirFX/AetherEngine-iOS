@@ -47,3 +47,13 @@ IPA_SIZE=$(du -sh "${IPA_PATH}" | cut -f1)
 log "IPA created: ${IPA_PATH} (${IPA_SIZE})"
 log "Install via: AltStore / Sideloadly / TrollStore / ideviceinstaller"
 log "Done ✔"
+
+# ---------- Artifact notes (what appears after a successful run) ----------
+# On disk under build/out/:
+#   AetherEngine.ipa              — unsigned IPA zip (Payload/ layout)
+#   ipa-stage/Payload/            — staging dir used while zipping
+#   ipa-stage/Payload/AetherEngine.app/  — copied .app bundle contents:
+#       Info.plist, AetherEngine (arm64 Mach-O), Assets.car / storyboards,
+#       Frameworks/ (if any), PkgInfo, _CodeSignature stripped, no mobileprovision
+#   DerivedData/.../AetherEngine.app — produced earlier by build_ios.sh (input)
+# Sideload tools expect the .ipa; the staging Payload/ tree is intermediate.

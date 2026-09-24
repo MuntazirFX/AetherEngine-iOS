@@ -517,3 +517,23 @@ u32 aether_net_server_tick_authority_kill_score(aether_net_server_t *s, f32 dt,
     }
     return snaps + kills + scoreboards;
 }
+
+bool aether_net_server_register_assist(aether_net_server_t *s, u32 assister_id, u32 victim_id) {
+    if (!s || assister_id == 0) return false;
+    (void)victim_id; /* reserved for future assist feed packet */
+    for (u32 i = 0; i < AETHER_NET_MAX_PLAYERS; ++i) {
+        if (!s->clients[i].active || s->clients[i].player_id != assister_id) continue;
+        s->clients[i].assists += 1;
+        return true;
+    }
+    return false;
+}
+
+i32 aether_net_server_get_assists(const aether_net_server_t *s, u32 player_id) {
+    if (!s) return 0;
+    for (u32 i = 0; i < AETHER_NET_MAX_PLAYERS; ++i) {
+        if (!s->clients[i].active || s->clients[i].player_id != player_id) continue;
+        return s->clients[i].assists;
+    }
+    return 0;
+}

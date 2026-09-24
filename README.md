@@ -416,6 +416,54 @@ Remaining: real game-data FS paths, fuller studio/GPU entity reflection, signed 
 and tighter netplay/HUD polish.
 
 
+
+## Reflect-ents / studio GPU LOD / spec-cycle / dmg-kill (`continue/batch-reflect-entities-studio-gpu-spec-cycle`)
+
+One PR advances entities/monsters into the water reflection RT, a GPU studio LOD draw path,
+spectator next-player cycle + HUD, damage→`register_kill` authority wiring, IPA artifact notes,
+optional kill assists, and copy-eye spectator camera — still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Entities/monsters in water reflect RT | **done** | `aether_water_reflect_ent_list_*` + `draw_plan_full` (not BSP-only) |
+| 2 | GPU studio LOD draw path | **done** | `aether_mdl_lod_gpu_issue_draw` / `_copy` (distance select → issue draw) |
+| 3 | Spectator next-player cycle + HUD | **done** | roster + `cycle_next/prev` + `SPEC:` HUD indicator |
+| 4 | Damage → register_kill fanout | **done** | `aether_player_apply_damage_auth` wires death → `register_kill` + fanout |
+| 5 | IPA artifact notes | **done** | `package_ipa.sh` lists Payload/.app/Info.plist/binary + README |
+| 6 | Kill assists stub | **done** | `assists` on slot + `register_assist` / `get_assists` |
+| 7 | Spec camera copies target eye | **done** | `AETHER_SPEC_CAM_COPY_EYE` mode |
+| 8 | Host smokes + verify | **done** | `smoke_batch_reflect_entities_studio_gpu_spec_cycle` + verify greps |
+| 9 | Fix regressions | **done** | prior mirror-rt/LOD/MP smokes still green |
+| 10 | README + honest % | **done** | This table; cap **~72–74%** while IPA unbuilt on this host |
+
+### IPA artifacts (after `package_ipa.sh` on macOS)
+
+When run on a Mac with a prior `build_ios.sh` success, expect under `build/out/`:
+
+| Path | What it is |
+|------|------------|
+| `AetherEngine.ipa` | Unsigned IPA (zip of `Payload/`) |
+| `ipa-stage/Payload/AetherEngine.app/` | Staging copy of the app bundle |
+| `…/AetherEngine.app/Info.plist` | Bundle metadata |
+| `…/AetherEngine.app/AetherEngine` | arm64 Mach-O binary |
+| `DerivedData/.../AetherEngine.app` | Input from `build_ios.sh` (not re-linked by package) |
+
+`_CodeSignature` and `embedded.mobileprovision` are stripped for unsigned sideload.
+
+### Known gaps after this batch
+- Reflect entity draw uses debug boxes / LOD meshes (not full studio skins in the RT)
+- GPU LOD issue_draw is CPU distance select + Metal draw; no GPU occlusion/Hi-Z yet
+- Damage→kill needs a live `aether_net_server_t` pointer in production game code (smoke wires it)
+- Assists are count-only (no assist feed packet / HUD line yet)
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+### Progress toward playable unsigned IPA demo
+Rough overall estimate after this batch: **~72–74%** toward a playable unsigned IPA demo
+(capped while IPA remains unbuilt on this Linux/CI host). Prior mirror-rt batch was ~70–72%.
+
+IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
+
+
 ## Build Status
 - [x] STEP 1: Core modules
 - [x] STEP 2: Verification (host compile + smoke via `build/scripts/verify_host.sh` / `.github/workflows/verify.yml`)

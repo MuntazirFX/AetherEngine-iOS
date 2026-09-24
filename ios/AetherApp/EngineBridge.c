@@ -3920,3 +3920,174 @@ int engine_spectator_is_following(void) {
     return aether_spectator_is_following(&g_spectator) ? 1 : 0;
 }
 
+
+/* ---- Batch reflect-ents / studio-gpu / spec-cycle / dmg-kill ---- */
+
+static aether_water_reflect_ent_list_t g_reflect_ents;
+static int g_reflect_ents_init = 0;
+static aether_player_health_t g_dmg_auth_health;
+static int g_dmg_auth_init = 0;
+
+static void ensure_reflect_ents(void) {
+    if (!g_reflect_ents_init) {
+        aether_water_reflect_ent_list_init(&g_reflect_ents);
+        g_reflect_ents_init = 1;
+    }
+}
+
+int engine_water_reflect_ent_clear(void) {
+    ensure_reflect_ents();
+    aether_water_reflect_ent_list_clear(&g_reflect_ents);
+    return 1;
+}
+int engine_water_reflect_ent_push(unsigned ent_id, int is_monster,
+                                  float ox, float oy, float oz,
+                                  float hx, float hy, float hz) {
+    ensure_reflect_ents();
+    f32 o[3] = {ox,oy,oz}, h[3] = {hx,hy,hz};
+    f32 wh = 0.f;
+    if (g_water_reflect_ready) wh = g_water_reflect.plane_origin[2];
+    return aether_water_reflect_ent_list_push(&g_reflect_ents, ent_id,
+                                              is_monster ? 1 : 0, o, h, wh);
+}
+int engine_water_reflect_ent_mark_above(float water_height) {
+    ensure_reflect_ents();
+    return (int)aether_water_reflect_ent_list_mark_above(&g_reflect_ents, water_height);
+}
+unsigned engine_water_reflect_ent_drawn(void) {
+    ensure_reflect_ents();
+    return g_reflect_ents.drawn;
+}
+int engine_water_reflect_rt_draw_plan_full(float *out_mvp16, unsigned *out_w, unsigned *out_h,
+                                           int *out_clear, int *out_draw_world,
+                                           int *out_draw_ents, int *out_draw_monsters,
+                                           unsigned *out_ent_count, unsigned *out_mon_count,
+                                           int *out_resolve) {
+    ensure_water_rt();
+    ensure_reflect_ents();
+    if (!g_water_reflect_rt.allocated)
+        engine_water_reflect_rt_ensure(1280, 720, 0.5f);
+    if (!g_water_reflect_ready) {
+        aether_water_t *w = bridge_water();
+        f32 eye[3] = {0, 0, 64};
+        aether_water_reflect_compute(w, eye, &g_water_reflect);
+        g_water_reflect_ready = 1;
+    }
+    f32 id[16]; memset(id, 0, sizeof id); id[0]=id[5]=id[10]=id[15]=1.f;
+    aether_water_reflect_rt_draw_t plan;
+    aether_water_reflect_rt_draw_plan_full(&g_water_reflect_rt, &g_water_reflect,
+                                           id, id, &g_reflect_ents, &plan);
+    if (out_mvp16) memcpy(out_mvp16, plan.mirror_mvp, 16 * sizeof(float));
+    if (out_w) *out_w = plan.width;
+    if (out_h) *out_h = plan.height;
+    if (out_clear) *out_clear = plan.clear ? 1 : 0;
+    if (out_draw_world) *out_draw_world = plan.draw_world ? 1 : 0;
+    if (out_draw_ents) *out_draw_ents = plan.draw_entities ? 1 : 0;
+    if (out_draw_monsters) *out_draw_monsters = plan.draw_monsters ? 1 : 0;
+    if (out_ent_count) *out_ent_count = plan.entity_count;
+    if (out_mon_count) *out_mon_count = plan.monster_count;
+    if (out_resolve) *out_resolve = plan.resolve ? 1 : 0;
+    return plan.needed ? 1 : 0;
+}
+
+int engine_mdl_lod_gpu_issue_draw(float distance, int *out_lod, unsigned *out_verts,
+                                  unsigned *out_tris, int *out_issue) {
+    ensure_lod_meshes();
+    aether_mdl_lod_gpu_draw_t d;
+    i32 lod = aether_mdl_lod_gpu_issue_draw(&g_lod_table, &g_lod_meshes, distance, &d);
+    if (out_lod) *out_lod = lod;
+    if (out_verts) *out_verts = d.vert_count;
+    if (out_tris) *out_tris = d.tri_count;
+    if (out_issue) *out_issue = d.issue ? 1 : 0;
+    return lod >= 0 && d.issue ? 1 : 0;
+}
+int engine_mdl_lod_gpu_issue_draw_copy(float distance,
+                                       float *out_pos, unsigned max_verts,
+                                       unsigned *out_idx, unsigned max_idx,
+                                       int *out_lod, unsigned *out_verts, unsigned *out_tris) {
+    ensure_lod_meshes();
+    aether_mdl_lod_gpu_draw_t d;
+    i32 lod = aether_mdl_lod_gpu_issue_draw_copy(&g_lod_table, &g_lod_meshes, distance, &d,
+                                                 out_pos, max_verts, out_idx, max_idx);
+    if (out_lod) *out_lod = lod;
+    if (out_verts) *out_verts = d.vert_count;
+    if (out_tris) *out_tris = d.tri_count;
+    return lod >= 0 && d.issue ? 1 : 0;
+}
+
+int engine_spectator_roster_clear(void) {
+    ensure_spectator();
+    aether_spectator_roster_clear(&g_spectator);
+    return 1;
+}
+int engine_spectator_roster_add(unsigned player_id, const char *name) {
+    ensure_spectator();
+    return aether_spectator_roster_add(&g_spectator, player_id, name);
+}
+unsigned engine_spectator_cycle_next(void) {
+    ensure_spectator();
+    return aether_spectator_cycle_next(&g_spectator);
+}
+unsigned engine_spectator_cycle_prev(void) {
+    ensure_spectator();
+    return aether_spectator_cycle_prev(&g_spectator);
+}
+unsigned engine_spectator_target_id(void) {
+    ensure_spectator();
+    return aether_spectator_target_id(&g_spectator);
+}
+int engine_spectator_set_cam_mode(int mode) {
+    ensure_spectator();
+    aether_spectator_set_cam_mode(&g_spectator,
+        mode == 1 ? AETHER_SPEC_CAM_COPY_EYE : AETHER_SPEC_CAM_FOLLOW);
+    return 1;
+}
+int engine_spectator_get_cam_mode(void) {
+    ensure_spectator();
+    return (int)aether_spectator_get_cam_mode(&g_spectator);
+}
+int engine_spectator_hud_visible(void) {
+    ensure_spectator();
+    return aether_spectator_hud_visible(&g_spectator) ? 1 : 0;
+}
+int engine_spectator_hud_indicator(char *out, unsigned cap) {
+    ensure_spectator();
+    aether_spectator_refresh_hud(&g_spectator);
+    return (int)aether_spectator_hud_indicator(&g_spectator, out, cap);
+}
+
+int engine_player_apply_damage_auth(float amount, unsigned dmg_type,
+                                    unsigned killer_id, unsigned victim_id,
+                                    int fanout, int *out_died, int *out_registered) {
+    if (!g_dmg_auth_init) {
+        aether_player_health_init(&g_dmg_auth_health);
+        g_dmg_auth_init = 1;
+    }
+    aether_damage_event_t ev;
+    memset(&ev, 0, sizeof ev);
+    ev.amount = amount;
+    ev.type = (aether_damage_type_t)dmg_type;
+    aether_damage_kill_result_t r;
+    /* Bridge demo has no live server pointer — still marks died; registered via local scoreboard. */
+    aether_player_apply_damage_auth(&g_dmg_auth_health, &ev, NULL,
+                                    killer_id, victim_id, fanout != 0, &r);
+    if (r.died && (killer_id || victim_id)) {
+        ensure_sb_events();
+        aether_scoreboard_apply_kill(&g_scoreboard, &g_sb_events,
+                                     killer_id, "Killer", victim_id, "Victim",
+                                     (f32)aether_net_time());
+        r.registered_kill = true;
+    }
+    if (out_died) *out_died = r.died ? 1 : 0;
+    if (out_registered) *out_registered = r.registered_kill ? 1 : 0;
+    return r.applied ? 1 : 0;
+}
+int engine_net_server_register_assist(unsigned assister_id, unsigned victim_id) {
+    (void)assister_id; (void)victim_id;
+    /* Host/bridge stub: no persistent server; return success for API presence. */
+    return 1;
+}
+int engine_net_server_get_assists(unsigned player_id) {
+    (void)player_id;
+    return 0;
+}

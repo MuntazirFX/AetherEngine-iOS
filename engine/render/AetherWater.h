@@ -126,6 +126,10 @@ typedef struct aether_water_reflect_rt_draw {
     u32 height;
     bool clear;           /* clear RT before draw */
     bool draw_world;      /* draw world mesh with mirror_mvp */
+    bool draw_entities;   /* draw entities into RT (not BSP-only) */
+    bool draw_monsters;   /* draw monsters into RT */
+    u32  entity_count;    /* entities scheduled this pass */
+    u32  monster_count;   /* monsters scheduled this pass */
     bool resolve;         /* resolve/mip after draw */
     bool needed;
 } aether_water_reflect_rt_draw_t;
@@ -150,5 +154,49 @@ aether_result_t aether_water_reflect_rt_gen_mips(aether_water_reflect_rt_t *rt);
 bool aether_water_reflect_rt_was_cleared(const aether_water_reflect_rt_t *rt);
 bool aether_water_reflect_rt_was_resolved(const aether_water_reflect_rt_t *rt);
 u32  aether_water_reflect_rt_mip_levels(const aether_water_reflect_rt_t *rt);
+
+/* ---------- Entities/monsters into water reflection RT (not BSP-only) ---------- */
+#define AETHER_WATER_REFLECT_MAX_ENTS 32
+
+typedef struct aether_water_reflect_ent {
+    f32 origin[3];
+    f32 half_extents[3]; /* AABB half-size for debug box draw */
+    u32 ent_id;
+    u8  kind;            /* 0=entity, 1=monster */
+    u8  above_water;     /* 1 if origin.z > water height (reflectable) */
+} aether_water_reflect_ent_t;
+
+typedef struct aether_water_reflect_ent_list {
+    u32 count;
+    aether_water_reflect_ent_t items[AETHER_WATER_REFLECT_MAX_ENTS];
+    u32 entity_count;    /* kind==0 */
+    u32 monster_count;   /* kind==1 */
+    u32 drawn;           /* how many marked for draw this plan */
+} aether_water_reflect_ent_list_t;
+
+/* Extend draw plan flags (also mirrored in aether_water_reflect_rt_draw_t fields added below). */
+void aether_water_reflect_ent_list_init(aether_water_reflect_ent_list_t *list);
+void aether_water_reflect_ent_list_clear(aether_water_reflect_ent_list_t *list);
+
+/* Push entity/monster; marks above_water if origin[2] > water_height. Returns 1 if stored. */
+int  aether_water_reflect_ent_list_push(aether_water_reflect_ent_list_t *list,
+                                        u32 ent_id, u8 kind,
+                                        const f32 origin[3], const f32 half_ext[3],
+                                        f32 water_height);
+
+/* Filter list: set above_water flags; return count above water. */
+u32  aether_water_reflect_ent_list_mark_above(aether_water_reflect_ent_list_t *list,
+                                              f32 water_height);
+
+/* Fill draw plan entity flags from list (draw_entities/monsters + counts). */
+void aether_water_reflect_rt_draw_plan_ents(aether_water_reflect_rt_draw_t *plan,
+                                            const aether_water_reflect_ent_list_t *list);
+
+/* Convenience: draw_plan + attach entity list in one call. */
+void aether_water_reflect_rt_draw_plan_full(const aether_water_reflect_rt_t *rt,
+                                            const aether_water_reflect_t *reflect,
+                                            const f32 view[16], const f32 proj[16],
+                                            const aether_water_reflect_ent_list_t *ents,
+                                            aether_water_reflect_rt_draw_t *out);
 
 #endif /* AETHER_WATER_H */

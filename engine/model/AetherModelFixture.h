@@ -289,4 +289,32 @@ u32 aether_mdl_lod_mesh_copy(const aether_mdl_lod_mesh_bucket_t *bucket,
                              u32 *out_idx, u32 max_idx,
                              u32 *out_vert_count, u32 *out_tri_count);
 
+/* ---------- GPU studio LOD draw path (select LOD + issue draw) ---------- */
+typedef struct aether_mdl_lod_gpu_draw {
+    i32  lod;              /* selected LOD index */
+    f32  distance;         /* camera distance used */
+    u32  vert_count;
+    u32  index_count;      /* multiple of 3 */
+    u32  tri_count;
+    u32  first_vertex;     /* GPU buffer base (0 for stub) */
+    u32  first_index;
+    bool issue;            /* true when draw should be submitted */
+    bool cpu_select;       /* selected on CPU by distance */
+} aether_mdl_lod_gpu_draw_t;
+
+/* Select LOD mesh by distance and fill a GPU draw command (no GPU needed on host).
+ * Returns lod index or -1. Sets out->issue when a valid bucket exists. */
+i32 aether_mdl_lod_gpu_issue_draw(const aether_mdl_lod_table_t *table,
+                                  const aether_mdl_lod_mesh_set_t *meshes,
+                                  f32 distance,
+                                  aether_mdl_lod_gpu_draw_t *out);
+
+/* Same as issue_draw but also copies mesh verts/indices into caller buffers. */
+i32 aether_mdl_lod_gpu_issue_draw_copy(const aether_mdl_lod_table_t *table,
+                                       const aether_mdl_lod_mesh_set_t *meshes,
+                                       f32 distance,
+                                       aether_mdl_lod_gpu_draw_t *out,
+                                       f32 *out_pos, u32 max_verts,
+                                       u32 *out_idx, u32 max_idx);
+
 #endif /* AETHER_MODEL_FIXTURE_H */
