@@ -446,3 +446,13 @@ aether_result_t aether_audio_play_beep_stereo_at(aether_audio_t *a, f32 freq_hz,
     aether_audio_spatial_stereo_gains(sp.pan, &gl, &gr);
     return aether_audio_play_beep_stereo(a, freq_hz, duration_sec, v, gl, gr);
 }
+
+aether_result_t aether_audio_play_studio_cue(aether_audio_t *a, const char *cue,
+                                             f32 volume) {
+    if (!a) return AETHER_ERR_INVALID_ARG;
+    (void)cue;
+    f32 vol = volume > 0.f ? volume : 0.6f;
+    if (vol > 1.f) vol = 1.f;
+    /* Distinct click for studio events (higher than weapon beep). */
+    return aether_audio_play_beep(a, 1320.f, 0.04f, vol);
+}

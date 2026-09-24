@@ -63,4 +63,28 @@ u32 aether_lagcomp_frame_count(const aether_lagcomp_history_t *h);
 #ifdef __cplusplus
 }
 #endif
+
+/* Hit validation vs cmd history: rebuild look dir from rewound cmd, trace AABBs. */
+struct aether_net_cmd_history;
+
+typedef struct aether_lagcomp_hit {
+    i32 id;
+    f32 t;
+    f32 point[3];
+    f32 rewind_time;
+    u32 cmd_seq;
+    bool valid;
+} aether_lagcomp_hit_t;
+
+/* Build forward from yaw/pitch (degrees, Z-up GoldSrc-ish). */
+void aether_lagcomp_look_dir(f32 yaw_deg, f32 pitch_deg, f32 out_dir[3]);
+
+/* Validate attack hit: uses cmd at (now - lag_ms) for look + traces history at that time.
+ * eye_origin is shooter eye in world. Returns true on hit. */
+bool aether_lagcomp_validate_hit(const aether_lagcomp_history_t *h,
+                                 const struct aether_net_cmd_history *cmds,
+                                 f32 now, f32 lag_ms,
+                                 const f32 eye_origin[3], f32 max_dist,
+                                 aether_lagcomp_hit_t *out);
+
 #endif

@@ -237,12 +237,39 @@ hitboxes, and weapon particle muzzle/trail — still clean-room:
 | 10 | README + gaps | **done** | This table |
 
 ### Known gaps after studio / vis / stereo batch
-- Studio fixture anim blocks are clean-room packed keys (not full GoldSrc `mstudioanim_t` RLE)
-- Multi-style blend packs 4 weights for GPU; Metal shader still samples primary scalar path until wired
+- *(addressed in metal-blend/studio-attach batch: Metal style blend sample, RLE keys, lagcomp hit vs cmds, dynlight bleed, skinned viewmodel attachments, bloom H/V)*
 - Stereo PCM reaches iOS `submitPCM16` (channels=2); spatial listener up-vector still Z-up planar pan
-- Lag-comp rewind is AABB history (no full entity pose / hit validation vs cmds yet)
-- PVS light cull uses leaf marksurface visibility (no radius overlap across leaf borders)
-- Viewmodel uses fixture triangle (not skinned weapon sequences / attachments)
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+
+
+
+## Metal blend / Studio attach / Lagcomp hit batch (`continue/batch-metal-blend-studio-attach`)
+
+One PR advances Metal multi-style lightmap sampling, skinned viewmodel sequences with
+muzzle attachments, lag-comp hit validation vs cmd history, GoldSrc-ish anim RLE,
+dynlight leaf-radius bleed, attachment-driven particles, studio event/sound cues,
+and separable bloom encode — still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Metal multi-style LM sample | **done** | `aether_fragment_style_blend` + `sample_style_blend` / `fill_style_blend_ubo` |
+| 2 | Skinned viewmodel + muzzle attach | **done** | `aether_weapon_view_copy_skinned` + fixture attachments (`muzzle`/`shell`) |
+| 3 | Lag-comp hit vs cmd history | **done** | `aether_lagcomp_validate_hit` rewinds AABB + look from cmd |
+| 4 | GoldSrc-ish anim RLE | **done** | `aether_mdl_anim_rle_decode` + RLE trailer in `write_studio_fixture_ex` |
+| 5 | Dynlight leaf-radius bleed | **done** | `aether_dyn_lights_cull_pvs_bleed` sphere↔leaf AABB |
+| 6 | Attachment particle fire | **done** | `spawn_viewmodel_fire` / `spawn_at_attachment` |
+| 7 | Studio event / sound cue | **done** | fixture events + `studio_events_fire` + `play_studio_cue` |
+| 8 | Metal bloom encode improve | **done** | soft-knee bright + separable H/V blur + `bloom_encode_plan` |
+| 9 | Host smokes | **done** | blend UBO, attachments, lagcomp hits, RLE (+ bleed/events/bloom) |
+| 10 | README + gaps | **done** | This table |
+
+### Known gaps after metal-blend / studio-attach batch
+- Style-blend Metal fragment uses LUV-derived face index stub (not per-draw face id attribute yet)
+- Viewmodel attachments are clean-room fixture points (not full GoldSrc `mstudiobone_t` attachment array)
+- Lag-comp hit uses AABB history + cmd look (no hitbox bone rewind / backtrack lag window UI)
+- Anim RLE is a clean-room run-length of key channels (not byte-identical `mstudioanim_t`)
+- Dynlight bleed is sphere↔leaf AABB (not portal/visbit radius flood)
 - IPA still requires macOS + Xcode via workflow_dispatch
 
 

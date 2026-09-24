@@ -54,7 +54,6 @@ u32 aether_mdl_fixture_seq_frame_count(const u8 *data, u32 size);
 #ifdef __cplusplus
 }
 #endif
-#endif
 
 /* Studio fixture: real sequence + anim keyframe blocks (clean-room, not sway-only). */
 u32 aether_mdl_write_studio_fixture(u8 *out, u32 cap);
@@ -78,3 +77,47 @@ u32 aether_mdl_fixture_hitboxes(const u8 *data, u32 size,
 bool aether_mdl_hitbox_trace(const aether_mdl_hitbox_t *boxes, u32 count,
                              const f32 origin[3], const f32 dir[3], f32 max_dist,
                              i32 *out_index, f32 *out_t, f32 out_point[3]);
+
+/* Attachment points (muzzle etc.) embedded in studio fixture. */
+typedef struct aether_mdl_attachment {
+    i32 bone;
+    f32 origin[3];
+    f32 angles_deg[3];
+    char name[32];
+} aether_mdl_attachment_t;
+
+#define AETHER_MDL_FIXTURE_MAX_ATTACHMENTS 8
+
+u32 aether_mdl_fixture_attachments(const u8 *data, u32 size,
+                                   aether_mdl_attachment_t *out, u32 max_out);
+
+/* Resolve attachment: bone_mats is bone_count * 16 floats (column-major 4x4). */
+bool aether_mdl_attachment_transform(const aether_mdl_attachment_t *att,
+                                     const f32 *bone_mats, u32 bone_count,
+                                     f32 out_pos[3], f32 out_forward[3]);
+
+/* Studio event / sound cue stub keyed by frame. */
+typedef struct aether_mdl_studio_event {
+    f32 frame;
+    i32 event;       /* 5004=sound cue stub, 5001=muzzle, etc. */
+    char options[64];
+} aether_mdl_studio_event_t;
+
+#define AETHER_MDL_FIXTURE_MAX_EVENTS 8
+
+u32 aether_mdl_fixture_events(const u8 *data, u32 size,
+                              aether_mdl_studio_event_t *out, u32 max_out);
+
+/* Events crossed when advancing from prev_frame → frame (half-open). Returns count fired. */
+u32 aether_mdl_studio_events_fire(const aether_mdl_studio_event_t *evts, u32 count,
+                                  f32 prev_frame, f32 frame,
+                                  aether_mdl_studio_event_t *out_fired, u32 max_out);
+
+/* Write studio fixture that also embeds RLE keys + attachments + events. */
+u32 aether_mdl_write_studio_fixture_ex(u8 *out, u32 cap);
+
+/* Find attachment by name (e.g. "muzzle"). Returns index or -1. */
+i32 aether_mdl_attachment_find(const aether_mdl_attachment_t *atts, u32 count,
+                               const char *name);
+
+#endif

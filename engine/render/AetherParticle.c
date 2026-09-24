@@ -170,3 +170,23 @@ u32 aether_particles_spawn_trail(aether_particles_t *p,
     }
     return spawned;
 }
+
+u32 aether_particles_spawn_at_attachment(aether_particles_t *p,
+                                         const f32 origin[3], const f32 forward[3],
+                                         u32 count) {
+    return aether_particles_spawn_muzzle(p, origin, forward, count);
+}
+
+u32 aether_particles_spawn_viewmodel_fire(aether_particles_t *p,
+                                          const f32 muzzle[3], const f32 forward[3],
+                                          u32 muzzle_count, u32 trail_count) {
+    if (!p || !muzzle || !forward) return 0;
+    u32 n = aether_particles_spawn_muzzle(p, muzzle, forward, muzzle_count);
+    f32 to[3] = {
+        muzzle[0] + forward[0] * 40.f,
+        muzzle[1] + forward[1] * 40.f,
+        muzzle[2] + forward[2] * 40.f
+    };
+    n += aether_particles_spawn_trail(p, muzzle, to, trail_count);
+    return n;
+}

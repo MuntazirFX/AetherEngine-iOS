@@ -83,4 +83,24 @@ void aether_postfx_bloom_target_size(const aether_postfx_t *p, u32 *out_w, u32 *
 #ifdef __cplusplus
 }
 #endif
+
+/* Bloom encode plan for Metal: pass count + half-res sizes + separable flag. */
+typedef struct aether_postfx_bloom_plan {
+    u32 pass_count;   /* 3 = bright+blur+combine; 4 = bright+blurH+blurV+combine */
+    u32 target_w;
+    u32 target_h;
+    f32 threshold;
+    f32 intensity;
+    f32 blur_radius;
+    bool separable;   /* prefer H/V blur passes */
+    bool needed;
+} aether_postfx_bloom_plan_t;
+
+void aether_postfx_bloom_encode_plan(const aether_postfx_t *p,
+                                     aether_postfx_bloom_plan_t *out);
+
+/* Soft-knee bright-pass helper (CPU preview / host smoke). */
+void aether_postfx_bloom_bright_sample(const aether_postfx_t *p,
+                                       const f32 rgb_in[3], f32 rgb_out[3]);
+
 #endif

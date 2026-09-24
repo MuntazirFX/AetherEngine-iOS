@@ -125,6 +125,167 @@ static void stereo_buf_cb(const aether_audio_buffer_t *b, void *u) {
     }
 }
 
+
+static void smoke_batch_metal_blend_studio_attach(void) {
+    printf("--- batch_metal_blend_studio_attach ---\n");
+
+    /* 1. Metal multi-style lightmap sample / blend UBO */
+    {
+        aether_bsp_t *bsp = aether_bsp_create_synthetic_room();
+        aether_mesh_t *mesh = NULL;
+        expect(bsp && aether_mesh_from_bsp(bsp, NULL, &mesh) == AETHER_OK && mesh, "b7_blend_mesh");
+        aether_lightstyles_t ls; aether_lightstyles_init(&ls); aether_lightstyles_update(&ls, 0.5f);
+        f32 ubo[512];
+        u32 n = aether_lightmap_fill_style_blend_ubo(mesh, &ls, ubo, 512);
+        expect(n >= 8 && ubo[0] >= 2.f, "b7_blend_ubo");
+        f32 w4[4] = {ubo[4], ubo[5], ubo[6], ubo[7]};
+        f32 base[3] = {0.5f, 0.5f, 0.5f}, out[3];
+        aether_lightmap_sample_style_blend(w4, base, out);
+        expect(out[0] > 0.2f, "b7_blend_sample");
+        aether_mesh_free(mesh); aether_bsp_free(bsp);
+    }
+
+    /* 2. Skinned viewmodel + muzzle attachment */
+    {
+        aether_weapon_view_t v; aether_weapon_view_init(&v, AETHER_WPN_GLOCK);
+        aether_weapon_view_play(&v, AETHER_VIEW_ANIM_FIRE);
+        aether_viewmodel_vertex_t verts[64];
+        aether_weapon_view_attach_t att;
+        u32 n = aether_weapon_view_copy_skinned(&v, 1.0f, verts, 64, &att);
+        expect(n >= 3, "b7_view_skinned_verts");
+        expect(att.has_muzzle, "b7_view_muzzle");
+        expect(att.muzzle_pos[2] < 0.f, "b7_view_muzzle_z");
+        u8 buf[24576];
+        u32 bn = aether_mdl_write_studio_fixture_ex(buf, sizeof buf);
+        expect(bn > 600, "b7_fixture_ex");
+        aether_mdl_attachment_t atts[8];
+        u32 ac = aether_mdl_fixture_attachments(buf, bn, atts, 8);
+        expect(ac == 2, "b7_attach_count");
+        expect(aether_mdl_attachment_find(atts, ac, "muzzle") == 0, "b7_attach_muzzle_name");
+    }
+
+    /* 3. Lag-comp hit validation vs cmd history */
+    {
+        aether_lagcomp_history_t h; aether_lagcomp_init(&h);
+        aether_lagcomp_begin_frame(&h, 1.0f);
+        f32 mins[3]={-16,-16,0}, maxs[3]={16,16,72};
+        expect(aether_lagcomp_push_aabb(&h, 9, AETHER_LAGCOMP_PLAYER, mins, maxs), "b7_lag_aabb");
+        aether_net_cmd_history_t cmds; aether_net_cmd_history_init(&cmds);
+        aether_net_cmd_t cmd;
+        aether_net_cmd_from_move(&cmd, 0,0,0, 0.f, 0.f, 1u, 0.016f, 1);
+        aether_net_cmd_history_push(&cmds, &cmd, 1.05f);
+        f32 eye[3] = {-80.f, 0.f, 36.f};
+        aether_lagcomp_hit_t hit;
+        expect(aether_lagcomp_validate_hit(&h, &cmds, 1.05f, 50.f, eye, 200.f, &hit), "b7_lag_validate");
+        expect(hit.valid && hit.id == 9 && hit.t > 0.f, "b7_lag_hit_id");
+        /* No attack button → miss */
+        aether_net_cmd_from_move(&cmd, 0,0,0, 0.f, 0.f, 0u, 0.016f, 2);
+        aether_net_cmd_history_push(&cmds, &cmd, 1.10f);
+        expect(!aether_lagcomp_validate_hit(&h, &cmds, 1.10f, 0.f, eye, 200.f, &hit), "b7_lag_no_attack");
+    }
+
+    /* 4. GoldSrc-ish anim RLE parse */
+    {
+        u8 buf[24576];
+        u32 n = aether_mdl_write_studio_fixture_ex(buf, sizeof buf);
+        expect(n > 0, "b7_rle_fixture");
+        aether_mdl_sequence_t seq;
+        expect(aether_mdl_anim_rle_decode(&seq, buf, n) == AETHER_OK, "b7_rle_decode");
+        expect(seq.frame_count == 4 && seq.bone_count == 2, "b7_rle_meta");
+        expect(fabsf(seq.keys[1][0].angles_deg[1]) > 0.05f || fabsf(seq.keys[2][0].angles_deg[1]) > 0.05f,
+               "b7_rle_keys");
+        aether_mdl_skin_state_t sk;
+        aether_mdl_skin_build_from_sequence(&sk, &seq, 1.5f);
+        expect(sk.bone_count == 2, "b7_rle_skin");
+    }
+
+    /* 5. Dynlight leaf-radius bleed */
+    {
+        aether_bsp_t *bsp = aether_bsp_create_synthetic_room();
+        expect(bsp != NULL, "b7_bleed_bsp");
+        aether_dyn_lights_t dl; aether_dyn_lights_init(&dl);
+        f32 col[3]={1,0.8f,0.6f};
+        f32 near_pos[3]={0,0,40};
+        /* Place light just outside a leaf but with large radius so bleed keeps it. */
+        f32 edge_pos[3]={200,0,40};
+        expect(aether_dyn_lights_add(&dl, near_pos, col, 64.f, 1.f)==AETHER_OK, "b7_bleed_near");
+        expect(aether_dyn_lights_add(&dl, edge_pos, col, 400.f, 1.f)==AETHER_OK, "b7_bleed_edge");
+        i32 leaf = aether_bsp_find_leaf(bsp, 0, 0, 40);
+        aether_dyn_light_ubo_t ubo_strict, ubo_bleed;
+        u32 ns = aether_dyn_lights_cull_pvs(&dl, bsp, leaf, &ubo_strict);
+        u32 nb = aether_dyn_lights_cull_pvs_bleed(&dl, bsp, leaf, &ubo_bleed);
+        expect(nb >= ns, "b7_bleed_ge_strict");
+        expect(nb >= 1, "b7_bleed_kept");
+        f32 arr[64];
+        expect(aether_dyn_lights_fill_array_pvs_bleed(&dl, bsp, leaf, arr, 64) >= 4, "b7_bleed_array");
+        aether_bsp_free(bsp);
+    }
+
+    /* 6. Attachment-driven particle spawn for viewmodel fire */
+    {
+        aether_particles_t p; aether_particles_init(&p);
+        f32 muzzle[3]={0.4f,-0.3f,-0.8f}, fwd[3]={0,0,-1};
+        expect(aether_particles_spawn_viewmodel_fire(&p, muzzle, fwd, 8, 10) >= 18, "b7_vm_fire");
+        expect(aether_particles_active_count(&p) >= 18, "b7_vm_fire_active");
+        expect(aether_particles_spawn_at_attachment(&p, muzzle, fwd, 4) == 4, "b7_attach_fx");
+    }
+
+    /* 7. Studio event / sound cue stub on frame */
+    {
+        u8 buf[24576];
+        u32 n = aether_mdl_write_studio_fixture_ex(buf, sizeof buf);
+        aether_mdl_studio_event_t evts[8], fired[8];
+        u32 ec = aether_mdl_fixture_events(buf, n, evts, 8);
+        expect(ec == 2, "b7_evt_count");
+        expect(evts[0].event == 5001 && evts[1].event == 5004, "b7_evt_codes");
+        u32 nf = aether_mdl_studio_events_fire(evts, ec, 0.0f, 0.6f, fired, 8);
+        expect(nf == 1 && fired[0].event == 5001, "b7_evt_fire_muzzle");
+        nf = aether_mdl_studio_events_fire(evts, ec, 0.6f, 1.2f, fired, 8);
+        expect(nf == 1 && fired[0].event == 5004, "b7_evt_fire_sound");
+        aether_audio_t *a = aether_audio_create();
+        expect(a && aether_audio_init(a) == AETHER_OK, "b7_cue_audio");
+        aether_audio_set_buffer_callback(a, batch_audio_buf_cb, NULL);
+        g_batch_buf_cb = 0;
+        expect(aether_audio_play_studio_cue(a, fired[0].options, 0.5f) == AETHER_OK, "b7_cue_play");
+        expect(g_batch_buf_cb >= 1, "b7_cue_cb");
+        aether_audio_shutdown(a); aether_audio_destroy(a);
+    }
+
+    /* 8. Bloom encode plan / soft-knee sample */
+    {
+        aether_postfx_t fx; aether_postfx_init(&fx);
+        aether_postfx_ensure_offscreen(&fx, 1280, 720);
+        aether_postfx_set_bloom_chain(&fx, 0.7f, 0.55f, 2.5f);
+        expect(aether_postfx_bloom_encode_needed(&fx), "b7_bloom_needed");
+        aether_postfx_bloom_plan_t plan;
+        aether_postfx_bloom_encode_plan(&fx, &plan);
+        expect(plan.needed && plan.separable && plan.pass_count == 4, "b7_bloom_plan");
+        expect(plan.target_w == 640 && plan.target_h == 360, "b7_bloom_half");
+        f32 in[3]={1,1,1}, out[3];
+        aether_postfx_bloom_bright_sample(&fx, in, out);
+        expect(out[0] > 0.5f, "b7_bloom_bright");
+        f32 dim[3]={0.1f,0.1f,0.1f};
+        aether_postfx_bloom_bright_sample(&fx, dim, out);
+        expect(out[0] < 0.05f, "b7_bloom_dark");
+    }
+
+    /* 9. Extra: look_dir sanity + attachment transform */
+    {
+        f32 dir[3];
+        aether_lagcomp_look_dir(0.f, 0.f, dir);
+        expect(fabsf(dir[0]-1.f) < 0.01f, "b7_look_fwd");
+        aether_mdl_attachment_t att = {0};
+        att.bone = 0; att.origin[0]=1; att.origin[1]=2; att.origin[2]=3;
+        f32 id[16] = {1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+        f32 pos[3], fwd[3];
+        expect(aether_mdl_attachment_transform(&att, id, 1, pos, fwd), "b7_att_xform");
+        expect(fabsf(pos[0]-1.f)+fabsf(pos[1]-2.f)+fabsf(pos[2]-3.f) < 0.01f, "b7_att_pos");
+    }
+
+    printf("--- batch_metal_blend_studio_attach done ---\n");
+}
+
+
 static void smoke_batch_studio_vis_stereo(void) {
     printf("--- batch_studio_vis_stereo ---\n");
 
@@ -2301,6 +2462,7 @@ int main(void) {
 
     smoke_batch_gpu_lightstyles_skin_mp();
     smoke_batch_seq_pvs_audio_ui();
+    smoke_batch_metal_blend_studio_attach();
     smoke_batch_studio_vis_stereo();
 
     if (g_failures) {

@@ -4,6 +4,7 @@
 #include "AetherWeaponView.h"
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
 
 void aether_weapon_view_init(aether_weapon_view_t *v, aether_weapon_id_t id) {
     if (!v) return;
@@ -180,4 +181,103 @@ u32 aether_weapon_view_copy_mdl_fixture(const aether_weapon_view_t *v,
     aether_mdl_geometry_free(mesh);
     aether_mdl_free(m);
     return got;
+}
+
+#include "../../render/AetherMDLAnimation.h"
+
+u32 aether_weapon_view_copy_skinned(const aether_weapon_view_t *v, f32 frame,
+                                    aether_viewmodel_vertex_t *out, u32 max_verts,
+                                    aether_weapon_view_attach_t *out_attach) {
+    if (out_attach) memset(out_attach, 0, sizeof(*out_attach));
+    if (!out || max_verts < 3) return 0;
+    u8 buf[24576];
+    u32 n = aether_mdl_write_studio_fixture_ex(buf, sizeof buf);
+    if (!n) n = aether_mdl_write_studio_fixture(buf, sizeof buf);
+    if (!n) return 0;
+
+    aether_mdl_sequence_t seq;
+    if (aether_mdl_anim_rle_decode(&seq, buf, n) != AETHER_OK) {
+        if (aether_mdl_sequence_load_from_data(&seq, buf, n) != AETHER_OK)
+            aether_mdl_sequence_init_sway(&seq, 2, 4, 12.f);
+    }
+    aether_mdl_skin_state_t sk;
+    aether_mdl_skin_build_from_sequence(&sk, &seq, frame);
+
+    aether_mdl_t *m = aether_mdl_load_from_memory(buf, n, "v_skinned");
+    if (!m) return 0;
+    aether_model_mesh_t *mesh = NULL;
+    if (aether_mdl_geometry_extract(m, &mesh) != AETHER_OK || !mesh) {
+        aether_mdl_free(m);
+        return 0;
+    }
+    /* Skin mesh positions */
+    u32 vc = mesh->vertex_count;
+    f32 *skinned = (f32 *)malloc(vc * 3u * sizeof(f32));
+    if (!skinned) {
+        aether_mdl_geometry_free(mesh);
+        aether_mdl_free(m);
+        return 0;
+    }
+    u8 *bones = (u8 *)calloc(vc, 1);
+    f32 *wts = (f32 *)malloc(vc * sizeof(f32));
+    if (bones && wts) {
+        for (u32 i = 0; i < vc; ++i) { bones[i] = (u8)(i % sk.bone_count); wts[i] = 1.f; }
+        aether_mdl_skin_mesh(&sk, bones, wts, mesh->positions, skinned, vc);
+        /* Temporarily swap positions for copy_mdl */
+        f32 *saved = mesh->positions;
+        mesh->positions = skinned;
+        u32 got = aether_weapon_view_copy_mdl(v, mesh, out, max_verts);
+        mesh->positions = saved;
+
+        if (out_attach) {
+            aether_mdl_attachment_t atts[8];
+            u32 ac = aether_mdl_fixture_attachments(buf, n, atts, 8);
+            f32 mats[AETHER_MDL_MAX_BONES * 16];
+            u32 bc = sk.bone_count < AETHER_MDL_MAX_BONES ? sk.bone_count : AETHER_MDL_MAX_BONES;
+            for (u32 b = 0; b < bc; ++b)
+                memcpy(mats + b * 16, sk.bones[b].m, 16 * sizeof(f32));
+            i32 mi = aether_mdl_attachment_find(atts, ac, "muzzle");
+            if (mi >= 0) {
+                f32 model_pos[3], model_fwd[3];
+                if (aether_mdl_attachment_transform(&atts[mi], mats, bc, model_pos, model_fwd)) {
+                    /* Same view-space mapping as copy_mdl */
+                    f32 bob_x = v ? sinf(v->bob_phase) * v->bob_amount * 0.02f : 0.f;
+                    f32 bob_y = v ? sinf(v->bob_phase * 2.f) * v->bob_amount * 0.015f : 0.f;
+                    f32 kick = 0.f;
+                    if (v && v->current_anim == AETHER_VIEW_ANIM_FIRE) {
+                        f32 t = v->anim_length > 0.f ? (v->anim_time / v->anim_length) : 0.f;
+                        kick = (1.f - t) * 0.05f;
+                    }
+                    const f32 scale = 0.012f;
+                    out_attach->muzzle_pos[0] = 0.35f + bob_x + model_pos[0] * scale;
+                    out_attach->muzzle_pos[1] = -0.35f + bob_y - kick + model_pos[2] * scale;
+                    out_attach->muzzle_pos[2] = -0.85f - kick + model_pos[1] * scale;
+                    out_attach->muzzle_fwd[0] = model_fwd[0];
+                    out_attach->muzzle_fwd[1] = model_fwd[2];
+                    out_attach->muzzle_fwd[2] = model_fwd[1];
+                    out_attach->has_muzzle = true;
+                }
+            }
+            i32 si = aether_mdl_attachment_find(atts, ac, "shell");
+            if (si >= 0) {
+                f32 sp[3], sf[3];
+                if (aether_mdl_attachment_transform(&atts[si], mats, bc, sp, sf)) {
+                    const f32 scale = 0.012f;
+                    out_attach->shell_pos[0] = 0.35f + sp[0] * scale;
+                    out_attach->shell_pos[1] = -0.35f + sp[2] * scale;
+                    out_attach->shell_pos[2] = -0.85f + sp[1] * scale;
+                    out_attach->has_shell = true;
+                }
+            }
+            out_attach->vert_count = got;
+        }
+        free(wts); free(bones); free(skinned);
+        aether_mdl_geometry_free(mesh);
+        aether_mdl_free(m);
+        return got;
+    }
+    free(wts); free(bones); free(skinned);
+    aether_mdl_geometry_free(mesh);
+    aether_mdl_free(m);
+    return 0;
 }

@@ -68,6 +68,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     var postfxPipeline: MTLRenderPipelineState?
     var bloomBrightPipeline: MTLRenderPipelineState?
     var bloomBlurPipeline: MTLRenderPipelineState?
+    var bloomBlurHPipeline: MTLRenderPipelineState?
+    var bloomBlurVPipeline: MTLRenderPipelineState?
     var bloomCombinePipeline: MTLRenderPipelineState?
     var bloomBrightTexture: MTLTexture?
     var bloomBlurTexture: MTLTexture?
@@ -1085,6 +1087,20 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 do { bloomBlurPipeline = try device.makeRenderPipelineState(descriptor: d) }
                 catch { print("[MetalRenderer] bloom blur error: \(error)") }
             }
+            if let fH = lib.makeFunction(name: "aether_bloom_blur_h_fragment") {
+                let d = MTLRenderPipelineDescriptor()
+                d.vertexFunction = vfn; d.fragmentFunction = fH; d.vertexDescriptor = vd
+                d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+                do { bloomBlurHPipeline = try device.makeRenderPipelineState(descriptor: d) }
+                catch { print("[MetalRenderer] bloom blur H error: \(error)") }
+            }
+            if let fV = lib.makeFunction(name: "aether_bloom_blur_v_fragment") {
+                let d = MTLRenderPipelineDescriptor()
+                d.vertexFunction = vfn; d.fragmentFunction = fV; d.vertexDescriptor = vd
+                d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+                do { bloomBlurVPipeline = try device.makeRenderPipelineState(descriptor: d) }
+                catch { print("[MetalRenderer] bloom blur V error: \(error)") }
+            }
             if let fComb = lib.makeFunction(name: "aether_bloom_combine_fragment") {
                 let d = MTLRenderPipelineDescriptor()
                 d.vertexFunction = vfn; d.fragmentFunction = fComb; d.vertexDescriptor = vd
@@ -1245,9 +1261,52 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                     enc.endEncoding()
                 }
             }
-            // Blur pass
+            // Blur pass — prefer separable H then V when pipelines exist
+            struct BloomBlurDir {
+                var threshold: Float; var intensity: Float
+                var blur_radius: Float; var enabled: Float
+                var dirX: Float; var dirY: Float; var pad0: Float; var pad1: Float
+            }
+            var bloomResultTex = bloomBlurTexture
             if let brightTex = bloomBrightTexture, let blurTex = bloomBlurTexture,
-               let pipe = bloomBlurPipeline {
+               let pipeH = bloomBlurHPipeline, let pipeV = bloomBlurVPipeline {
+                var BH = BloomBlurDir(threshold: bloom[0], intensity: bloom[1],
+                                      blur_radius: bloom[2], enabled: bloom[3],
+                                      dirX: 1, dirY: 0, pad0: 0, pad1: 0)
+                let rpdH = MTLRenderPassDescriptor()
+                rpdH.colorAttachments[0].texture = blurTex
+                rpdH.colorAttachments[0].loadAction = .clear
+                rpdH.colorAttachments[0].storeAction = .store
+                rpdH.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+                if let enc = cmd.makeRenderCommandEncoder(descriptor: rpdH) {
+                    enc.setRenderPipelineState(pipeH)
+                    enc.setCullMode(.none)
+                    enc.setVertexBuffer(vb, offset: 0, index: 0)
+                    enc.setFragmentBytes(&BH, length: MemoryLayout<BloomBlurDir>.stride, index: 1)
+                    enc.setFragmentTexture(brightTex, index: 0)
+                    if let samp = postfxSampler { enc.setFragmentSamplerState(samp, index: 0) }
+                    enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: n)
+                    enc.endEncoding()
+                }
+                var BV = BH; BV.dirX = 0; BV.dirY = 1
+                let rpdV = MTLRenderPassDescriptor()
+                rpdV.colorAttachments[0].texture = brightTex
+                rpdV.colorAttachments[0].loadAction = .clear
+                rpdV.colorAttachments[0].storeAction = .store
+                rpdV.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+                if let enc = cmd.makeRenderCommandEncoder(descriptor: rpdV) {
+                    enc.setRenderPipelineState(pipeV)
+                    enc.setCullMode(.none)
+                    enc.setVertexBuffer(vb, offset: 0, index: 0)
+                    enc.setFragmentBytes(&BV, length: MemoryLayout<BloomBlurDir>.stride, index: 1)
+                    enc.setFragmentTexture(blurTex, index: 0)
+                    if let samp = postfxSampler { enc.setFragmentSamplerState(samp, index: 0) }
+                    enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: n)
+                    enc.endEncoding()
+                }
+                bloomResultTex = brightTex
+            } else if let brightTex = bloomBrightTexture, let blurTex = bloomBlurTexture,
+                      let pipe = bloomBlurPipeline {
                 let rpd = MTLRenderPassDescriptor()
                 rpd.colorAttachments[0].texture = blurTex
                 rpd.colorAttachments[0].loadAction = .clear
@@ -1263,13 +1322,14 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                     enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: n)
                     enc.endEncoding()
                 }
+                bloomResultTex = blurTex
             }
             // Combine → drawable
             guard let rpd2 = view.currentRenderPassDescriptor else { return }
             rpd2.colorAttachments[0].loadAction = .dontCare
             if let enc = cmd.makeRenderCommandEncoder(descriptor: rpd2),
                let pipe = bloomCombinePipeline,
-               let blurTex = bloomBlurTexture {
+               let blurTex = bloomResultTex {
                 enc.setRenderPipelineState(pipe)
                 enc.setCullMode(.none)
                 enc.setVertexBuffer(vb, offset: 0, index: 0)

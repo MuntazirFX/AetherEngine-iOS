@@ -561,7 +561,9 @@ fragment float4 aether_bloom_bright_fragment(PostFXOut in [[stage_in]],
     float4 c = scene.sample(samp, in.uv);
     if (B.enabled < 0.5) return float4(0.0);
     float lum = dot(c.rgb, float3(0.2126, 0.7152, 0.0722));
+    /* Soft-knee bright pass (matches aether_postfx_bloom_bright_sample). */
     float m = smoothstep(B.threshold, B.threshold + 0.15, lum);
+    m = m * m * (3.0 - 2.0 * m);
     return float4(c.rgb * m, 1.0);
 }
 fragment float4 aether_bloom_blur_fragment(PostFXOut in [[stage_in]],
@@ -637,4 +639,92 @@ vertex MdlVertexOut aether_mdl_skinned_vertex(MdlVertexIn in [[stage_in]],
     out.position = U.proj * U.view * world;
     out.normal = normalize((U.model * float4(n, 0.0)).xyz);
     return out;
+}
+
+/* ============ Multi-style lightmap blend sample ============ */
+struct FaceStyleBlendUniforms {
+    float face_count;
+    float pad0, pad1, pad2;
+    /* weights packed as float4 per face immediately after in buffer — Metal
+     * constant buffer consumers pass FaceStyleBlendWeights separately. */
+};
+struct FaceStyleBlendWeights {
+    float4 w[64]; /* up to 64 faces × 4 style weights */
+};
+inline float3 aether_apply_style_blend(float3 lm_rgb, float4 weights) {
+    float wsum = max(weights.x, 0.0) + max(weights.y, 0.0) +
+                 max(weights.z, 0.0) + max(weights.w, 0.0);
+    float scale = (wsum > 1e-5) ? min(wsum, 4.0) : 1.0;
+    return lm_rgb * scale;
+}
+fragment float4 aether_fragment_style_blend(BSPVertexOut in [[stage_in]],
+                                            constant Uniforms &U [[buffer(1)]],
+                                            constant FaceStyleBlendUniforms &FB [[buffer(2)]],
+                                            constant FaceStyleBlendWeights &FW [[buffer(3)]],
+                                            texture2d<float> atlas [[texture(0)]],
+                                            texture2d<float> lightmap [[texture(1)]],
+                                            sampler samp [[sampler(0)]]) {
+    float3 N = normalize(in.normal);
+    float ndl_abs = max(abs(dot(N, normalize(U.light_dir))), 0.0);
+    float ambient = 0.55;
+    float diff = ambient + ndl_abs * 0.60;
+    if (diff > 1.0) diff = 1.0;
+    float3 base_color = U.base_color.rgb;
+    if (U.use_texture > 0.5) {
+        float4 tex = atlas.sample(samp, in.uv);
+        if (tex.a >= 0.5) base_color = tex.rgb;
+    }
+    if (U.use_lightmap > 0.5) {
+        float3 lm = lightmap.sample(samp, in.luv).rgb;
+        uint fi = 0u;
+        if (FB.face_count > 0.5) {
+            /* Derive coarse face index from lightmap UV tile (stub). */
+            fi = uint(clamp(in.luv.x * FB.face_count, 0.0, FB.face_count - 1.0));
+            if (fi > 63u) fi = 63u;
+        }
+        lm = aether_apply_style_blend(lm, FW.w[fi]);
+        base_color *= lm;
+        diff = mix(diff, 1.0, 0.65);
+    }
+    return float4(base_color * diff, 1.0);
+}
+
+/* ============ Separable bloom blur (H / V) ============ */
+struct BloomBlurDir {
+    float threshold;
+    float intensity;
+    float blur_radius;
+    float enabled;
+    float2 direction; /* (1,0)=H or (0,1)=V */
+    float2 pad;
+};
+fragment float4 aether_bloom_blur_h_fragment(PostFXOut in [[stage_in]],
+                                             constant BloomBlurDir &B [[buffer(1)]],
+                                             texture2d<float> src [[texture(0)]],
+                                             sampler samp [[sampler(0)]]) {
+    float2 texel = float2(B.blur_radius, B.blur_radius) / float2(src.get_width(), src.get_height());
+    float2 dir = length(B.direction) > 0.1 ? normalize(B.direction) : float2(1.0, 0.0);
+    float3 acc = float3(0.0);
+    float wsum = 0.0;
+    for (int i = -4; i <= 4; ++i) {
+        float w = 1.0 - 0.1 * float(abs(i));
+        acc += src.sample(samp, in.uv + dir * float(i) * texel).rgb * w;
+        wsum += w;
+    }
+    return float4(acc / max(wsum, 1e-4), 1.0);
+}
+fragment float4 aether_bloom_blur_v_fragment(PostFXOut in [[stage_in]],
+                                             constant BloomBlurDir &B [[buffer(1)]],
+                                             texture2d<float> src [[texture(0)]],
+                                             sampler samp [[sampler(0)]]) {
+    float2 texel = float2(B.blur_radius, B.blur_radius) / float2(src.get_width(), src.get_height());
+    float2 dir = length(B.direction) > 0.1 ? normalize(B.direction) : float2(0.0, 1.0);
+    float3 acc = float3(0.0);
+    float wsum = 0.0;
+    for (int i = -4; i <= 4; ++i) {
+        float w = 1.0 - 0.1 * float(abs(i));
+        acc += src.sample(samp, in.uv + dir * float(i) * texel).rgb * w;
+        wsum += w;
+    }
+    return float4(acc / max(wsum, 1e-4), 1.0);
 }
