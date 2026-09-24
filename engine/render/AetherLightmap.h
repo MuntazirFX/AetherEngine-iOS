@@ -108,6 +108,15 @@ u32 aether_lightstyles_fill_gpu_weights(const aether_lightstyles_t *ls,
 /* Soft scale used by CPU path and GPU: 0.25 + 0.75*v */
 f32 aether_lightstyles_gpu_scale(f32 value);
 
+/* Per-face primary style index from mesh face_ranges (styles[0]). Returns faces written. */
+u32 aether_lightmap_fill_face_style_indices(const struct aether_mesh *mesh,
+                                            u8 *out_indices, u32 max_faces);
+
+/* Pack per-face GPU weight = scale(styles.values[face.styles[0]]). Returns floats written. */
+u32 aether_lightmap_fill_face_style_weights(const struct aether_mesh *mesh,
+                                            const aether_lightstyles_t *ls,
+                                            f32 *out_weights, u32 max_faces);
+
 #ifdef __cplusplus
 }
 #endif

@@ -66,6 +66,12 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     var bspDynPipeline: MTLRenderPipelineState?
     var blobShadowPipeline: MTLRenderPipelineState?
     var postfxPipeline: MTLRenderPipelineState?
+    var bloomBrightPipeline: MTLRenderPipelineState?
+    var bloomBlurPipeline: MTLRenderPipelineState?
+    var bloomCombinePipeline: MTLRenderPipelineState?
+    var bloomBrightTexture: MTLTexture?
+    var bloomBlurTexture: MTLTexture?
+    var bloomTexSize: (Int, Int) = (0, 0)
     var dynLightUboBuffer: MTLBuffer?
     var blobShadowBuffer: MTLBuffer?
     var postfxBuffer: MTLBuffer?
@@ -823,18 +829,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
         enc.endEncoding()
 
-        // Pass 2: PostFX samples offscreen color → drawable (brightness/gamma).
-        guard let rpd2 = view.currentRenderPassDescriptor else {
-            engine_renderer_draw_hud(); engine_renderer_end_frame()
-            cmd.present(drawable); cmd.commit(); return
-        }
-        rpd2.colorAttachments[0].loadAction = .dontCare
-        guard let enc2 = cmd.makeRenderCommandEncoder(descriptor: rpd2) else {
-            engine_renderer_draw_hud(); engine_renderer_end_frame()
-            cmd.present(drawable); cmd.commit(); return
-        }
-        syncAndDrawPostFX(encoder: enc2, sceneTex: sceneColorTexture)
-        enc2.endEncoding()
+        // Pass 2: PostFX (± bloom bright/blur/combine) → drawable.
+        encodePostFXChain(commandBuffer: cmd, view: view, sceneTex: sceneColorTexture)
 
         engine_renderer_draw_hud()
         engine_renderer_end_frame()
@@ -1069,6 +1065,35 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             do { postfxPipeline = try device.makeRenderPipelineState(descriptor: d) }
             catch { print("[MetalRenderer] postfx pipeline error: \(error)") }
         }
+        // Bloom chain pipelines (bright / blur / combine) — share PostFX vertex layout.
+        if let vfn = lib.makeFunction(name: "aether_postfx_vertex") {
+            let vd = MTLVertexDescriptor()
+            vd.attributes[0].format = .float3; vd.attributes[0].offset = 0; vd.attributes[0].bufferIndex = 0
+            vd.attributes[1].format = .float2; vd.attributes[1].offset = 12; vd.attributes[1].bufferIndex = 0
+            vd.layouts[0].stride = 20
+            if let fBright = lib.makeFunction(name: "aether_bloom_bright_fragment") {
+                let d = MTLRenderPipelineDescriptor()
+                d.vertexFunction = vfn; d.fragmentFunction = fBright; d.vertexDescriptor = vd
+                d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+                do { bloomBrightPipeline = try device.makeRenderPipelineState(descriptor: d) }
+                catch { print("[MetalRenderer] bloom bright error: \(error)") }
+            }
+            if let fBlur = lib.makeFunction(name: "aether_bloom_blur_fragment") {
+                let d = MTLRenderPipelineDescriptor()
+                d.vertexFunction = vfn; d.fragmentFunction = fBlur; d.vertexDescriptor = vd
+                d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+                do { bloomBlurPipeline = try device.makeRenderPipelineState(descriptor: d) }
+                catch { print("[MetalRenderer] bloom blur error: \(error)") }
+            }
+            if let fComb = lib.makeFunction(name: "aether_bloom_combine_fragment") {
+                let d = MTLRenderPipelineDescriptor()
+                d.vertexFunction = vfn; d.fragmentFunction = fComb; d.vertexDescriptor = vd
+                d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+                d.depthAttachmentPixelFormat = mtkView.depthStencilPixelFormat
+                do { bloomCombinePipeline = try device.makeRenderPipelineState(descriptor: d) }
+                catch { print("[MetalRenderer] bloom combine error: \(error)") }
+            }
+        }
     }
 
     private func syncAndDrawBlobShadows(encoder enc: MTLRenderCommandEncoder,
@@ -1131,13 +1156,12 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         }
     }
 
-    private func syncAndDrawPostFX(encoder enc: MTLRenderCommandEncoder, sceneTex: MTLTexture?) {
-        guard let pipeline = postfxPipeline, let sceneTex = sceneTex else { return }
+    private func fillPostFXQuadBuffer() -> Int {
         var packed = [Float](repeating: 0, count: 6 * 5)
         let n = packed.withUnsafeMutableBufferPointer { buf -> Int32 in
             Int32(engine_postfx_copy_fullscreen(buf.baseAddress, 6))
         }
-        guard n >= 6 else { return }
+        guard n >= 6 else { return 0 }
         let bytes = Int(n) * 20
         if postfxBuffer == nil || postfxBuffer!.length < bytes {
             postfxBuffer = device.makeBuffer(length: max(bytes, 256), options: .storageModeShared)
@@ -1149,23 +1173,149 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 }
             }
         }
+        return Int(n)
+    }
+
+    private func ensureBloomTargets(sceneW: Int, sceneH: Int, pixelFormat: MTLPixelFormat) {
+        let bw = max(sceneW / 2, 1)
+        let bh = max(sceneH / 2, 1)
+        if bloomTexSize == (bw, bh), bloomBrightTexture != nil, bloomBlurTexture != nil { return }
+        let desc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: pixelFormat, width: bw, height: bh, mipmapped: false)
+        desc.usage = [.renderTarget, .shaderRead]
+        desc.storageMode = .private
+        bloomBrightTexture = device.makeTexture(descriptor: desc)
+        bloomBlurTexture = device.makeTexture(descriptor: desc)
+        bloomTexSize = (bw, bh)
+    }
+
+    private func encodePostFXChain(commandBuffer cmd: MTLCommandBuffer,
+                                   view: MTKView,
+                                   sceneTex: MTLTexture?) {
+        guard let sceneTex = sceneTex else { return }
+        let n = fillPostFXQuadBuffer()
+        guard n >= 6, let vb = postfxBuffer else { return }
+
+        var bloom = [Float](repeating: 0, count: 4)
+        _ = bloom.withUnsafeMutableBufferPointer { buf in
+            engine_postfx_fill_bloom(buf.baseAddress)
+        }
+        let bloomOn = bloom[3] > 0.5
+            && bloomBrightPipeline != nil
+            && bloomBlurPipeline != nil
+            && bloomCombinePipeline != nil
+
         struct PostFXUniforms {
             var brightness: Float
             var gamma: Float
             var exposure: Float
             var enabled: Float
         }
+        struct BloomUniforms {
+            var threshold: Float
+            var intensity: Float
+            var blur_radius: Float
+            var enabled: Float
+        }
         var PU = PostFXUniforms(brightness: engine_postfx_brightness(),
                                 gamma: engine_postfx_gamma(),
                                 exposure: 1.0,
                                 enabled: 1.0)
+        var BU = BloomUniforms(threshold: bloom[0], intensity: bloom[1],
+                               blur_radius: bloom[2], enabled: bloom[3])
+
+        if bloomOn {
+            ensureBloomTargets(sceneW: sceneTex.width, sceneH: sceneTex.height,
+                               pixelFormat: view.colorPixelFormat)
+            // Bright pass
+            if let brightTex = bloomBrightTexture, let pipe = bloomBrightPipeline {
+                let rpd = MTLRenderPassDescriptor()
+                rpd.colorAttachments[0].texture = brightTex
+                rpd.colorAttachments[0].loadAction = .clear
+                rpd.colorAttachments[0].storeAction = .store
+                rpd.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+                if let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) {
+                    enc.setRenderPipelineState(pipe)
+                    enc.setCullMode(.none)
+                    enc.setVertexBuffer(vb, offset: 0, index: 0)
+                    enc.setFragmentBytes(&BU, length: MemoryLayout<BloomUniforms>.stride, index: 1)
+                    enc.setFragmentTexture(sceneTex, index: 0)
+                    if let samp = postfxSampler { enc.setFragmentSamplerState(samp, index: 0) }
+                    enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: n)
+                    enc.endEncoding()
+                }
+            }
+            // Blur pass
+            if let brightTex = bloomBrightTexture, let blurTex = bloomBlurTexture,
+               let pipe = bloomBlurPipeline {
+                let rpd = MTLRenderPassDescriptor()
+                rpd.colorAttachments[0].texture = blurTex
+                rpd.colorAttachments[0].loadAction = .clear
+                rpd.colorAttachments[0].storeAction = .store
+                rpd.colorAttachments[0].clearColor = MTLClearColorMake(0, 0, 0, 1)
+                if let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) {
+                    enc.setRenderPipelineState(pipe)
+                    enc.setCullMode(.none)
+                    enc.setVertexBuffer(vb, offset: 0, index: 0)
+                    enc.setFragmentBytes(&BU, length: MemoryLayout<BloomUniforms>.stride, index: 1)
+                    enc.setFragmentTexture(brightTex, index: 0)
+                    if let samp = postfxSampler { enc.setFragmentSamplerState(samp, index: 0) }
+                    enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: n)
+                    enc.endEncoding()
+                }
+            }
+            // Combine → drawable
+            guard let rpd2 = view.currentRenderPassDescriptor else { return }
+            rpd2.colorAttachments[0].loadAction = .dontCare
+            if let enc = cmd.makeRenderCommandEncoder(descriptor: rpd2),
+               let pipe = bloomCombinePipeline,
+               let blurTex = bloomBlurTexture {
+                enc.setRenderPipelineState(pipe)
+                enc.setCullMode(.none)
+                enc.setVertexBuffer(vb, offset: 0, index: 0)
+                enc.setFragmentBytes(&PU, length: MemoryLayout<PostFXUniforms>.stride, index: 1)
+                enc.setFragmentBytes(&BU, length: MemoryLayout<BloomUniforms>.stride, index: 2)
+                enc.setFragmentTexture(sceneTex, index: 0)
+                enc.setFragmentTexture(blurTex, index: 1)
+                if let samp = postfxSampler { enc.setFragmentSamplerState(samp, index: 0) }
+                enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: n)
+                enc.endEncoding()
+            }
+            return
+        }
+
+        // Fallback: single brightness/gamma PostFX pass
+        guard let pipeline = postfxPipeline else { return }
+        guard let rpd2 = view.currentRenderPassDescriptor else { return }
+        rpd2.colorAttachments[0].loadAction = .dontCare
+        guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd2) else { return }
         enc.setRenderPipelineState(pipeline)
         enc.setCullMode(.none)
-        if let vb = postfxBuffer { enc.setVertexBuffer(vb, offset: 0, index: 0) }
+        enc.setVertexBuffer(vb, offset: 0, index: 0)
         enc.setFragmentBytes(&PU, length: MemoryLayout<PostFXUniforms>.stride, index: 1)
         enc.setFragmentTexture(sceneTex, index: 0)
         if let samp = postfxSampler { enc.setFragmentSamplerState(samp, index: 0) }
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: Int(n))
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: n)
+        enc.endEncoding()
+    }
+
+    private func syncAndDrawPostFX(encoder enc: MTLRenderCommandEncoder, sceneTex: MTLTexture?) {
+        // Kept for any callers; prefer encodePostFXChain.
+        guard let pipeline = postfxPipeline, let sceneTex = sceneTex else { return }
+        let n = fillPostFXQuadBuffer()
+        guard n >= 6, let vb = postfxBuffer else { return }
+        struct PostFXUniforms {
+            var brightness: Float; var gamma: Float; var exposure: Float; var enabled: Float
+        }
+        var PU = PostFXUniforms(brightness: engine_postfx_brightness(),
+                                gamma: engine_postfx_gamma(), exposure: 1.0, enabled: 1.0)
+        enc.setRenderPipelineState(pipeline)
+        enc.setCullMode(.none)
+        enc.setVertexBuffer(vb, offset: 0, index: 0)
+        enc.setFragmentBytes(&PU, length: MemoryLayout<PostFXUniforms>.stride, index: 1)
+        enc.setFragmentTexture(sceneTex, index: 0)
+        if let samp = postfxSampler { enc.setFragmentSamplerState(samp, index: 0) }
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: n)
     }
 
 

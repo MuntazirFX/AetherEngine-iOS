@@ -134,6 +134,10 @@ aether_result_t aether_mesh_from_bsp(const aether_bsp_t *bsp,
         m->face_ranges[f].index_count = icursor - face_index_start;
         m->face_ranges[f].first_vertex = base_vertex;
         m->face_ranges[f].vertex_count = vcursor - base_vertex;
+        m->face_ranges[f].styles[0] = face->styles[0];
+        m->face_ranges[f].styles[1] = face->styles[1];
+        m->face_ranges[f].styles[2] = face->styles[2];
+        m->face_ranges[f].styles[3] = face->styles[3];
     }
 
     m->vertex_count = vcursor;

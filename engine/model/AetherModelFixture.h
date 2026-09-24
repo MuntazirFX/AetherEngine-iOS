@@ -44,6 +44,13 @@ u32 aether_mdl_write_textured_fixture_file(const char *filepath);
  * Returns bytes written (w*h*4) or 0. */
 u32 aether_mdl_fixture_texture_rgba(u8 *out, u32 cap, u32 *out_w, u32 *out_h);
 
+/* Sequence-skinned fixture: 2 bones + sequence frame count metadata (clean-room).
+ * Geometry extract still yields the triangle; skinning uses aether_mdl_sequence_init_sway. */
+u32 aether_mdl_write_seq_fixture(u8 *out, u32 cap);
+u32 aether_mdl_write_seq_fixture_file(const char *filepath);
+/* Returns embedded sequence frame count hint (0 if not seq fixture). */
+u32 aether_mdl_fixture_seq_frame_count(const u8 *data, u32 size);
+
 #ifdef __cplusplus
 }
 #endif

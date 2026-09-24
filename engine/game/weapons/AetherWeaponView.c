@@ -89,3 +89,30 @@ void aether_weapon_view_dump(const aether_weapon_view_t *v) {
                (int)v->weapon, (int)v->current_anim,
                v->anim_time, v->anim_length, v->bob_amount);
 }
+
+
+u32 aether_weapon_view_copy_stub(const aether_weapon_view_t *v,
+                                 aether_viewmodel_vertex_t *out, u32 max_verts) {
+    if (!out || max_verts < 6) return 0;
+    /* View-space gun stub: small rectangle bottom-right of FOV. */
+    f32 bob_x = v ? sinf(v->bob_phase) * v->bob_amount * 0.02f : 0.f;
+    f32 bob_y = v ? sinf(v->bob_phase * 2.f) * v->bob_amount * 0.015f : 0.f;
+    f32 kick = 0.f;
+    if (v && v->current_anim == AETHER_VIEW_ANIM_FIRE) {
+        f32 t = v->anim_length > 0.f ? (v->anim_time / v->anim_length) : 0.f;
+        kick = (1.f - t) * 0.04f;
+    }
+    f32 x0 = 0.15f + bob_x, x1 = 0.55f + bob_x;
+    f32 y0 = -0.55f + bob_y - kick, y1 = -0.15f + bob_y - kick;
+    f32 z = -0.8f;
+    f32 r = 0.55f, g = 0.55f, b = 0.50f, a = 1.f;
+    aether_viewmodel_vertex_t corners[4] = {
+        {x0,y0,z, 0,0, r,g,b,a},
+        {x1,y0,z, 1,0, r,g,b,a},
+        {x1,y1,z, 1,1, r,g,b,a},
+        {x0,y1,z, 0,1, r,g,b,a},
+    };
+    int idx[6] = {0,1,2, 0,2,3};
+    for (int i = 0; i < 6; ++i) out[i] = corners[idx[i]];
+    return 6;
+}

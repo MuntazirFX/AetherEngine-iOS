@@ -103,6 +103,33 @@ aether_result_t aether_audio_play_wav_data(aether_audio_t *a,
 /* Internal: called by the engine to flush queued commands. */
 void aether_audio_flush(aether_audio_t *a);
 
+/* ---------- Spatial audio stub (distance + stereo pan) ---------- */
+typedef struct aether_audio_spatial {
+    f32 gain;      /* 0..1 distance attenuation */
+    f32 pan;       /* -1..1 left/right */
+    f32 dist;      /* world units from listener */
+} aether_audio_spatial_t;
+
+void aether_audio_set_listener(aether_audio_t *a,
+                               f32 x, f32 y, f32 z,
+                               f32 forward_x, f32 forward_y, f32 forward_z);
+void aether_audio_get_listener(const aether_audio_t *a, f32 out_pos[3], f32 out_fwd[3]);
+
+/* Compute gain/pan for a world source. ref_dist/max_dist control falloff. */
+void aether_audio_spatial_atten(const aether_audio_t *a,
+                                f32 src_x, f32 src_y, f32 src_z,
+                                f32 ref_dist, f32 max_dist,
+                                aether_audio_spatial_t *out);
+
+/* Beep/WAV at world position (volume *= gain; stereo pan encoded if possible). */
+aether_result_t aether_audio_play_beep_at(aether_audio_t *a, f32 freq_hz,
+                                          f32 duration_sec, f32 volume,
+                                          f32 src_x, f32 src_y, f32 src_z);
+aether_result_t aether_audio_play_wav_at(aether_audio_t *a,
+                                         const u8 *wav_data, u32 wav_size,
+                                         f32 volume,
+                                         f32 src_x, f32 src_y, f32 src_z);
+
 #ifdef __cplusplus
 }
 #endif

@@ -66,3 +66,39 @@ f32 aether_monster_ai_face_yaw(const aether_monster_t *m, aether_vec3_t target_p
     aether_vec3_t d = aether_vec3_sub(target_pos, m->entity->origin);
     return atan2f(d.y, d.x) * 180.0f / 3.14159f;
 }
+
+
+void aether_monster_ai_tick(aether_monster_t *m, aether_entity_t *player, f32 dt) {
+    (void)dt;
+    if (!m || !m->entity || !m->def) return;
+    if (m->state == AETHER_MST_DEAD) return;
+    if (!player) return;
+    if (!m->enemy) {
+        if (aether_monster_ai_can_see(m, player)) {
+            aether_monster_set_enemy(m, player);
+            if (m->state == AETHER_MST_IDLE)
+                aether_monster_set_state(m, AETHER_MST_ALERT);
+        }
+    } else if (m->enemy == player) {
+        if (!aether_monster_ai_can_see(m, player) &&
+            !aether_monster_ai_can_hear(m, player->origin, 1.f)) {
+            /* Keep last known; alert timeout handled in monster_tick */
+        } else {
+            m->last_known_enemy_pos = player->origin;
+            f32 yaw = aether_monster_ai_face_yaw(m, player->origin);
+            m->entity->angles.y = yaw;
+        }
+    }
+}
+
+u32 aether_monster_ai_tick_registry(aether_monster_registry_t *reg, f32 dt) {
+    if (!reg) return 0;
+    u32 n = 0;
+    for (u32 i = 0; i < reg->count; ++i) {
+        aether_monster_t *m = &reg->monsters[i];
+        if (m->state == AETHER_MST_DEAD) continue;
+        aether_monster_ai_tick(m, reg->player, dt);
+        n++;
+    }
+    return n;
+}

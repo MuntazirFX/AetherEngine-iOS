@@ -27,6 +27,8 @@ typedef struct aether_net_predict {
     u32 cmd_seq;
     f32 error[3];       /* last reconcile delta */
     bool active;
+    struct aether_collision *collision; /* optional clipnodes for predict move */
+    bool on_ground;
 } aether_net_predict_t;
 
 void aether_net_predict_init(aether_net_predict_t *pr, u32 local_id);
@@ -41,6 +43,16 @@ void aether_net_predict_reconcile(aether_net_predict_t *pr,
                                   f32 blend /* 0=keep predict, 1=snap */);
 
 void aether_net_predict_get_origin(const aether_net_predict_t *pr, f32 out[3]);
+
+/* Optional clipnode collision for prediction (borrowed; may be NULL). */
+struct aether_collision;
+void aether_net_predict_set_collision(aether_net_predict_t *pr, struct aether_collision *col);
+struct aether_collision *aether_net_predict_get_collision(const aether_net_predict_t *pr);
+
+/* Same as apply_cmd but slides through clipnodes when collision is set. */
+void aether_net_predict_apply_cmd_clipped(aether_net_predict_t *pr,
+                                          const aether_net_predict_cmd_t *cmd,
+                                          i32 hull_index);
 
 #ifdef __cplusplus
 }

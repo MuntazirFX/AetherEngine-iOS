@@ -4,6 +4,7 @@
  * NOTE: All headers explicitly included for compile safety.
  */
 #include "AetherMonsterRegistry.h"
+#include "AetherMonsterAI.h"
 #include "AetherMonsterBase.h"
 #include "AetherMonsterTypes.h"
 #include "AetherMonsterDefs.h"
@@ -69,17 +70,13 @@ void aether_monster_registry_tick(aether_monster_registry_t *reg, f32 dt) {
     if (!reg) return;
     reg->time += dt;
 
+    /* Perception / target select before movement states. */
+    (void)aether_monster_ai_tick_registry(reg, dt);
+
     for (u32 i = 0; i < reg->count; ++i) {
         aether_monster_t *m = &reg->monsters[i];
         if (m->state == AETHER_MST_DEAD) continue;
         aether_monster_tick(m, dt);
-
-        if (reg->player && !m->enemy && m->def && m->entity) {
-            f32 dist = aether_vec3_len(aether_vec3_sub(reg->player->origin, m->entity->origin));
-            if (dist <= m->def->sight_range) {
-                aether_monster_set_enemy(m, reg->player);
-            }
-        }
     }
 
     /* Compact dead monsters */

@@ -19,6 +19,7 @@ struct ClassicScoreboardChatOverlay: View {
         .onReceive(poll) { _ in refresh() }
     }
 
+    // Layout aligns with aether_hud_layout_classic scoreboard rect (top-center).
     private var scoreboardPanel: some View {
         VStack(spacing: 0) {
             Text("SCOREBOARD").font(.system(size: 18, weight: .bold, design: .serif)).foregroundColor(.white)
@@ -43,6 +44,7 @@ struct ClassicScoreboardChatOverlay: View {
         .padding(.horizontal, 24).allowsHitTesting(false)
     }
 
+    // Layout aligns with aether_hud_layout_classic chat rect (bottom-center).
     private var chatPanel: some View {
         VStack {
             Spacer()
