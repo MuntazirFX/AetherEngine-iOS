@@ -18,14 +18,24 @@ typedef struct aether_mesh_vertex {
     f32 lu, lv;       /* lightmap UV (0..1) — procedural stub or BSP lightmap */
 } aether_mesh_vertex_t;
 
+/* Maps one BSP face → a contiguous index range in the mesh (for VIS culling). */
+typedef struct aether_mesh_face_range {
+    u32 first_index;
+    u32 index_count;
+    u32 first_vertex;
+    u32 vertex_count;
+} aether_mesh_face_range_t;
+
 typedef struct aether_mesh {
-    aether_mesh_vertex_t *vertices;
-    u32                   vertex_count;
-    u32                  *indices;
-    u32                   index_count;
-    f32                   bounds_min[3];
-    f32                   bounds_max[3];
-    f32                   bounds_center[3];
+    aether_mesh_vertex_t    *vertices;
+    u32                      vertex_count;
+    u32                     *indices;
+    u32                      index_count;
+    aether_mesh_face_range_t *face_ranges; /* length == face_count; may be NULL on OOM path */
+    u32                      face_count;  /* BSP face count at build time */
+    f32                      bounds_min[3];
+    f32                      bounds_max[3];
+    f32                      bounds_center[3];
 } aether_mesh_t;
 
 /* Build a mesh. If atlas is NULL, UVs are zeroed.

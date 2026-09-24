@@ -1,5 +1,5 @@
 // MetalRenderer.swift
-// Renders BSP/world mesh + entities + particles + sky + water + fog + lightmap stub. STEP 2h / bsp-lightmap.
+// Renders BSP/world mesh + entities + particles + sky + water + fog + lightmap + VIS leaf cull. STEP 2i / bsp-vis.
 // Pushes view/proj + frame dt into EngineBridge each draw.
 // AetherEngine-iOS · Clean-room.
 
@@ -32,6 +32,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     var vertexBuffer: MTLBuffer?
     var indexBuffer:  MTLBuffer?
     var indexCount:   Int = 0
+    /// Culled (leaf/PVS) index buffer — rewritten each frame from EngineBridge VIS.
+    var culledIndexBuffer: MTLBuffer?
+    var culledIndexCount: Int = 0
 
     var atlasTexture: MTLTexture?
     var hasTexture:   Bool = false
@@ -289,7 +292,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         engine_particles_clear()
         let seeded = engine_particles_spawn_burst(eye[0], eye[1], eye[2] + 24, 96)
         let synth = engine_bsp_mesh_is_synthetic() != 0
-        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0) synthetic=\(synth) tris=\(engine_bsp_mesh_triangle_count()), lightmap=\(hasLightmap) \(engine_lightmap_width())x\(engine_lightmap_height()) stub=\(engine_lightmap_is_stub() != 0), MDL=\(hasMdl), Monsters=\(monsterPositions.count), Particles=\(seeded), Sky=\(skyVertexCount), Water=\(waterVertexCount))")
+        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0) synthetic=\(synth) tris=\(engine_bsp_mesh_triangle_count()), VIS faces=\(engine_bsp_vis_visible_face_count())/\(engine_bsp_vis_total_face_count()) leaf=\(engine_bsp_vis_find_leaf()), lightmap=\(hasLightmap) \(engine_lightmap_width())x\(engine_lightmap_height()) stub=\(engine_lightmap_is_stub() != 0), MDL=\(hasMdl), Monsters=\(monsterPositions.count), Particles=\(seeded), Sky=\(skyVertexCount), Water=\(waterVertexCount))")
     }
 
     private func uploadBspMesh() {
@@ -308,6 +311,41 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         }
         indexBuffer = device.makeBuffer(bytes: iData, length: iCount * 4, options: .storageModeShared)
         indexCount = iCount
+        // Pre-allocate culled IB at full capacity; contents refreshed in draw via VIS.
+        culledIndexBuffer = device.makeBuffer(length: iCount * 4, options: .storageModeShared)
+        culledIndexCount = iCount
+        if let cib = culledIndexBuffer {
+            memcpy(cib.contents(), iData, iCount * 4)
+        }
+        refreshVisIndices(force: true)
+    }
+
+    /// Push eye → EngineBridge VIS and rewrite the culled index buffer.
+    @discardableResult
+    private func refreshVisIndices(force: Bool = false) -> Int {
+        var eye = [Float](repeating: 0, count: 3)
+        engine_player_get_eye(&eye)
+        engine_bsp_vis_set_view_origin(eye[0], eye[1], eye[2])
+        let n = Int(engine_bsp_vis_update())
+        guard n > 0, let cib = culledIndexBuffer, n <= indexCount else {
+            culledIndexCount = indexCount
+            return culledIndexCount
+        }
+        var iData = [UInt32](repeating: 0, count: n)
+        let copied = iData.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_bsp_vis_copy_indices(buf.baseAddress, Int32(n)))
+        }
+        let use = Int(copied)
+        if use > 0 {
+            memcpy(cib.contents(), iData, use * 4)
+            culledIndexCount = use
+        } else {
+            culledIndexCount = indexCount
+        }
+        if force {
+            print("[MetalRenderer] VIS leaf=\(engine_bsp_vis_find_leaf()) faces=\(engine_bsp_vis_visible_face_count())/\(engine_bsp_vis_total_face_count()) indices=\(culledIndexCount)/\(indexCount) forceFull=\(engine_bsp_vis_force_full() != 0)")
+        }
+        return culledIndexCount
     }
 
     private func uploadAtlas() {
@@ -524,7 +562,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                 engine_renderer_set_camera(vb.baseAddress, pb.baseAddress)
             }
         }
-        // Submit DRAW_WORLD through C backend (MetalCallbacks tracks it); GPU mesh drawn below.
+        // Leaf / PVS cull from eye, then submit DRAW_WORLD (MetalCallbacks tracks it).
+        _ = refreshVisIndices(force: false)
         engine_renderer_draw_world()
 
         // ---- Sky (behind world; no depth write) ----
@@ -533,8 +572,10 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         // ---- Water (animated plane from AetherWater) ----
         syncAndDrawWater(encoder: enc, viewMat: viewMat, projMat: projMat)
 
-        // ---- BSP ----
-        if let pipeline = bspPipeline, let vb = vertexBuffer, let ib = indexBuffer, indexCount > 0 {
+        // ---- BSP (culled index list when VIS is active) ----
+        let bspIndexCount = culledIndexCount > 0 ? culledIndexCount : indexCount
+        let bspIndexBuffer = culledIndexBuffer ?? indexBuffer
+        if let pipeline = bspPipeline, let vb = vertexBuffer, let ib = bspIndexBuffer, bspIndexCount > 0 {
             enc.setRenderPipelineState(pipeline)
             var U = Uniforms(model: matrix_identity_float4x4,
                              view: viewMat, proj: projMat,
@@ -556,7 +597,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             if let lm = lightmapTexture {
                 enc.setFragmentTexture(lm, index: 1)
             }
-            enc.drawIndexedPrimitives(type: .triangle, indexCount: indexCount,
+            enc.drawIndexedPrimitives(type: .triangle, indexCount: bspIndexCount,
                                       indexType: .uint32, indexBuffer: ib, indexBufferOffset: 0)
         }
 

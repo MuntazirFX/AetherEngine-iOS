@@ -29,6 +29,7 @@
 #include "AetherBSP.h"
 #include "AetherBSPGeometry.h"
 #include "AetherBSPSynthetic.h"
+#include "AetherBSPVis.h"
 #include "AetherEntityBase.h"
 #include "AetherEntitySpawn.h"
 #include "AetherWorld.h"
@@ -242,7 +243,9 @@ int main(void) {
         expect(aether_bsp_vertex_count(bsp) == 8u, "bsp_synthetic_verts");
         expect(aether_bsp_face_count(bsp) == 6u, "bsp_synthetic_faces");
         expect(aether_bsp_edge_count(bsp) == 12u, "bsp_synthetic_edges");
-        expect(aether_bsp_plane_count(bsp) == 6u, "bsp_synthetic_planes");
+        expect(aether_bsp_plane_count(bsp) == 7u, "bsp_synthetic_planes"); /* +X=0 split */
+        expect(aether_bsp_node_count(bsp) == 1u, "bsp_synthetic_nodes");
+        expect(aether_bsp_leaf_count(bsp) == 3u, "bsp_synthetic_leaves"); /* solid + west + east */
 
         aether_mesh_t *mesh = NULL;
         expect(aether_mesh_from_bsp(bsp, NULL, &mesh) == AETHER_OK && mesh != NULL,
@@ -266,6 +269,64 @@ int main(void) {
         aether_world_render_set_surface_count(&world, mesh->index_count / 3u);
         expect(world.surface_count == mesh->index_count / 3u, "world_surface_count");
         aether_world_render_shutdown(&world);
+
+        /* VIS / leaf culling (synthetic stub: X=0 split, vis_offset=-1 → all empty). */
+        expect(mesh->face_count == 6u && mesh->face_ranges != NULL, "mesh_face_ranges");
+        {
+            i32 west = aether_bsp_find_leaf(bsp, -50.f, 0.f, 40.f);
+            i32 east = aether_bsp_find_leaf(bsp,  50.f, 0.f, 40.f);
+            expect(west == 1, "bsp_find_leaf_west");
+            expect(east == 2, "bsp_find_leaf_east");
+            expect(aether_bsp_leaf_is_drawable(bsp, west), "leaf_west_drawable");
+            expect(aether_bsp_leaf_is_drawable(bsp, east), "leaf_east_drawable");
+            expect(!aether_bsp_leaf_is_drawable(bsp, 0), "leaf_solid_not_drawable");
+
+            u8 bits[8];
+            u32 *idx = (u32 *)malloc(mesh->index_count * sizeof(u32));
+            expect(idx != NULL, "vis_idx_alloc");
+
+            /* Default USE_PVS with vis_offset=-1 → all empty leaves → 6 unique faces. */
+            aether_bsp_vis_stats_t st_pvs;
+            u32 n_pvs = aether_bsp_vis_cull_mesh(bsp, mesh, -50.f, 0.f, 40.f,
+                                                 AETHER_BSP_VIS_USE_PVS,
+                                                 idx, mesh->index_count, &st_pvs);
+            expect(st_pvs.view_leaf == 1, "vis_pvs_view_leaf");
+            expect(st_pvs.visible_faces == 6u, "vis_pvs_all_faces");
+            expect(n_pvs == mesh->index_count, "vis_pvs_all_indices");
+
+            /* CURRENT_LEAF_ONLY west → 4 faces (skip +X/+Y). */
+            aether_bsp_vis_stats_t st_w;
+            u32 n_w = aether_bsp_vis_cull_mesh(bsp, mesh, -50.f, 0.f, 40.f,
+                                               AETHER_BSP_VIS_CURRENT_LEAF_ONLY,
+                                               idx, mesh->index_count, &st_w);
+            expect(st_w.visible_faces == 4u, "vis_leaf_only_west_faces");
+            expect(n_w == 24u, "vis_leaf_only_west_indices"); /* 4 quads × 6 idx */
+            expect(n_w < mesh->index_count, "vis_leaf_only_skips_faces");
+
+            u32 marked = aether_bsp_vis_mark_faces(bsp, east, AETHER_BSP_VIS_CURRENT_LEAF_ONLY,
+                                                   bits, 8);
+            expect(marked == 4u, "vis_leaf_only_east_faces");
+            expect(bits[5] == 1 && bits[4] == 0, "vis_east_has_plusx_not_minusx");
+
+            aether_bsp_vis_stats_t st_full;
+            u32 n_full = aether_bsp_vis_cull_mesh(bsp, mesh, 0.f, 0.f, 40.f,
+                                                  AETHER_BSP_VIS_FORCE_FULL,
+                                                  idx, mesh->index_count, &st_full);
+            expect(st_full.visible_faces == 6u && n_full == mesh->index_count,
+                   "vis_force_full");
+
+            aether_world_render_t w2;
+            expect(aether_world_render_init(&w2) == AETHER_OK, "world_vis_init");
+            aether_world_render_set_surface_count(&w2, mesh->index_count / 3u);
+            aether_world_render_set_visible_surface_count(&w2, n_w / 3u);
+            expect(w2.surface_count == 12u && w2.visible_surface_count == 8u,
+                   "world_visible_surface_count");
+            aether_world_render_shutdown(&w2);
+
+            free(idx);
+            printf("  VIS cull: full=%u faces, leaf-only west=%u faces/%u idx (before=%u indices)\n",
+                   st_pvs.visible_faces, st_w.visible_faces, n_w, mesh->index_count);
+        }
 
         /* Lightmap stub: procedural atlas + mesh LUV (feeds Metal sample). */
         aether_lightmap_t lm;
