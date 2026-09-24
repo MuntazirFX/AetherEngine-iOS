@@ -30,7 +30,7 @@ When Half-Life `.bsp` files are not present, the engine builds a tiny clean-room
 (`aether_bsp_create_synthetic_room` → `aether_mesh_from_bsp` → entity spawn). On iOS use
 **Start Demo World (synthetic BSP)** or any Launch path (falls back automatically). Metal draws
 the room mesh plus a procedural lightmap stub (grayscale atlas × vertex color), leaf/PVS face culling
-(synthetic X=0 split + marksurfaces; `vis_offset=-1` → all empty leaves visible), clipnode hulls for walk/slide/ground/step-up/crouch/swim (distinct crouch Z, jump ceiling clamp, low alcove duck, +Y CONTENTS_WATER pool, waterlevel feet/waist/eye + splash), and red monster debug boxes from the entity/monster registries.
+(synthetic X=0 split + marksurfaces; `vis_offset=-1` → all empty leaves visible), clipnode hulls for walk/slide/ground/step-up/crouch/swim (distinct crouch Z, jump ceiling clamp, low alcove duck, +Y CONTENTS_WATER pool, waterlevel feet/waist/eye + splash + drown damage), and red monster debug boxes from the entity/monster registries.
 
 This compiles all `engine/**/*.c` sources, archives `libaether_engine.a`, and runs `tests/host_smoke.c` (arena, engine lifecycle, 5-game registry, manifests, entity/weapon/monster tables, scoreboard/chat, VGUI runtime).
 
@@ -52,6 +52,7 @@ GitHub Actions workflow `.github/workflows/verify.yml` runs the same script on e
 - [x] STEP 2l: Crouch hull + jump ceiling — distinct hull-2 Z AABB, alcove duck, ceiling clamp (see `continue/bsp-crouch-jump`)
 - [x] STEP 2m: Water contents / swim — CONTENTS_WATER clip + buoyancy/swim move (see `continue/bsp-water-swim`)
 - [x] STEP 2n: Waterlevel + splash / enter-exit FX — feet/waist/eye tiers, particle splash, air/drown stub (see `continue/bsp-waterlevel-splash`)
+- [x] STEP 2o: Drown → health damage + HEV air HUD — tick_drown wire, air meter bridge/ClassicHUD (see `continue/bsp-drown-health`)
 - [ ] STEP 3: Engine foundation
 - [ ] STEP 4: iOS application
 - [ ] STEP 5: 5-game configuration
@@ -79,7 +80,7 @@ AetherEngine now exposes an Xash3D-class renderer feature layer with clean-room 
 - `AetherLightmap` — lightmap/style state + procedural grayscale atlas stub + mesh LUV bake
 - `AetherBSPVis` — leaf-from-point, PVS/marksurface face filter, culled mesh indices for Metal
 - `AetherCollision` — clipnode hull contents/solid + move-and-slide + step-up + crouch/stand hull heights + water (synthetic room, 16u ledge, low alcove, +Y pool)
-- `AetherPlayer` — waterlevel tiers (dry/wade/swim/under), enter/exit splash events, air/drown stub
+- `AetherPlayer` — waterlevel tiers (dry/wade/swim/under), splash events, air/drown → `aether_player_tick_drown` health damage
 - `AetherWater` — animated water state + wavy plane vertex copy for Metal
 - `AetherSky` — six-face sky state + gradient dome vertex copy for Metal
 - `AetherFog` — fog parameters + fullscreen tint vertex copy for Metal
@@ -125,7 +126,7 @@ This is an AetherEngine implementation, not a copy of Valve/Xash3D source. Full 
 
 
 ## Classic GoldSrc HUD bridge
-The iOS game view now presents a clean-room GoldSrc-style HUD overlay backed by the C HUD/player state: health, armor, HEV battery, weapon/ammo state, death state, and classic crosshair presentation. The HUD is a presentation bridge; gameplay state remains in the engine.
+The iOS game view now presents a clean-room GoldSrc-style HUD overlay backed by the C HUD/player state: health, armor, HEV battery, air/drown meter, weapon/ammo state, death state, and classic crosshair presentation. The HUD is a presentation bridge; gameplay state remains in the engine.
 
 
 ## Scoreboard + Chat UI

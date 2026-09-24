@@ -29,6 +29,7 @@
 #include "../../engine/render/AetherWorld.h"
 #include "../../engine/player/AetherPlayer.h"
 #include "../../engine/player/AetherPlayerHealth.h"
+#include "../../engine/player/AetherPlayerDamage.h"
 #include "../../engine/player/AetherPlayerInventory.h"
 #include "../../engine/client/hud/AetherHUD.h"
 #include "../../engine/client/hud/AetherHealth.h"
@@ -251,6 +252,18 @@ void engine_player_tick(float dt) {
     aether_player_update(&g_player, st, g_collision, dt);
     aether_input_end_frame(g_input);
 
+    /* Drown damage: only while drowning flag set (air depleted + eye under). */
+    {
+        bool drowning = aether_player_is_drowning(&g_player);
+        f32 hp_before = aether_player_health_get(&g_player_health);
+        aether_player_tick_drown(&g_player_health, dt, drowning);
+        if (drowning && g_hud_health) {
+            f32 lost = hp_before - aether_player_health_get(&g_player_health);
+            if (lost > 0.0f)
+                aether_hud_health_trigger_damage_flash(g_hud_health, lost);
+        }
+    }
+
     /* Enter/exit water splash → particle burst at mid-body. */
     {
         int splash = aether_player_take_splash_event(&g_player);
@@ -369,6 +382,11 @@ float engine_hud_max_health(void) { return g_player_health.max_health; }
 float engine_hud_armor(void) { return aether_player_health_get_armor(&g_player_health); }
 float engine_hud_battery(void) { return aether_player_health_get_battery(&g_player_health); }
 bool engine_hud_alive(void) { return aether_player_health_is_alive(&g_player_health); }
+float engine_hud_air(void) { return aether_player_air(&g_player); }
+float engine_hud_air_max(void) { return g_player.air_max; }
+int engine_hud_drowning(void) {
+    return aether_player_is_drowning(&g_player) ? 1 : 0;
+}
 
 static aether_ammo_type_t bridge_ammo_type(aether_weapon_id_t w) {
     switch (w) {

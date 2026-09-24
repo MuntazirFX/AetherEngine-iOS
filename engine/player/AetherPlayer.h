@@ -23,7 +23,7 @@ extern "C" {
 #define AETHER_SPLASH_ENTER  1
 #define AETHER_SPLASH_EXIT   2
 
-/* Seconds of breath before drown stub trips (eye underwater). */
+/* Seconds of breath before drowning flag trips (eye underwater). */
 #define AETHER_PLAYER_AIR_MAX  12.0f
 
 typedef struct aether_player {
@@ -42,7 +42,7 @@ typedef struct aether_player {
     i32           waterlevel;    /* AETHER_WATERLEVEL_* */
     f32           air;           /* breath remaining (0..air_max) */
     f32           air_max;
-    bool          drowning;      /* air depleted while eye underwater (stub) */
+    bool          drowning;      /* air depleted while eye underwater → feed tick_drown */
     i32           splash_event;  /* pending ENTER/EXIT; consume via take_splash */
     i32           hull_index;    /* 1 or 2 */
     f32           step_height;   /* max auto-step (Quake 18); 0 disables */

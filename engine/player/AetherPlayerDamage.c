@@ -65,9 +65,9 @@ f32 aether_player_calc_fall_damage(f32 velocity_z) {
     return dmg;
 }
 
-void aether_player_tick_drown(aether_player_health_t *h, f32 dt, bool underwater) {
-    if (!h || !underwater || h->dead) return;
-    /* 10 hp per second underwater */
+void aether_player_tick_drown(aether_player_health_t *h, f32 dt, bool drowning) {
+    if (!h || !drowning || h->dead || dt <= 0.0f) return;
+    /* 10 hp/s while drowning (air depleted + eye underwater). */
     aether_player_health_damage(h, 10.0f * dt);
 }
 
