@@ -1,0 +1,30 @@
+# verify.yml
+# Automatic host-compile + smoke test on every push/PR.
+# AetherEngine-iOS · Clean-room. No Xcode/macOS required.
+
+name: Verify C Sources
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  host-verify:
+    name: Host compile + smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          cc --version | head -1
+          uname -a
+
+      - name: Run host verification
+        run: bash build/scripts/verify_host.sh

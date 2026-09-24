@@ -16,9 +16,21 @@ A brand-new, clean-room iOS game engine and application built from scratch.
 - `engine/core` – Foundation: types, arena, logging, engine runtime
 - `engine/game` – Game registry & lifecycle manager
 
+## Host verification (STEP 2)
+
+Linux/macOS (no Xcode required):
+
+```bash
+bash build/scripts/verify_host.sh
+```
+
+This compiles all `engine/**/*.c` sources, archives `libaether_engine.a`, and runs `tests/host_smoke.c` (arena, engine lifecycle, 5-game registry, manifests, entity/weapon/monster tables, scoreboard/chat, VGUI runtime).
+
+GitHub Actions workflow `.github/workflows/verify.yml` runs the same script on every push/PR to `main`.
+
 ## Build Status
 - [x] STEP 1: Core modules
-- [ ] STEP 2: Verification
+- [x] STEP 2: Verification (host compile + smoke via `build/scripts/verify_host.sh` / `.github/workflows/verify.yml`)
 - [ ] STEP 3: Engine foundation
 - [ ] STEP 4: iOS application
 - [ ] STEP 5: 5-game configuration

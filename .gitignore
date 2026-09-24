@@ -1,5 +1,4 @@
-# Xcode
-build/
+# Xcode / derived
 DerivedData/
 *.ipa
 *.dSYM.zip
@@ -7,15 +6,24 @@ DerivedData/
 xcuserdata/
 *.xcworkspace/xcuserdata/
 .DS_Store
+*.xcodeproj/
 
-# C / C++
+# Host / CI build outputs (keep build/scripts, CMakeLists, project.yml tracked)
+build/out/
+build/CMakeFiles/
+build/CMakeCache.txt
+build/cmake-*/
+build/AetherApp.xcodeproj/
+
+# Object / library artifacts anywhere
 *.o
 *.a
 *.so
 *.dylib
 
-# CMake
+# CMake litter in-tree
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 Makefile
+compile_commands.json

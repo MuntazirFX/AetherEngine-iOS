@@ -17,7 +17,7 @@ extern "C" {
 #define AETHER_VERSION_MAJOR 0
 #define AETHER_VERSION_MINOR 1
 #define AETHER_VERSION_PATCH 0
-#define AETHER_VERSION_STRING "0.1.0-step1"
+#define AETHER_VERSION_STRING "0.1.0-step2"
 
 /* ---------- Fixed-width types ---------- */
 typedef uint8_t   u8;
