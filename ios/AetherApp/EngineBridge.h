@@ -34,6 +34,18 @@ void  engine_player_set_position(float x, float y, float z);
 void  engine_player_set_angles(float yaw, float pitch);
 float engine_player_get_yaw(void);
 float engine_player_get_pitch(void);
+int   engine_player_on_ground(void);
+
+/* ---------- Collision (clipnode hull) ---------- */
+int  engine_collision_ready(void);
+int  engine_collision_clipnode_count(void);
+int  engine_collision_hull_root(int hull_index);
+/* 1 if point is solid for hull 1 (standing) or 2 (crouch). */
+int  engine_collision_point_in_solid(float x, float y, float z, int hull_index);
+/* Axis move-and-slide; writes corrected xyz and returns on_ground (1/0). */
+int  engine_collision_move(float from_x, float from_y, float from_z,
+                           float to_x, float to_y, float to_z,
+                           int hull_index, float out_xyz[3]);
 
 /* ---------- HUD ---------- */
 float engine_hud_health(void);

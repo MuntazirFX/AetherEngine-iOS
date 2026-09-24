@@ -30,7 +30,7 @@ When Half-Life `.bsp` files are not present, the engine builds a tiny clean-room
 (`aether_bsp_create_synthetic_room` → `aether_mesh_from_bsp` → entity spawn). On iOS use
 **Start Demo World (synthetic BSP)** or any Launch path (falls back automatically). Metal draws
 the room mesh plus a procedural lightmap stub (grayscale atlas × vertex color), leaf/PVS face culling
-(synthetic X=0 split + marksurfaces; `vis_offset=-1` → all empty leaves visible), and red monster debug boxes from the entity/monster registries.
+(synthetic X=0 split + marksurfaces; `vis_offset=-1` → all empty leaves visible), clipnode hulls for walk/slide/ground response (player stays on floor), and red monster debug boxes from the entity/monster registries.
 
 This compiles all `engine/**/*.c` sources, archives `libaether_engine.a`, and runs `tests/host_smoke.c` (arena, engine lifecycle, 5-game registry, manifests, entity/weapon/monster tables, scoreboard/chat, VGUI runtime).
 
@@ -47,6 +47,7 @@ GitHub Actions workflow `.github/workflows/verify.yml` runs the same script on e
 - [x] STEP 2g: BSP/world → Metal — synthetic demo room BSP → mesh + entities + DRAW_WORLD (see `continue/bsp-metal`)
 - [x] STEP 2h: BSP lightmap stub — procedural grayscale atlas + mesh LUV + Metal sample (see `continue/bsp-lightmap`)
 - [x] STEP 2i: BSP VIS / leaf culling — find leaf, marksurfaces, culled index list → Metal (see `continue/bsp-vis`)
+- [x] STEP 2j: BSP clipnodes / collision — synthetic hulls + move-and-slide → player on floor (see `continue/bsp-collision`)
 - [ ] STEP 3: Engine foundation
 - [ ] STEP 4: iOS application
 - [ ] STEP 5: 5-game configuration
@@ -73,6 +74,7 @@ AetherEngine now exposes an Xash3D-class renderer feature layer with clean-room 
 - `AetherBSPSynthetic` — clean-room BSP v30 demo room (no copyrighted maps) for host/iOS verify
 - `AetherLightmap` — lightmap/style state + procedural grayscale atlas stub + mesh LUV bake
 - `AetherBSPVis` — leaf-from-point, PVS/marksurface face filter, culled mesh indices for Metal
+- `AetherCollision` — clipnode hull point-in-solid + axis move-and-slide (synthetic room hulls)
 - `AetherWater` — animated water state + wavy plane vertex copy for Metal
 - `AetherSky` — six-face sky state + gradient dome vertex copy for Metal
 - `AetherFog` — fog parameters + fullscreen tint vertex copy for Metal

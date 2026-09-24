@@ -63,7 +63,8 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
         {-256.f,  256.f, 128.f},
     };
 
-    aether_bsp_plane_t planes[7];
+    /* Render planes 0..6; clip planes 7..18 (Quake n·p - dist, front = +). */
+    aether_bsp_plane_t planes[19];
     memset(planes, 0, sizeof planes);
     planes[0].normal[2] =  1.f; planes[0].dist =    0.f; planes[0].type = 2; /* floor +Z */
     planes[1].normal[2] = -1.f; planes[1].dist = -128.f; planes[1].type = 2; /* ceiling -Z */
@@ -72,6 +73,20 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     planes[4].normal[0] =  1.f; planes[4].dist = -256.f; planes[4].type = 0; /* -X inward */
     planes[5].normal[0] = -1.f; planes[5].dist = -256.f; planes[5].type = 0; /* +X inward */
     planes[6].normal[0] =  1.f; planes[6].dist =    0.f; planes[6].type = 0; /* room split X=0 */
+    /* Point hull: exact room AABB (feet can sit on z=0). */
+    planes[7].normal[0]  = 1.f; planes[7].dist  = -256.f; planes[7].type  = 0;
+    planes[8].normal[0]  = 1.f; planes[8].dist  =  256.f; planes[8].type  = 0;
+    planes[9].normal[1]  = 1.f; planes[9].dist  = -256.f; planes[9].type  = 1;
+    planes[10].normal[1] = 1.f; planes[10].dist =  256.f; planes[10].type = 1;
+    planes[11].normal[2] = 1.f; planes[11].dist =    0.f; planes[11].type = 2;
+    planes[12].normal[2] = 1.f; planes[12].dist =  128.f; planes[12].type = 2;
+    /* Standing/crouch hull: XY inset 16u for feet-origin player half-width. */
+    planes[13].normal[0] = 1.f; planes[13].dist = -240.f; planes[13].type = 0;
+    planes[14].normal[0] = 1.f; planes[14].dist =  240.f; planes[14].type = 0;
+    planes[15].normal[1] = 1.f; planes[15].dist = -240.f; planes[15].type = 1;
+    planes[16].normal[1] = 1.f; planes[16].dist =  240.f; planes[16].type = 1;
+    planes[17].normal[2] = 1.f; planes[17].dist =    0.f; planes[17].type = 2;
+    planes[18].normal[2] = 1.f; planes[18].dist =  128.f; planes[18].type = 2;
 
     aether_bsp_edge_t edges[12] = {
         {0, 1}, {1, 2}, {2, 3}, {3, 0}, /* 0..3 floor ring */
@@ -155,6 +170,28 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     leaves[2].first_marksurface = 4;
     leaves[2].num_marksurfaces = 4;
 
+    /* Clipnodes: Quake/GoldSrc layout — children[0]=front(+), children[1]=back(-);
+     * negative child = contents (EMPTY=-1, SOLID=-2). Three box hulls × 6 nodes. */
+    #pragma pack(push, 1)
+    typedef struct { i32 plane; i16 children[2]; } synth_clipnode_t;
+    #pragma pack(pop)
+    enum { SYNTH_CN_EMPTY = -1, SYNTH_CN_SOLID = -2 };
+    synth_clipnode_t clipnodes[18];
+    memset(clipnodes, 0, sizeof clipnodes);
+    /* Helper: append one AABB hull; returns root index. */
+    #define SYNTH_BOX_HULL(base, pL, pR, pY0, pY1, pZ0, pZ1) do { \
+        clipnodes[(base)+0].plane = (pL);  clipnodes[(base)+0].children[0] = (i16)((base)+1); clipnodes[(base)+0].children[1] = SYNTH_CN_SOLID; \
+        clipnodes[(base)+1].plane = (pR);  clipnodes[(base)+1].children[0] = SYNTH_CN_SOLID;   clipnodes[(base)+1].children[1] = (i16)((base)+2); \
+        clipnodes[(base)+2].plane = (pY0); clipnodes[(base)+2].children[0] = (i16)((base)+3); clipnodes[(base)+2].children[1] = SYNTH_CN_SOLID; \
+        clipnodes[(base)+3].plane = (pY1); clipnodes[(base)+3].children[0] = SYNTH_CN_SOLID;   clipnodes[(base)+3].children[1] = (i16)((base)+4); \
+        clipnodes[(base)+4].plane = (pZ0); clipnodes[(base)+4].children[0] = (i16)((base)+5); clipnodes[(base)+4].children[1] = SYNTH_CN_SOLID; \
+        clipnodes[(base)+5].plane = (pZ1); clipnodes[(base)+5].children[0] = SYNTH_CN_SOLID;   clipnodes[(base)+5].children[1] = SYNTH_CN_EMPTY; \
+    } while (0)
+    SYNTH_BOX_HULL(0,  7,  8,  9, 10, 11, 12); /* hull 0 / point — exact room */
+    SYNTH_BOX_HULL(6, 13, 14, 15, 16, 17, 18); /* hull 1 standing — XY inset 16 */
+    SYNTH_BOX_HULL(12,13, 14, 15, 16, 17, 18); /* hull 2 crouch — same AABB (stub) */
+    #undef SYNTH_BOX_HULL
+
     aether_bsp_model_t model;
     memset(&model, 0, sizeof model);
     model.mins[0] = -256.f; model.mins[1] = -256.f; model.mins[2] = 0.f;
@@ -162,8 +199,10 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     model.num_faces = 6;
     model.first_face = 0;
     model.num_leafs = 2; /* empty leaves (exclude solid leaf 0) */
-    model.headnodes[0] = 0; /* rendering/VIS node tree root */
-    model.headnodes[1] = model.headnodes[2] = model.headnodes[3] = -1;
+    model.headnodes[0] = 0;  /* rendering/VIS node tree root (NODES lump) */
+    model.headnodes[1] = 6;  /* standing clip hull root (CLIPNODES) */
+    model.headnodes[2] = 12; /* crouching clip hull root */
+    model.headnodes[3] = 0;  /* point clip hull root */
 
     u32 ents_sz = (u32)strlen(k_ents) + 1;
     u32 planes_sz = (u32)sizeof(planes);
@@ -177,6 +216,7 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     u32 nodes_sz = (u32)sizeof(nodes);
     u32 leaves_sz = (u32)sizeof(leaves);
     u32 mark_sz = (u32)sizeof(marksurfaces);
+    u32 clip_sz = (u32)sizeof(clipnodes);
     /* VIS lump left empty; leaf.vis_offset = -1 means "all empty leaves visible". */
 
     const u32 header = 4u + (u32)AETHER_BSP_LUMP_COUNT * 8u;
@@ -194,6 +234,7 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     PLACE(AETHER_BSP_LUMP_NODES, nodes_sz);
     PLACE(AETHER_BSP_LUMP_TEXINFO, texinfo_sz);
     PLACE(AETHER_BSP_LUMP_FACES, faces_sz);
+    PLACE(AETHER_BSP_LUMP_CLIPNODES, clip_sz);
     PLACE(AETHER_BSP_LUMP_LEAVES, leaves_sz);
     PLACE(AETHER_BSP_LUMP_MARKSURFACES, mark_sz);
     PLACE(AETHER_BSP_LUMP_EDGES, edges_sz);
@@ -222,6 +263,7 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     memcpy(buf + offsets[AETHER_BSP_LUMP_NODES], nodes, nodes_sz);
     memcpy(buf + offsets[AETHER_BSP_LUMP_TEXINFO], &texinfo, texinfo_sz);
     memcpy(buf + offsets[AETHER_BSP_LUMP_FACES], faces, faces_sz);
+    memcpy(buf + offsets[AETHER_BSP_LUMP_CLIPNODES], clipnodes, clip_sz);
     memcpy(buf + offsets[AETHER_BSP_LUMP_LEAVES], leaves, leaves_sz);
     {
         u8 *m = buf + offsets[AETHER_BSP_LUMP_MARKSURFACES];
@@ -242,11 +284,12 @@ aether_bsp_t *aether_bsp_create_synthetic_room(void) {
     if (!bsp) return NULL;
 
     aether_log(AETHER_LOG_INFO, "bsp-synth",
-               "demo room: %u verts, %u faces, %u planes, %u nodes, %u leaves (VIS stub)",
+               "demo room: %u verts, %u faces, %u planes, %u nodes, %u leaves, %u clipnodes",
                aether_bsp_vertex_count(bsp),
                aether_bsp_face_count(bsp),
                aether_bsp_plane_count(bsp),
                aether_bsp_node_count(bsp),
-               aether_bsp_leaf_count(bsp));
+               aether_bsp_leaf_count(bsp),
+               (u32)(sizeof(clipnodes) / sizeof(clipnodes[0])));
     return bsp;
 }
