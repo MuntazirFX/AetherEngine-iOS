@@ -39,8 +39,12 @@ typedef struct aether_spectator {
     u32  roster_count;
     i32  roster_index;    /* -1 if none */
     /* HUD indicator */
-    char hud_label[AETHER_SPECTATOR_HUD_LEN]; /* e.g. "SPEC: Alice" */
+    char hud_label[AETHER_SPECTATOR_HUD_LEN]; /* e.g. "SPEC: Alice [87]" */
     bool hud_visible;
+    /* Target name/HP stub for SPEC HUD */
+    char target_name[32];
+    i32  target_hp;       /* -1 = unknown; 0..100 typical */
+    bool target_hp_valid;
 } aether_spectator_t;
 
 void aether_spectator_init(aether_spectator_t *sp);
@@ -76,6 +80,13 @@ u32  aether_spectator_hud_indicator(const aether_spectator_t *sp, char *out, u32
 bool aether_spectator_hud_visible(const aether_spectator_t *sp);
 /* Refresh hud_label from current target/roster. */
 void aether_spectator_refresh_hud(aether_spectator_t *sp);
+
+/* Target name/HP stub: drives "SPEC: Name [HP]" HUD line. */
+void aether_spectator_set_target_hp(aether_spectator_t *sp, i32 hp);
+void aether_spectator_set_target_name(aether_spectator_t *sp, const char *name);
+i32  aether_spectator_get_target_hp(const aether_spectator_t *sp);
+/* Copy target name (from set or roster). Returns bytes. */
+u32  aether_spectator_get_target_name(const aether_spectator_t *sp, char *out, u32 cap);
 
 #ifdef __cplusplus
 }

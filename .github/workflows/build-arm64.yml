@@ -126,3 +126,6 @@ jobs:
           echo "- Event: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
           echo "- verify_host: always (separate job on PR)" >> $GITHUB_STEP_SUMMARY
           echo "- IPA: workflow_dispatch only" >> $GITHUB_STEP_SUMMARY
+          echo "- Artifact upload: actions/upload-artifact@v4 (AetherEngine-<version>, 30d)" >> $GITHUB_STEP_SUMMARY
+          echo "- Artifact download: Actions UI → Artifacts, or: gh run download <run-id> -n AetherEngine-<version>" >> $GITHUB_STEP_SUMMARY
+          echo "- Optional Release attach when publish_release=true" >> $GITHUB_STEP_SUMMARY

@@ -57,3 +57,15 @@ log "Done ✔"
 #       Frameworks/ (if any), PkgInfo, _CodeSignature stripped, no mobileprovision
 #   DerivedData/.../AetherEngine.app — produced earlier by build_ios.sh (input)
 # Sideload tools expect the .ipa; the staging Payload/ tree is intermediate.
+
+# ---------- GitHub Actions artifact upload notes ----------
+# When build-arm64.yml runs on workflow_dispatch (macos-14):
+#   1. Job build_ipa packages this IPA via package_ipa.sh
+#   2. Step "Upload IPA artifact" uses actions/upload-artifact@v4
+#      name: AetherEngine-<version>
+#      path: build/out/AetherEngine.ipa
+#      retention-days: 30
+#   3. Download from the Actions run page → Artifacts → AetherEngine-<version>
+#      or: gh run download <run-id> -n AetherEngine-<version>
+#   4. Optional: publish_release=true also attaches the IPA to a GitHub Release
+# This Linux/CI host does not build the IPA; the artifact steps above are macOS-only.

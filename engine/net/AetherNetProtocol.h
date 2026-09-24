@@ -50,6 +50,7 @@ typedef enum aether_net_msg {
     AETHER_MSG_SERVER_INFO       = 0x16,
     AETHER_MSG_SERVER_DELTA      = 0x17,   /* delta snapshot vs baseline */
     AETHER_MSG_KILL              = 0x18,   /* kill feed stub */
+    AETHER_MSG_ASSIST            = 0x19,   /* assist feed packet */
     /* Query */
     AETHER_MSG_QUERY             = 0x20,
     AETHER_MSG_QUERY_RESPONSE    = 0x21,

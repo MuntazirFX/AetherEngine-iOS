@@ -12,6 +12,9 @@ void aether_spectator_init(aether_spectator_t *sp) {
     sp->forward[0] = 1.f;
     sp->cam_mode = AETHER_SPEC_CAM_FOLLOW;
     sp->roster_index = -1;
+    sp->target_hp = -1;
+    sp->target_hp_valid = false;
+    sp->target_name[0] = '\0';
 }
 
 void aether_spectator_set_enabled(aether_spectator_t *sp, bool enabled) {
@@ -24,16 +27,25 @@ static void refresh_hud(aether_spectator_t *sp) {
     sp->hud_visible = false;
     if (!sp->enabled || !sp->following) return;
     const char *name = NULL;
-    for (u32 i = 0; i < sp->roster_count; ++i) {
-        if (sp->roster[i].active && sp->roster[i].player_id == sp->target_player_id) {
-            name = sp->roster[i].name;
-            break;
+    if (sp->target_name[0]) name = sp->target_name;
+    if (!name) {
+        for (u32 i = 0; i < sp->roster_count; ++i) {
+            if (sp->roster[i].active && sp->roster[i].player_id == sp->target_player_id) {
+                name = sp->roster[i].name;
+                break;
+            }
         }
     }
+    char base[48];
     if (name && name[0]) {
-        snprintf(sp->hud_label, sizeof sp->hud_label, "SPEC: %s", name);
+        snprintf(base, sizeof base, "SPEC: %s", name);
     } else {
-        snprintf(sp->hud_label, sizeof sp->hud_label, "SPEC: #%u", sp->target_player_id);
+        snprintf(base, sizeof base, "SPEC: #%u", sp->target_player_id);
+    }
+    if (sp->target_hp_valid && sp->target_hp >= 0) {
+        snprintf(sp->hud_label, sizeof sp->hud_label, "%s [%d]", base, sp->target_hp);
+    } else {
+        snprintf(sp->hud_label, sizeof sp->hud_label, "%s", base);
     }
     sp->hud_visible = true;
 }
@@ -199,4 +211,42 @@ u32 aether_spectator_hud_indicator(const aether_spectator_t *sp, char *out, u32 
 }
 bool aether_spectator_hud_visible(const aether_spectator_t *sp) {
     return sp && sp->hud_visible && sp->hud_label[0] != '\0';
+}
+
+void aether_spectator_set_target_hp(aether_spectator_t *sp, i32 hp) {
+    if (!sp) return;
+    sp->target_hp = hp;
+    sp->target_hp_valid = (hp >= 0);
+    refresh_hud(sp);
+}
+void aether_spectator_set_target_name(aether_spectator_t *sp, const char *name) {
+    if (!sp) return;
+    sp->target_name[0] = '\0';
+    if (name && name[0]) {
+        strncpy(sp->target_name, name, sizeof sp->target_name - 1);
+        sp->target_name[sizeof sp->target_name - 1] = '\0';
+    }
+    refresh_hud(sp);
+}
+i32 aether_spectator_get_target_hp(const aether_spectator_t *sp) {
+    if (!sp || !sp->target_hp_valid) return -1;
+    return sp->target_hp;
+}
+u32 aether_spectator_get_target_name(const aether_spectator_t *sp, char *out, u32 cap) {
+    if (!out || cap == 0) return 0;
+    out[0] = '\0';
+    if (!sp) return 0;
+    const char *name = sp->target_name[0] ? sp->target_name : NULL;
+    if (!name) {
+        for (u32 i = 0; i < sp->roster_count; ++i) {
+            if (sp->roster[i].active && sp->roster[i].player_id == sp->target_player_id) {
+                name = sp->roster[i].name;
+                break;
+            }
+        }
+    }
+    if (!name || !name[0]) return 0;
+    strncpy(out, name, cap - 1);
+    out[cap - 1] = '\0';
+    return (u32)strlen(out);
 }

@@ -3,6 +3,9 @@
  * AetherEngine-iOS · Clean-room.
  */
 #include "AetherGameManager.h"
+#include "../player/AetherPlayerDamage.h"
+#include "../player/AetherPlayerHealth.h"
+#include "../net/AetherNetServer.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +31,12 @@ struct aether_game_manager {
     aether_game_id_t    selected;
     aether_game_state_t state;
     u64                 run_frames;
+    /* Live auth kill path */
+    aether_net_server_t *auth_server;
+    aether_game_auth_kill_pending_t auth_pending;
+    aether_player_health_t auth_victim_health;
+    bool auth_health_ready;
+    u32  auth_kills_total;
 };
 
 static bool mkdir_if_missing(const char *path) {
@@ -265,10 +274,71 @@ aether_result_t aether_game_launch(aether_game_manager_t *m) {
 
 aether_result_t aether_game_tick(aether_game_manager_t *m, f32 dt) {
     if (!m) return AETHER_ERR_INVALID_ARG;
-    (void)dt;
     if (m->state == AETHER_GAME_STATE_RUNNING)
         m->run_frames++;
+    /* Wire auth kill into live game tick when server pointer is bound. */
+    aether_game_tick_auth(m, dt, NULL);
     return AETHER_OK;
+}
+
+void aether_game_bind_auth_server(aether_game_manager_t *m, aether_game_auth_server_t *server) {
+    if (!m) return;
+    m->auth_server = (aether_net_server_t *)server;
+}
+
+aether_game_auth_server_t *aether_game_get_auth_server(const aether_game_manager_t *m) {
+    return m ? (aether_game_auth_server_t *)m->auth_server : NULL;
+}
+
+void aether_game_auth_queue_damage(aether_game_manager_t *m,
+                                   u32 killer_id, u32 victim_id,
+                                   f32 damage, u32 dmg_type) {
+    if (!m) return;
+    m->auth_pending.pending = true;
+    m->auth_pending.killer_id = killer_id;
+    m->auth_pending.victim_id = victim_id;
+    m->auth_pending.damage = damage;
+    m->auth_pending.dmg_type = dmg_type;
+    if (!m->auth_health_ready) {
+        aether_player_health_init(&m->auth_victim_health);
+        m->auth_health_ready = true;
+    }
+}
+
+u32 aether_game_tick_auth(aether_game_manager_t *m, f32 dt,
+                          aether_game_auth_tick_result_t *out) {
+    (void)dt;
+    if (out) memset(out, 0, sizeof(*out));
+    if (!m) return 0;
+    if (out) out->had_server = (m->auth_server != NULL);
+    if (!m->auth_pending.pending) return 0;
+    if (!m->auth_health_ready) {
+        aether_player_health_init(&m->auth_victim_health);
+        m->auth_health_ready = true;
+    }
+    aether_damage_event_t ev;
+    memset(&ev, 0, sizeof ev);
+    ev.amount = m->auth_pending.damage > 0.f ? m->auth_pending.damage : 100.f;
+    ev.type = (aether_damage_type_t)m->auth_pending.dmg_type;
+    aether_damage_kill_result_t kr;
+    aether_player_apply_damage_auth(&m->auth_victim_health, &ev,
+                                    (aether_damage_net_server_t *)m->auth_server,
+                                    m->auth_pending.killer_id,
+                                    m->auth_pending.victim_id,
+                                    true, &kr);
+    m->auth_pending.pending = false;
+    u32 kills = 0;
+    if (kr.registered_kill) {
+        kills = 1;
+        m->auth_kills_total++;
+    }
+    if (out) {
+        out->applied = kr.applied;
+        out->died = kr.died;
+        out->registered_kill = kr.registered_kill;
+        out->kills_this_tick = kills;
+    }
+    return kills;
 }
 
 u64 aether_game_run_frames(const aether_game_manager_t *m) {

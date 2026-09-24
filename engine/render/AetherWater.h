@@ -130,6 +130,8 @@ typedef struct aether_water_reflect_rt_draw {
     bool draw_monsters;   /* draw monsters into RT */
     u32  entity_count;    /* entities scheduled this pass */
     u32  monster_count;   /* monsters scheduled this pass */
+    bool draw_studio_skins; /* studio/skinned materials (not debug boxes) */
+    u32  studio_count;    /* ents with material studio/skinned */
     bool resolve;         /* resolve/mip after draw */
     bool needed;
 } aether_water_reflect_rt_draw_t;
@@ -164,6 +166,14 @@ typedef struct aether_water_reflect_ent {
     u32 ent_id;
     u8  kind;            /* 0=entity, 1=monster */
     u8  above_water;     /* 1 if origin.z > water height (reflectable) */
+    /* Studio skin / attachment (less debug-box when material != DEBUG_BOX) */
+    u8  material;        /* 0=debug box, 1=studio mesh, 2=skinned */
+    u8  skin_group;
+    u8  skin_tex;
+    i8  attach_index;    /* -1 = none */
+    f32 tint[4];         /* RGBA */
+    f32 attach_origin[3];
+    u8  has_attach;
 } aether_water_reflect_ent_t;
 
 typedef struct aether_water_reflect_ent_list {
@@ -198,5 +208,43 @@ void aether_water_reflect_rt_draw_plan_full(const aether_water_reflect_rt_t *rt,
                                             const f32 view[16], const f32 proj[16],
                                             const aether_water_reflect_ent_list_t *ents,
                                             aether_water_reflect_rt_draw_t *out);
+
+
+/* ---------- Studio skins/attachments into water reflection RT ---------- */
+typedef enum aether_water_reflect_mat {
+    AETHER_WATER_REFLECT_MAT_DEBUG_BOX = 0,
+    AETHER_WATER_REFLECT_MAT_STUDIO    = 1,
+    AETHER_WATER_REFLECT_MAT_SKINNED   = 2
+} aether_water_reflect_mat_t;
+
+typedef struct aether_water_reflect_studio {
+    u8  material;
+    u8  skin_group;
+    u8  skin_tex;
+    i8  attach_index;
+    f32 tint[4];
+    f32 attach_origin[3];
+    bool has_attach;
+} aether_water_reflect_studio_t;
+
+/* Push with studio skin/attachment material (not debug-box when material>0). */
+int  aether_water_reflect_ent_list_push_studio(aether_water_reflect_ent_list_t *list,
+                                               u32 ent_id, u8 kind,
+                                               const f32 origin[3], const f32 half_ext[3],
+                                               f32 water_height,
+                                               u8 material, u8 skin_group, u8 skin_tex,
+                                               i8 attach_index, const f32 tint[4]);
+
+u32  aether_water_reflect_ent_list_studio_count(const aether_water_reflect_ent_list_t *list);
+
+void aether_water_reflect_rt_draw_plan_studio(aether_water_reflect_rt_draw_t *plan,
+                                              const aether_water_reflect_ent_list_t *list);
+
+int  aether_water_reflect_ent_get_studio(const aether_water_reflect_ent_list_t *list,
+                                         u32 index, aether_water_reflect_studio_t *out);
+
+/* Tint helper: skin_group/tex → soft color (clean-room procedural). */
+void aether_water_reflect_skin_tint(u8 skin_group, u8 skin_tex, f32 out_rgba[4]);
+
 
 #endif /* AETHER_WATER_H */

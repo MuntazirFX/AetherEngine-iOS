@@ -172,8 +172,8 @@ struct ClassicHUDOverlay: View {
         crosshairSpread = CGFloat(engine_hud_crosshair_spread())
         specVisible = engine_spectator_hud_visible() != 0
         if specVisible {
-            var buf = [CChar](repeating: 0, count: 64)
-            let n = engine_spectator_hud_indicator(&buf, 64)
+            var buf = [CChar](repeating: 0, count: 80)
+            let n = engine_spectator_hud_indicator(&buf, 80)
             if n > 0 {
                 specLabel = String(cString: buf)
             } else {

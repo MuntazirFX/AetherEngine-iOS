@@ -451,15 +451,51 @@ When run on a Mac with a prior `build_ios.sh` success, expect under `build/out/`
 `_CodeSignature` and `embedded.mobileprovision` are stripped for unsigned sideload.
 
 ### Known gaps after this batch
-- Reflect entity draw uses debug boxes / LOD meshes (not full studio skins in the RT)
-- GPU LOD issue_draw is CPU distance select + Metal draw; no GPU occlusion/Hi-Z yet
-- Damage→kill needs a live `aether_net_server_t` pointer in production game code (smoke wires it)
-- Assists are count-only (no assist feed packet / HUD line yet)
+- *(addressed in rt-skins/assist/hiz/auth batch: studio skins in RT, assist feed, Hi-Z gate, auth tick bind)*
 - IPA still requires macOS + Xcode via workflow_dispatch
 
 ### Progress toward playable unsigned IPA demo
-Rough overall estimate after this batch: **~72–74%** toward a playable unsigned IPA demo
-(capped while IPA remains unbuilt on this Linux/CI host). Prior mirror-rt batch was ~70–72%.
+Rough overall estimate after this batch: **~72–74%** (superseded by rt-skins batch below).
+
+IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
+
+## RT skins / assist feed / Hi-Z / auth tick (`continue/batch-rt-skins-assist-hiz-auth`)
+
+One PR advances studio skins/attachments into the water reflection RT, assist feed packets + HUD,
+auth kill wired through the live game tick (server pointer), GPU Hi-Z / LOD distance gate,
+macOS IPA Actions artifact upload notes, spectator name/HP HUD, and less debug-box reflect
+materials — still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Studio skins/attachments in water RT | **done** | `push_studio` + material/skin/attach + `draw_studio_skins` plan |
+| 2 | Assist feed packet + HUD line | **done** | `AETHER_MSG_ASSIST` / `encode_assist` / `SB_EVENT_ASSIST` + "assisted" HUD |
+| 3 | Auth kill in live game tick | **done** | `aether_game_bind_auth_server` + `tick_auth` / queue from `aether_game_tick` |
+| 4 | GPU Hi-Z / LOD distance gate | **done** | `aether_mdl_hiz_*` + `lod_hiz_gate` / `issue_draw_hiz` (occlusion + min-pixels) |
+| 5 | macOS IPA Actions artifact notes | **done** | `package_ipa.sh` + `build-arm64.yml` upload/download (`actions/upload-artifact@v4`) |
+| 6 | Spec HUD target name/HP | **done** | `set_target_hp` / name → `SPEC: Name [HP]` |
+| 7 | Reflect RT materials less debug-box | **done** | studio/skinned tint path (Metal samples tint; not solid debug red) |
+| 8 | Host smokes + verify | **done** | `smoke_batch_rt_skins_assist_hiz_auth` + verify greps |
+| 9 | Fix regressions | **done** | prior reflect-ents/mirror-rt smokes still green |
+| 10 | README + honest % | **done** | This table; cap **~74–75%** while IPA unbuilt on this host |
+
+### IPA Actions artifact steps (macOS `workflow_dispatch` only)
+
+| Step | What |
+|------|------|
+| `actions/upload-artifact@v4` | Uploads `build/out/AetherEngine.ipa` as `AetherEngine-<version>` (30-day retention) |
+| Download | Actions run → Artifacts, or `gh run download <run-id> -n AetherEngine-<version>` |
+| Optional Release | `publish_release=true` attaches the same IPA to a GitHub Release |
+
+### Known gaps after rt-skins / assist / hiz / auth batch
+- Hi-Z is a CPU sample-buffer stub (not a real GPU hierarchical depth pyramid / Metal visibility buffer)
+- Studio reflect materials use procedural tint + LOD mesh (not full GoldSrc studio texture atlases)
+- Auth tick uses a bound server pointer + queued damage (full weapon hit→auth pipeline still thin)
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+### Progress toward playable unsigned IPA demo
+Rough overall estimate after this batch: **~74–75%** toward a playable unsigned IPA demo
+(capped while IPA remains unbuilt on this Linux/CI host). Prior reflect-ents batch was ~72–74%.
 
 IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
 

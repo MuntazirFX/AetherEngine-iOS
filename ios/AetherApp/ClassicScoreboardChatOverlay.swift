@@ -43,7 +43,7 @@ struct ClassicScoreboardChatOverlay: View {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(events.suffix(6)) { e in
                         Text(e.text).font(.system(size: 11, design: .serif))
-                            .foregroundColor(e.kind == 0 ? Color.green.opacity(0.9) : (e.kind == 2 ? Color.red.opacity(0.9) : Color.orange.opacity(0.9)))
+                            .foregroundColor(e.kind == 0 ? Color.green.opacity(0.9) : (e.kind == 2 ? Color.red.opacity(0.9) : (e.kind == 3 ? Color.yellow.opacity(0.9) : Color.orange.opacity(0.9))))
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.bottom, 4)
             }
@@ -101,6 +101,9 @@ struct ClassicScoreboardChatOverlay: View {
                 if kind == 2 {
                     label = "killed" // kill feed stub
                     colorKind = 2
+                } else if kind == 3 {
+                    label = "assisted" // assist feed HUD line
+                    colorKind = 3
                 } else if kind == 0 {
                     label = "joined"; colorKind = 0
                 } else {

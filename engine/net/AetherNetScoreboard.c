@@ -213,6 +213,14 @@ void aether_scoreboard_handle_packet(aether_scoreboard_t *sb,
         aether_scoreboard_apply_kill(sb, ev, kid, kn, vid, vn, time);
         return;
     }
+    if (msg == AETHER_MSG_ASSIST) {
+        u32 aid = aether_netbuf_read_u32(&b);
+        char an[AETHER_NET_MAX_NAME]; aether_netbuf_read_string(&b, an, sizeof an);
+        u32 vid = aether_netbuf_read_u32(&b);
+        char vn[AETHER_NET_MAX_NAME]; aether_netbuf_read_string(&b, vn, sizeof vn);
+        aether_scoreboard_apply_assist(sb, ev, aid, an, vid, vn, time);
+        return;
+    }
 }
 
 void aether_scoreboard_set_score(aether_scoreboard_t *sb, u32 player_id,
@@ -310,4 +318,51 @@ u32 aether_scoreboard_encode_kill(u8 *out, u32 cap,
     if (n > cap || b.overflow) return 0;
     memcpy(out, b.data, n);
     return n;
+}
+
+u32 aether_scoreboard_encode_assist(u8 *out, u32 cap,
+                                    u32 assister_id, const char *assister_name,
+                                    u32 victim_id, const char *victim_name) {
+    if (!out || cap < 24) return 0;
+    aether_netbuf_t b;
+    aether_netbuf_init_write(&b);
+    aether_netbuf_write_u32(&b, AETHER_NET_PROTOCOL_ID);
+    aether_netbuf_write_u16(&b, AETHER_NET_PROTOCOL_VER);
+    aether_netbuf_write_u8(&b, AETHER_MSG_ASSIST);
+    aether_netbuf_write_u32(&b, assister_id);
+    aether_netbuf_write_string(&b, assister_name ? assister_name : "", AETHER_NET_MAX_NAME);
+    aether_netbuf_write_u32(&b, victim_id);
+    aether_netbuf_write_string(&b, victim_name ? victim_name : "", AETHER_NET_MAX_NAME);
+    u32 n = aether_netbuf_size(&b);
+    if (n > cap || b.overflow) return 0;
+    memcpy(out, b.data, n);
+    return n;
+}
+
+void aether_scoreboard_apply_assist(aether_scoreboard_t *sb,
+                                    aether_scoreboard_events_t *ev,
+                                    u32 assister_id, const char *assister_name,
+                                    u32 victim_id, const char *victim_name, f32 time) {
+    (void)sb; /* assists tracked on server slot; HUD event is primary client effect */
+    if (!ev) return;
+    aether_scoreboard_event_t *slot;
+    if (ev->live < AETHER_SCOREBOARD_MAX_EVENTS) ev->live++;
+    slot = &ev->items[ev->head];
+    memset(slot, 0, sizeof(*slot));
+    slot->kind = (u8)AETHER_SB_EVENT_ASSIST;
+    slot->player_id = assister_id;
+    slot->victim_id = victim_id;
+    slot->time = time;
+    if (assister_name) {
+        size_t n = strlen(assister_name);
+        if (n >= AETHER_NET_MAX_NAME) n = AETHER_NET_MAX_NAME - 1;
+        memcpy(slot->name, assister_name, n);
+    }
+    if (victim_name) {
+        size_t n = strlen(victim_name);
+        if (n >= AETHER_NET_MAX_NAME) n = AETHER_NET_MAX_NAME - 1;
+        memcpy(slot->victim_name, victim_name, n);
+    }
+    ev->head = (ev->head + 1) % AETHER_SCOREBOARD_MAX_EVENTS;
+    ev->count++;
 }

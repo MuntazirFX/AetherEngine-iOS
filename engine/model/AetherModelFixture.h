@@ -317,4 +317,60 @@ i32 aether_mdl_lod_gpu_issue_draw_copy(const aether_mdl_lod_table_t *table,
                                        f32 *out_pos, u32 max_verts,
                                        u32 *out_idx, u32 max_idx);
 
+/* ---------- GPU Hi-Z / LOD distance gate ---------- */
+#define AETHER_MDL_HIZ_MAX_SAMPLES 64
+
+typedef struct aether_mdl_hiz_sample {
+    f32 depth;       /* stored Hi-Z depth (0..1, nearer = smaller) */
+    f32 screen_x;    /* NDC-ish 0..1 */
+    f32 screen_y;
+} aether_mdl_hiz_sample_t;
+
+typedef struct aether_mdl_hiz {
+    aether_mdl_hiz_sample_t samples[AETHER_MDL_HIZ_MAX_SAMPLES];
+    u32 count;
+    f32 near_z;      /* camera near */
+    f32 far_z;
+    bool enabled;
+} aether_mdl_hiz_t;
+
+typedef struct aether_mdl_hiz_gate {
+    bool occluded;       /* rejected by Hi-Z */
+    bool distance_culled;/* beyond max draw distance */
+    bool issue;          /* may draw */
+    i32  lod;            /* selected (possibly bumped) LOD */
+    f32  screen_pixels;  /* estimated projected size */
+    f32  min_pixels;     /* gate threshold used */
+    f32  distance;
+} aether_mdl_hiz_gate_t;
+
+void aether_mdl_hiz_init(aether_mdl_hiz_t *hiz);
+void aether_mdl_hiz_clear(aether_mdl_hiz_t *hiz);
+void aether_mdl_hiz_set_range(aether_mdl_hiz_t *hiz, f32 near_z, f32 far_z);
+/* Push a depth sample (mip0 stub). Returns 1 if stored. */
+int  aether_mdl_hiz_push(aether_mdl_hiz_t *hiz, f32 depth, f32 sx, f32 sy);
+/* Sample nearest Hi-Z depth at (sx,sy). Returns depth or 1.f if empty. */
+f32  aether_mdl_hiz_sample(const aether_mdl_hiz_t *hiz, f32 sx, f32 sy);
+
+/* Distance + Hi-Z gate: may force higher LOD or cull.
+ * aabb_radius = object radius in world units; fov_y_deg for screen size.
+ * min_pixels: cull if projected size below this (default 4).
+ * max_distance: hard cull beyond (0 = use table only).
+ * Returns lod (-1 if culled). Fills *out gate. */
+i32 aether_mdl_lod_hiz_gate(const aether_mdl_lod_table_t *table,
+                            const aether_mdl_lod_mesh_set_t *meshes,
+                            const aether_mdl_hiz_t *hiz,
+                            f32 distance, f32 aabb_radius, f32 fov_y_deg,
+                            f32 min_pixels, f32 max_distance,
+                            f32 screen_x, f32 screen_y, f32 depth_ndc,
+                            aether_mdl_hiz_gate_t *out);
+
+/* Issue draw gated by Hi-Z / distance (wraps gpu_issue_draw). */
+i32 aether_mdl_lod_gpu_issue_draw_hiz(const aether_mdl_lod_table_t *table,
+                                      const aether_mdl_lod_mesh_set_t *meshes,
+                                      const aether_mdl_hiz_t *hiz,
+                                      f32 distance, f32 aabb_radius,
+                                      aether_mdl_lod_gpu_draw_t *out,
+                                      aether_mdl_hiz_gate_t *gate);
+
 #endif /* AETHER_MODEL_FIXTURE_H */

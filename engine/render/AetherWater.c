@@ -404,6 +404,13 @@ int aether_water_reflect_ent_list_push(aether_water_reflect_ent_list_t *list,
         e->half_extents[0] = e->half_extents[1] = e->half_extents[2] = 8.f;
     }
     e->above_water = (origin[2] > water_height) ? 1 : 0;
+    e->material = AETHER_WATER_REFLECT_MAT_DEBUG_BOX;
+    e->skin_group = 0;
+    e->skin_tex = 0;
+    e->attach_index = -1;
+    e->tint[0] = e->tint[1] = e->tint[2] = e->tint[3] = 1.f;
+    e->attach_origin[0] = e->attach_origin[1] = e->attach_origin[2] = 0.f;
+    e->has_attach = 0;
     if (kind == 1) list->monster_count++;
     else list->entity_count++;
     if (e->above_water) list->drawn++;
@@ -430,6 +437,8 @@ void aether_water_reflect_rt_draw_plan_ents(aether_water_reflect_rt_draw_t *plan
         plan->draw_monsters = false;
         plan->entity_count = 0;
         plan->monster_count = 0;
+        plan->draw_studio_skins = false;
+        plan->studio_count = 0;
         return;
     }
     u32 ec = 0, mc = 0;
@@ -442,6 +451,7 @@ void aether_water_reflect_rt_draw_plan_ents(aether_water_reflect_rt_draw_t *plan
     plan->monster_count = mc;
     plan->draw_entities = ec > 0;
     plan->draw_monsters = mc > 0;
+    aether_water_reflect_rt_draw_plan_studio(plan, list);
 }
 
 void aether_water_reflect_rt_draw_plan_full(const aether_water_reflect_rt_t *rt,
@@ -451,4 +461,81 @@ void aether_water_reflect_rt_draw_plan_full(const aether_water_reflect_rt_t *rt,
                                             aether_water_reflect_rt_draw_t *out) {
     aether_water_reflect_rt_draw_plan(rt, reflect, view, proj, out);
     aether_water_reflect_rt_draw_plan_ents(out, ents);
+}
+
+void aether_water_reflect_skin_tint(u8 skin_group, u8 skin_tex, f32 out_rgba[4]) {
+    if (!out_rgba) return;
+    /* Procedural clean-room tint from group/tex indices (not HL skins). */
+    f32 g = (f32)(skin_group % 8) / 7.f;
+    f32 t = (f32)(skin_tex % 8) / 7.f;
+    out_rgba[0] = 0.45f + 0.40f * g;
+    out_rgba[1] = 0.55f + 0.30f * (1.f - t);
+    out_rgba[2] = 0.50f + 0.35f * t;
+    out_rgba[3] = 1.f;
+}
+
+int aether_water_reflect_ent_list_push_studio(aether_water_reflect_ent_list_t *list,
+                                              u32 ent_id, u8 kind,
+                                              const f32 origin[3], const f32 half_ext[3],
+                                              f32 water_height,
+                                              u8 material, u8 skin_group, u8 skin_tex,
+                                              i8 attach_index, const f32 tint[4]) {
+    if (!aether_water_reflect_ent_list_push(list, ent_id, kind, origin, half_ext, water_height))
+        return 0;
+    aether_water_reflect_ent_t *e = &list->items[list->count - 1];
+    e->material = material;
+    e->skin_group = skin_group;
+    e->skin_tex = skin_tex;
+    e->attach_index = attach_index;
+    if (tint) {
+        e->tint[0] = tint[0]; e->tint[1] = tint[1];
+        e->tint[2] = tint[2]; e->tint[3] = tint[3];
+    } else {
+        aether_water_reflect_skin_tint(skin_group, skin_tex, e->tint);
+    }
+    if (attach_index >= 0) {
+        e->has_attach = 1;
+        /* Attachment origin = entity origin + small upward offset (fixture stub). */
+        e->attach_origin[0] = origin[0];
+        e->attach_origin[1] = origin[1];
+        e->attach_origin[2] = origin[2] + 16.f + (f32)attach_index * 2.f;
+    }
+    return 1;
+}
+
+u32 aether_water_reflect_ent_list_studio_count(const aether_water_reflect_ent_list_t *list) {
+    if (!list) return 0;
+    u32 n = 0;
+    for (u32 i = 0; i < list->count; ++i) {
+        if (!list->items[i].above_water) continue;
+        if (list->items[i].material == AETHER_WATER_REFLECT_MAT_STUDIO ||
+            list->items[i].material == AETHER_WATER_REFLECT_MAT_SKINNED)
+            n++;
+    }
+    return n;
+}
+
+void aether_water_reflect_rt_draw_plan_studio(aether_water_reflect_rt_draw_t *plan,
+                                              const aether_water_reflect_ent_list_t *list) {
+    if (!plan) return;
+    u32 n = aether_water_reflect_ent_list_studio_count(list);
+    plan->studio_count = n;
+    plan->draw_studio_skins = n > 0;
+}
+
+int aether_water_reflect_ent_get_studio(const aether_water_reflect_ent_list_t *list,
+                                        u32 index, aether_water_reflect_studio_t *out) {
+    if (!list || !out || index >= list->count) return 0;
+    const aether_water_reflect_ent_t *e = &list->items[index];
+    out->material = e->material;
+    out->skin_group = e->skin_group;
+    out->skin_tex = e->skin_tex;
+    out->attach_index = e->attach_index;
+    out->tint[0] = e->tint[0]; out->tint[1] = e->tint[1];
+    out->tint[2] = e->tint[2]; out->tint[3] = e->tint[3];
+    out->attach_origin[0] = e->attach_origin[0];
+    out->attach_origin[1] = e->attach_origin[1];
+    out->attach_origin[2] = e->attach_origin[2];
+    out->has_attach = e->has_attach != 0;
+    return 1;
 }

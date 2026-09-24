@@ -62,6 +62,38 @@ aether_result_t  aether_game_shutdown     (aether_game_manager_t *m);
 aether_result_t  aether_game_tick         (aether_game_manager_t *m, f32 dt);
 u64              aether_game_run_frames   (const aether_game_manager_t *m);
 
+/* ---------- Live auth kill path (server pointer in game tick) ---------- */
+typedef struct aether_net_server aether_game_auth_server_t;
+
+typedef struct aether_game_auth_kill_pending {
+    bool pending;
+    u32  killer_id;
+    u32  victim_id;
+    f32  damage;
+    u32  dmg_type;
+} aether_game_auth_kill_pending_t;
+
+typedef struct aether_game_auth_tick_result {
+    bool had_server;
+    bool applied;
+    bool died;
+    bool registered_kill;
+    u32  kills_this_tick;
+} aether_game_auth_tick_result_t;
+
+/* Bind live aether_net_server_t* for damage→kill during game tick (may be NULL). */
+void aether_game_bind_auth_server(aether_game_manager_t *m, aether_game_auth_server_t *server);
+aether_game_auth_server_t *aether_game_get_auth_server(const aether_game_manager_t *m);
+
+/* Queue a damage event to be processed on next tick (or immediately via tick_auth). */
+void aether_game_auth_queue_damage(aether_game_manager_t *m,
+                                   u32 killer_id, u32 victim_id,
+                                   f32 damage, u32 dmg_type);
+
+/* Process pending auth damage through bound server. Called from aether_game_tick. */
+u32  aether_game_tick_auth(aether_game_manager_t *m, f32 dt,
+                           aether_game_auth_tick_result_t *out);
+
 aether_result_t  aether_game_resolve_path (const aether_game_manager_t *m, aether_game_id_t id, char *out, size_t cap);
 
 /* True if Documents/<dir> exists and contains pak0.pak, maps/, or any file. */
