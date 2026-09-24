@@ -91,6 +91,7 @@ set(AETHER_ENGINE_SOURCES
 
     # -------- audio --------
     ${CMAKE_SOURCE_DIR}/../engine/audio/AetherAudio.c
+    ${CMAKE_SOURCE_DIR}/../engine/audio/AetherWav.c
 
     # -------- render / Xash3D-class backends + features --------
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender.c
@@ -104,6 +105,7 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherSky.c
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherFog.c
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherDecal.c
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherDynLight.c
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherParticle.c
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherSprite.c
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherMDLAnimation.c
@@ -115,6 +117,7 @@ set(AETHER_ENGINE_SOURCES
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPGeometry.c
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPSynthetic.c
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPVis.c
+    ${CMAKE_SOURCE_DIR}/../engine/map/AetherMapLoad.c
 
     # -------- player --------
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayer.c
@@ -237,6 +240,7 @@ set(AETHER_ENGINE_HEADERS
 
     # -------- audio --------
     ${CMAKE_SOURCE_DIR}/../engine/audio/AetherAudio.h
+    ${CMAKE_SOURCE_DIR}/../engine/audio/AetherWav.h
 
     # -------- render / Xash3D-class backends + features --------
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherRender.h
@@ -250,6 +254,7 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherSky.h
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherFog.h
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherDecal.h
+    ${CMAKE_SOURCE_DIR}/../engine/render/AetherDynLight.h
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherParticle.h
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherSprite.h
     ${CMAKE_SOURCE_DIR}/../engine/render/AetherMDLAnimation.h
@@ -261,6 +266,7 @@ set(AETHER_ENGINE_HEADERS
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPGeometry.h
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPSynthetic.h
     ${CMAKE_SOURCE_DIR}/../engine/bsp/AetherBSPVis.h
+    ${CMAKE_SOURCE_DIR}/../engine/map/AetherMapLoad.h
 
     # -------- player --------
     ${CMAKE_SOURCE_DIR}/../engine/player/AetherPlayer.h

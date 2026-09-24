@@ -234,3 +234,70 @@ aether_result_t aether_lightmap_bake_mesh_stub(aether_lightmap_t *lm, aether_mes
     if (r != AETHER_OK) return r;
     return aether_lightmap_assign_mesh_uvs(lm, mesh);
 }
+
+
+#include "../bsp/AetherBSP.h"
+
+aether_result_t aether_lightmap_bake_from_bsp(aether_lightmap_t *lm,
+                                              const aether_bsp_t *bsp,
+                                              aether_mesh_t *mesh) {
+    if (!lm || !mesh) return AETHER_ERR_INVALID_ARG;
+    if (!bsp) return aether_lightmap_bake_mesh_stub(lm, mesh);
+
+    u32 lighting_sz = aether_bsp_lump_size(bsp, AETHER_BSP_LUMP_LIGHTING);
+    const u8 *lighting = aether_bsp_lump_data(bsp, AETHER_BSP_LUMP_LIGHTING);
+    u32 face_count = aether_bsp_face_count(bsp);
+
+    if (!lighting || lighting_sz < 3 || face_count == 0) {
+        aether_log(AETHER_LOG_INFO, "lightmap",
+                   "no LIGHTING lump — procedural stub path");
+        return aether_lightmap_bake_mesh_stub(lm, mesh);
+    }
+
+    /* Atlas: one tile per face, sample first RGB from each face light_offset. */
+    u32 tiles = face_count ? face_count : 1u;
+    u32 cols = 1;
+    while (cols * cols < tiles) ++cols;
+    u32 rows = (tiles + cols - 1u) / cols;
+    if (rows == 0) rows = 1;
+    const u32 W = 256, H = 256;
+    u8 *buf = (u8 *)malloc((size_t)W * (size_t)H * 4u);
+    if (!buf) return AETHER_ERR_OUT_OF_MEM;
+    memset(buf, 32, (size_t)W * H * 4u);
+
+    for (u32 fi = 0; fi < face_count; ++fi) {
+        const aether_bsp_face_t *face = aether_bsp_face_at(bsp, fi);
+        if (!face) continue;
+        u8 r = 180, g = 180, b = 180;
+        if (face->light_offset >= 0 &&
+            (u32)face->light_offset + 3u <= lighting_sz) {
+            const u8 *s = lighting + face->light_offset;
+            r = s[0]; g = s[1]; b = s[2];
+        }
+        u32 col = fi % cols;
+        u32 row = fi / cols;
+        u32 x0 = (col * W) / cols;
+        u32 y0 = (row * H) / rows;
+        u32 x1 = ((col + 1u) * W) / cols;
+        u32 y1 = ((row + 1u) * H) / rows;
+        for (u32 y = y0; y < y1; ++y) {
+            for (u32 x = x0; x < x1; ++x) {
+                u32 i = (y * W + x) * 4u;
+                buf[i+0] = r; buf[i+1] = g; buf[i+2] = b; buf[i+3] = 255;
+            }
+        }
+    }
+
+    free(lm->rgba);
+    lm->rgba = buf;
+    lm->width = W;
+    lm->height = H;
+    lm->stub = false;
+    lm->face_tiles = tiles;
+    lm->enabled = true;
+    aether_result_t uv = aether_lightmap_assign_mesh_uvs(lm, mesh);
+    aether_log(AETHER_LOG_INFO, "lightmap",
+               "baked from BSP LIGHTING lump (%u bytes, %u faces) stub=0",
+               lighting_sz, face_count);
+    return uv;
+}

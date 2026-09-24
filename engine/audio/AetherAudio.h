@@ -74,6 +74,26 @@ void aether_audio_set_platform_callback(aether_audio_t *a,
                                         aether_audio_platform_fn fn,
                                         void *user);
 
+/* PCM buffer submit for platform backends (iOS AVAudioEngine, host stub). */
+typedef struct aether_audio_buffer {
+    const i16 *samples;   /* interleaved PCM16 */
+    u32        frame_count;
+    u32        sample_rate;
+    u16        channels;
+    f32        volume;    /* 0..1 */
+} aether_audio_buffer_t;
+
+typedef void (*aether_audio_buffer_fn)(const aether_audio_buffer_t *buf, void *user);
+void aether_audio_set_buffer_callback(aether_audio_t *a,
+                                      aether_audio_buffer_fn fn,
+                                      void *user);
+aether_result_t aether_audio_submit_buffer(aether_audio_t *a,
+                                           const aether_audio_buffer_t *buf);
+
+/* Procedural beep/tone (no WAV asset required). Generates PCM and submits. */
+aether_result_t aether_audio_play_beep(aether_audio_t *a, f32 freq_hz,
+                                       f32 duration_sec, f32 volume);
+
 /* Internal: called by the engine to flush queued commands. */
 void aether_audio_flush(aether_audio_t *a);
 

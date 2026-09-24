@@ -20,6 +20,7 @@ public enum AetherMetalCommandState {
     public static var waterSubmitCount: UInt64 = 0
     public static var fogSubmitCount: UInt64 = 0
     public static var worldSubmitCount: UInt64 = 0
+    public static var decalSubmitCount: UInt64 = 0
     public static var lastFeatureCmd: Int32 = 0
 }
 
@@ -36,6 +37,7 @@ private let kCmdDrawWorld: Int32 = 4
 private let kCmdDrawWater: Int32 = 6
 private let kCmdDrawSky: Int32 = 7
 private let kCmdDrawFog: Int32 = 8
+private let kCmdDrawDecals: Int32 = 9
 private let kCmdDrawParticles: Int32 = 10
 
 private func loadMat4(from base: UnsafeRawPointer, offset: Int) -> simd_float4x4 {
@@ -94,6 +96,10 @@ public func aether_metal_submit_swift(_ user: UnsafeMutableRawPointer?,
     if type == kCmdDrawFog {
         AetherMetalCommandState.lastFeatureCmd = type
         AetherMetalCommandState.fogSubmitCount &+= 1
+    }
+    if type == kCmdDrawDecals {
+        AetherMetalCommandState.lastFeatureCmd = type
+        AetherMetalCommandState.decalSubmitCount &+= 1
     }
     if type == kCmdDrawParticles {
         AetherMetalCommandState.lastFeatureCmd = type

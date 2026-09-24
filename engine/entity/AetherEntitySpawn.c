@@ -130,8 +130,10 @@ static bool is_item(const char *cn) {
 }
 
 /* ---------- Spawn from BSP ---------- */
-u32 aether_entity_spawn_from_bsp(aether_entity_mgr_t *mgr,
-                                  const aether_bsp_t *bsp) {
+u32 aether_entity_spawn_from_bsp_ex(aether_entity_mgr_t *mgr,
+                                    const aether_bsp_t *bsp,
+                                    aether_entity_spawn_stats_t *stats) {
+    if (stats) memset(stats, 0, sizeof(*stats));
     if (!mgr || !bsp) return 0;
 
     bsp_entity_info_t *list = NULL;
@@ -143,8 +145,7 @@ u32 aether_entity_spawn_from_bsp(aether_entity_mgr_t *mgr,
         bsp_entity_info_t *src = &list[i];
         if (src->classname[0] == 0) continue;
 
-        /* Skip pure lights and navigation entities for now */
-        if (strncmp(src->classname, "light", 5) == 0) continue;
+        /* Skip navigation / ambient helpers; keep lights for dynlight path. */
         if (strncmp(src->classname, "info_node", 9) == 0) continue;
         if (strncmp(src->classname, "path_", 5) == 0) continue;
         if (strncmp(src->classname, "env_", 4) == 0) continue;
@@ -169,13 +170,28 @@ u32 aether_entity_spawn_from_bsp(aether_entity_mgr_t *mgr,
         if (is_monster(src->classname) || is_weapon_pickup(src->classname) || is_item(src->classname))
             e->flags |= AETHER_ENT_FLAG_SOLID;
 
+        if (stats) {
+            stats->total++;
+            if (strcmp(src->classname, "worldspawn") == 0) stats->worldspawn++;
+            else if (strncmp(src->classname, "info_player", 11) == 0) stats->player_starts++;
+            else if (is_monster(src->classname)) stats->monsters++;
+            else if (strncmp(src->classname, "light", 5) == 0) stats->lights++;
+            else stats->other++;
+        }
         spawned++;
     }
 
     free(list);
-    aether_log(AETHER_LOG_INFO, "spawn", "spawned %u entities from BSP", spawned);
+    aether_log(AETHER_LOG_INFO, "spawn",
+               "spawned %u entities from BSP (lights included)", spawned);
     return spawned;
 }
+
+u32 aether_entity_spawn_from_bsp(aether_entity_mgr_t *mgr,
+                                  const aether_bsp_t *bsp) {
+    return aether_entity_spawn_from_bsp_ex(mgr, bsp, NULL);
+}
+
 
 /* ---------- Player start ---------- */
 aether_result_t aether_entity_get_player_start(const aether_entity_mgr_t *mgr,

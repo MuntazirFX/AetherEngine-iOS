@@ -61,6 +61,32 @@ bash build/scripts/cmake_host.sh           # optional CMake host lib + smoke tar
 bash build/scripts/build_ios.sh && bash build/scripts/package_ipa.sh
 ```
 
+
+## Map / Audio / CI batch (`continue/batch-map-audio-ci`)
+
+One PR advances map load, entity spawn from file BSPs, audio platform hooks, lightmaps, Metal decals/dynlights, save/net smokes, and CI split — still clean-room (no HL/Valve assets):
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Map load path | **done** | `aether_map_load` FS→synthetic; minimal clean-room BSP fixture writer; bridge `engine_map_load*` |
+| 2 | Entity spawn from map | **done** | Lights + worldspawn/info_player_start/monsters from entities lump; `aether_entity_spawn_from_bsp_ex` stats |
+| 3 | Audio platform callbacks | **done / partial** | Buffer submit + beep/tone; iOS `submitPCM16`; platform voice callback already present |
+| 4 | WAV header stub | **done** | `aether_wav_parse_header` / tone writer scaffold (body decode not required) |
+| 5 | Lightmap improve | **done / partial** | `aether_lightmap_bake_from_bsp` uses LIGHTING lump when present; else procedural stub path |
+| 6 | Decals / dyn lights → Metal | **done / partial** | Decal `copy_render` + `AetherDynLight` slice; MetalCallbacks tracks DRAW_DECALS; full GPU encode still thin |
+| 7 | Save/load roundtrip smoke | **done** | Host save→load player/world stub via `aether_save_write/read` |
+| 8 | Net listen/connect smoke | **done / partial** | Localhost UDP handshake stub in host smoke (server listen + client connect) |
+| 9 | CI split | **done** | `verify.yml` job `verify_host` always; `build-arm64.yml` IPA on `workflow_dispatch` only |
+| 10 | README honesty | **done** | This table + known gaps |
+
+### Known gaps after this batch
+- Real GoldSrc `.bsp` lighting/VIS/clip still need user-provided maps under Documents
+- WAV body decode / streaming not implemented (header + procedural beep only)
+- Decal/dynlight Metal encode is a command/counter slice — not full projected decals
+- Net is handshake smoke only (no gameplay snapshots yet)
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+
 ## Build Status
 - [x] STEP 1: Core modules
 - [x] STEP 2: Verification (host compile + smoke via `build/scripts/verify_host.sh` / `.github/workflows/verify.yml`)
@@ -83,9 +109,9 @@ bash build/scripts/build_ios.sh && bash build/scripts/package_ipa.sh
 - [x] STEP 4: iOS application — App/settings/game-select/host_frame wired into Metal loop (partial: playable demo loop exists; full campaign load still needs user assets)
 - [x] STEP 5: 5-game configuration — manifests load_all + Dashboard selection → launch/FS roots end-to-end (partial: empty dirs fall back to synthetic BSP)
 - [x] STEP 6: Touch/Input/Settings — touch hold buttons, settings→cvars/audio/look, aether.cfg persistence (partial: no controller profile UI yet)
-- [x] STEP 7: Renderer/Audio/Filesystem — `aether_fs_setup_game` (no bundled HL), audio ready/flush, Metal already primary (partial: no real WAV decode; lightmap still procedural stub)
+- [x] STEP 7: Renderer/Audio/Filesystem — FS map load + WAV header/beep + lightmap-from-BSP when present (partial: no full WAV body decode; decal GPU still thin)
 - [x] STEP 8: Build system — CMake host script + XcodeGen Info.plist path + verify_host path checks (partial: iOS IPA still requires macOS/Xcode)
-- [x] STEP 9: GitHub Actions ARM64 — `build-arm64.yml` runs `verify_host.sh`; IPA on `workflow_dispatch` only (partial: PR path is host-verify on macos-14, not a full device IPA)
+- [x] STEP 9: GitHub Actions ARM64 — `verify.yml` always `verify_host`; `build-arm64.yml` splits verify_host (PR) vs IPA (`workflow_dispatch` only)
 - [x] STEP 10: Complete verification — expanded `host_smoke` + verify_host API greps; README marks honest
 
 ## Target
