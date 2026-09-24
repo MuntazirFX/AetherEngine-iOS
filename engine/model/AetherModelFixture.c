@@ -2923,3 +2923,147 @@ int aether_mdl_skin_lump_metal_sample(const aether_mdl_skin_lump_set_t *lumps,
     if (li >= lumps->count) return 0;
     return aether_mdl_skin_lump_sample(&lumps->lumps[li], u, v, out_rgba);
 }
+
+/* ---------- Live Metal occlusion feedback → studio LOD (batch21) ---------- */
+static u32 s_hiz_occlusion_feedback_frame;
+
+void aether_mdl_hiz_occlusion_feedback_init(aether_mdl_hiz_occlusion_feedback_t *fb) {
+    if (!fb) return;
+    memset(fb, 0, sizeof(*fb));
+}
+
+int aether_mdl_hiz_occlusion_feedback_from_mipchain(const aether_mdl_hiz_pyramid_t *pyr,
+                                                    const aether_mdl_hiz_array_t *arr,
+                                                    const aether_mdl_hiz_gpu_mipchain_t *chain,
+                                                    f32 x0, f32 y0, f32 x1, f32 y1,
+                                                    f32 object_depth, i32 preferred_mip,
+                                                    aether_mdl_hiz_occlusion_feedback_t *out) {
+    if (out) aether_mdl_hiz_occlusion_feedback_init(out);
+    if (!out) return 0;
+    if (!chain || !aether_mdl_hiz_gpu_mipchain_ready(chain)) {
+        out->mipchain_ready = false;
+        out->visible = true; /* fail-open without mipchain */
+        out->valid = false;
+        return 0;
+    }
+    aether_mdl_hiz_vis_query_t q;
+    int ok = aether_mdl_hiz_vis_query_mipchain(pyr, arr, chain, x0, y0, x1, y1,
+                                               object_depth, preferred_mip, &q);
+    out->mipchain_ready = true;
+    out->rect[0] = x0; out->rect[1] = y0; out->rect[2] = x1; out->rect[3] = y1;
+    out->object_depth = object_depth;
+    if (q.valid) {
+        out->occluded = q.occluded;
+        out->visible = q.visible && !q.occluded;
+        out->mip_used = q.mip_used;
+        out->nearest_hiz = q.nearest_hiz;
+        out->valid = true;
+    } else {
+        out->visible = true;
+        out->occluded = false;
+        out->valid = (ok != 0);
+    }
+    out->feedback_frame = ++s_hiz_occlusion_feedback_frame;
+    return out->valid ? 1 : 0;
+}
+
+void aether_mdl_hiz_occlusion_feedback_mark_metal(aether_mdl_hiz_occlusion_feedback_t *fb) {
+    if (!fb) return;
+    fb->metal_feedback = fb->valid && fb->mipchain_ready;
+}
+
+bool aether_mdl_hiz_occlusion_feedback_metal_ready(const aether_mdl_hiz_occlusion_feedback_t *fb) {
+    return fb && fb->metal_feedback && fb->valid && fb->mipchain_ready;
+}
+
+i32 aether_mdl_lod_hiz_occlusion_gate(const aether_mdl_lod_table_t *table,
+                                      const aether_mdl_lod_mesh_set_t *meshes,
+                                      const aether_mdl_hiz_pyramid_t *pyr,
+                                      const aether_mdl_hiz_array_t *arr,
+                                      const aether_mdl_hiz_gpu_mipchain_t *chain,
+                                      f32 distance, f32 aabb_radius, f32 fov_y_deg,
+                                      f32 min_pixels, f32 max_distance,
+                                      f32 sx, f32 sy, f32 depth_ndc,
+                                      aether_mdl_hiz_gate_t *gate,
+                                      aether_mdl_hiz_occlusion_feedback_t *feedback) {
+    if (gate) memset(gate, 0, sizeof(*gate));
+    if (feedback) aether_mdl_hiz_occlusion_feedback_init(feedback);
+    if (!table || !meshes) return -1;
+    if (min_pixels <= 0.f) min_pixels = 4.f;
+    if (fov_y_deg <= 0.f) fov_y_deg = 75.f;
+    if (aabb_radius <= 0.f) aabb_radius = 16.f;
+    f32 dist = distance < 1.f ? 1.f : distance;
+    f32 half = fov_y_deg * 0.5f * 0.01745329252f;
+    f32 tan_h = tanf(half); if (tan_h < 1e-4f) tan_h = 1e-4f;
+    f32 screen_px = (aabb_radius / (dist * tan_h)) * 1080.f;
+    i32 lod = aether_mdl_lod_select(table, dist);
+    bool culled = false, occ = false;
+    if (max_distance > 0.f && dist > max_distance) culled = true;
+    if (screen_px < min_pixels) culled = true;
+
+    f32 half_uv = (aabb_radius / (dist * tan_h)) * 0.5f;
+    if (half_uv < 0.01f) half_uv = 0.01f;
+    if (half_uv > 0.4f) half_uv = 0.4f;
+    f32 od = depth_ndc;
+    if (od <= 0.f) {
+        od = dist / 4096.f; if (od > 1.f) od = 1.f;
+    }
+
+    aether_mdl_hiz_occlusion_feedback_t local_fb;
+    aether_mdl_hiz_occlusion_feedback_t *fb = feedback ? feedback : &local_fb;
+    if (!culled && chain && aether_mdl_hiz_gpu_mipchain_ready(chain)) {
+        (void)aether_mdl_hiz_occlusion_feedback_from_mipchain(
+            pyr, arr, chain,
+            sx - half_uv, sy - half_uv, sx + half_uv, sy + half_uv,
+            od, 1, fb);
+        if (fb->valid && fb->occluded) occ = true;
+    } else if (!culled && pyr && pyr->built) {
+        /* Fallback: pyramid gate without Metal feedback mark. */
+        aether_mdl_hiz_vis_query_t q;
+        aether_mdl_hiz_vis_query(pyr, sx - half_uv, sy - half_uv,
+                                 sx + half_uv, sy + half_uv, od, &q);
+        if (q.valid && q.occluded) occ = true;
+        fb->occluded = occ;
+        fb->visible = !occ;
+        fb->mipchain_ready = false;
+        fb->valid = q.valid;
+        fb->nearest_hiz = q.nearest_hiz;
+        fb->mip_used = q.mip_used;
+        fb->object_depth = od;
+    }
+
+    /* Small on-screen → bump LOD coarser when still drawing. */
+    if (!culled && !occ && screen_px < min_pixels * 3.f && lod >= 0) {
+        i32 bump = lod + 1;
+        if (bump < (i32)table->count) lod = bump;
+    }
+    if (gate) {
+        gate->occluded = occ;
+        gate->distance_culled = culled;
+        gate->issue = !culled && !occ && lod >= 0;
+        gate->lod = lod;
+        gate->screen_pixels = screen_px;
+        gate->min_pixels = min_pixels;
+        gate->distance = dist;
+    }
+    if (culled || occ) return -1;
+    return lod;
+}
+
+i32 aether_mdl_lod_gpu_issue_draw_hiz_occlusion(const aether_mdl_lod_table_t *table,
+                                                const aether_mdl_lod_mesh_set_t *meshes,
+                                                const aether_mdl_hiz_pyramid_t *pyr,
+                                                const aether_mdl_hiz_array_t *arr,
+                                                const aether_mdl_hiz_gpu_mipchain_t *chain,
+                                                f32 distance, f32 aabb_radius,
+                                                aether_mdl_lod_gpu_draw_t *out,
+                                                aether_mdl_hiz_gate_t *gate,
+                                                aether_mdl_hiz_occlusion_feedback_t *feedback) {
+    if (out) memset(out, 0, sizeof(*out));
+    i32 lod = aether_mdl_lod_hiz_occlusion_gate(table, meshes, pyr, arr, chain,
+                                                distance, aabb_radius, 75.f,
+                                                4.f, 0.f, 0.5f, 0.5f, 0.f,
+                                                gate, feedback);
+    if (lod < 0) return -1;
+    return aether_mdl_lod_gpu_issue_draw(table, meshes, distance, out);
+}

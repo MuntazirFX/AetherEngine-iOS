@@ -5319,7 +5319,7 @@ int engine_mdl_hiz_vis_query_mipchain(float x0, float y0, float x1, float y1,
                                                 x0, y0, x1, y1, obj_depth, preferred_mip, &q);
     if (out_visible) *out_visible = q.visible ? 1 : 0;
     if (out_occluded) *out_occluded = q.occluded ? 1 : 0;
-    if (out_hiz) *out_hiz = q.hiz_depth;
+    if (out_hiz) *out_hiz = q.nearest_hiz;
     return vis;
 }
 
@@ -5402,4 +5402,192 @@ int engine_mdl_skin_lump_metal_sample(float u, float v, float *out_rgba4) {
         (void)engine_mdl_skin_lump_metal_families_fixture(4, 3, NULL, NULL);
     return aether_mdl_skin_lump_metal_sample(&g_skin_lump_metal_lumps,
                                              &g_skin_lump_metal_bind, u, v, out_rgba4);
+}
+
+/* ---------- Batch21: hiz-occlusion-lod / pvs-decode / fs-documents / ipa-device-smoke ---------- */
+static aether_depth_hiz_occlusion_feedback_plan_t g_hiz_occ_plan;
+static aether_mdl_hiz_occlusion_feedback_t        g_hiz_occ_feedback;
+static aether_bsp_vis_decode_t                    g_vis_decode;
+static aether_fs_documents_mount_t                g_docs_mount;
+
+static void ensure_lod_hiz_fixtures(void) {
+    if (!g_lod_meshes_ready) {
+        u8 buf[8192];
+        u32 n = aether_mdl_write_lod_mesh_fixture(buf, sizeof buf);
+        if (n == 0) n = aether_mdl_write_lod_fixture(buf, sizeof buf);
+        if (n > 0) {
+            aether_mdl_fixture_lods(buf, n, &g_lod_table);
+            aether_mdl_fixture_lod_meshes(buf, n, &g_lod_meshes);
+            g_lod_meshes_ready = 1;
+        }
+    }
+}
+
+int engine_depth_hiz_occlusion_feedback_plan(unsigned *out_w, unsigned *out_h,
+                                             unsigned *out_slices, int *out_needed) {
+    if (!aether_depth_hiz_mtk_mipchain_complete(&g_mtk_mipchain)) {
+        unsigned lv = 0, ps = 0; int nd = 0;
+        (void)engine_depth_hiz_mtk_mipchain_plan(64, 64, 4, &lv, &ps, &nd);
+        (void)engine_depth_hiz_mtk_mipchain_mark();
+    }
+    int ok = aether_depth_hiz_occlusion_feedback_plan_encode(&g_mtk_mipchain, &g_hiz_occ_plan);
+    if (out_w) *out_w = g_hiz_occ_plan.mip0_w;
+    if (out_h) *out_h = g_hiz_occ_plan.mip0_h;
+    if (out_slices) *out_slices = g_hiz_occ_plan.slices;
+    if (out_needed) *out_needed = g_hiz_occ_plan.needed ? 1 : 0;
+    return ok;
+}
+
+int engine_depth_hiz_occlusion_feedback_mark(void) {
+    aether_depth_hiz_occlusion_feedback_plan_mark(&g_hiz_occ_plan);
+    return aether_depth_hiz_occlusion_feedback_plan_ready(&g_hiz_occ_plan) ? 1 : 0;
+}
+
+int engine_depth_hiz_occlusion_feedback_ready(void) {
+    return aether_depth_hiz_occlusion_feedback_plan_ready(&g_hiz_occ_plan) ? 1 : 0;
+}
+
+int engine_mdl_hiz_occlusion_feedback(float x0, float y0, float x1, float y1,
+                                      float obj_depth, int preferred_mip,
+                                      int *out_occluded, int *out_visible,
+                                      float *out_hiz, int *out_mip) {
+    if (!aether_mdl_hiz_gpu_mipchain_ready(&g_hiz_mipchain)) {
+        unsigned s = 0, p = 0, l = 0; int r = 0;
+        (void)engine_mdl_hiz_gpu_mipchain_after_mtk(64, 64, &s, &p, &l, &r);
+    }
+    int ok = aether_mdl_hiz_occlusion_feedback_from_mipchain(
+        &g_hiz_pyr, &g_hiz_array, &g_hiz_mipchain,
+        x0, y0, x1, y1, obj_depth, preferred_mip, &g_hiz_occ_feedback);
+    if (out_occluded) *out_occluded = g_hiz_occ_feedback.occluded ? 1 : 0;
+    if (out_visible) *out_visible = g_hiz_occ_feedback.visible ? 1 : 0;
+    if (out_hiz) *out_hiz = g_hiz_occ_feedback.nearest_hiz;
+    if (out_mip) *out_mip = g_hiz_occ_feedback.mip_used;
+    return ok;
+}
+
+int engine_mdl_hiz_occlusion_feedback_mark_metal(void) {
+    aether_mdl_hiz_occlusion_feedback_mark_metal(&g_hiz_occ_feedback);
+    return aether_mdl_hiz_occlusion_feedback_metal_ready(&g_hiz_occ_feedback) ? 1 : 0;
+}
+
+int engine_mdl_lod_hiz_occlusion_gate(float distance, float aabb_radius,
+                                      float sx, float sy, float depth_ndc,
+                                      int *out_lod, int *out_issue, int *out_occluded,
+                                      float *out_screen_px) {
+    ensure_lod_hiz_fixtures();
+    if (!aether_mdl_hiz_gpu_mipchain_ready(&g_hiz_mipchain)) {
+        unsigned s = 0, p = 0, l = 0; int r = 0;
+        (void)engine_mdl_hiz_gpu_mipchain_after_mtk(64, 64, &s, &p, &l, &r);
+    }
+    aether_mdl_hiz_gate_t gate;
+    i32 lod = aether_mdl_lod_hiz_occlusion_gate(
+        &g_lod_table, &g_lod_meshes, &g_hiz_pyr, &g_hiz_array, &g_hiz_mipchain,
+        distance, aabb_radius, 75.f, 4.f, 0.f, sx, sy, depth_ndc,
+        &gate, &g_hiz_occ_feedback);
+    if (out_lod) *out_lod = gate.lod;
+    if (out_issue) *out_issue = gate.issue ? 1 : 0;
+    if (out_occluded) *out_occluded = gate.occluded ? 1 : 0;
+    if (out_screen_px) *out_screen_px = gate.screen_pixels;
+    return lod;
+}
+
+int engine_mdl_lod_gpu_issue_draw_hiz_occlusion(float distance, float aabb_radius,
+                                                int *out_lod, unsigned *out_verts,
+                                                unsigned *out_tris, int *out_occluded) {
+    ensure_lod_hiz_fixtures();
+    if (!aether_mdl_hiz_gpu_mipchain_ready(&g_hiz_mipchain)) {
+        unsigned s = 0, p = 0, l = 0; int r = 0;
+        (void)engine_mdl_hiz_gpu_mipchain_after_mtk(64, 64, &s, &p, &l, &r);
+    }
+    aether_mdl_lod_gpu_draw_t draw;
+    aether_mdl_hiz_gate_t gate;
+    i32 lod = aether_mdl_lod_gpu_issue_draw_hiz_occlusion(
+        &g_lod_table, &g_lod_meshes, &g_hiz_pyr, &g_hiz_array, &g_hiz_mipchain,
+        distance, aabb_radius, &draw, &gate, &g_hiz_occ_feedback);
+    if (out_lod) *out_lod = (lod >= 0) ? lod : gate.lod;
+    if (out_verts) *out_verts = draw.vert_count;
+    if (out_tris) *out_tris = draw.tri_count;
+    if (out_occluded) *out_occluded = gate.occluded ? 1 : 0;
+    return lod;
+}
+
+int engine_bsp_vis_decode_pvs_row(const unsigned char *rle, unsigned rle_size,
+                                  unsigned leaf_count,
+                                  unsigned char *out_bits, unsigned out_cap,
+                                  unsigned *out_row_bytes) {
+    return aether_bsp_vis_decode_pvs_row(rle, rle_size, leaf_count,
+                                         out_bits, out_cap, out_row_bytes);
+}
+
+int engine_bsp_vis_decode_fixture(unsigned leaf_count, unsigned visible_mask,
+                                  unsigned *out_visible, unsigned *out_row_bytes,
+                                  unsigned *out_rle_bytes) {
+    if (!aether_bsp_vis_decode_fixture(leaf_count ? leaf_count : 8,
+                                       visible_mask ? visible_mask : 0x07u,
+                                       &g_vis_decode))
+        return 0;
+    if (out_visible) *out_visible = g_vis_decode.visible_count;
+    if (out_row_bytes) *out_row_bytes = g_vis_decode.row_bytes;
+    if (out_rle_bytes) *out_rle_bytes = g_vis_decode.rle_bytes;
+    return 1;
+}
+
+int engine_bsp_vis_decode_leaf_visible(unsigned leaf) {
+    return aether_bsp_vis_decode_leaf_visible(&g_vis_decode, leaf);
+}
+
+int engine_bsp_vis_decode_for_current_leaf(float x, float y, float z,
+                                           unsigned *out_visible, int *out_view_leaf) {
+    (void)x; (void)y; (void)z;
+    /* Host/iOS: synthetic fixture path when no user VIS lump is mounted. */
+    if (!aether_bsp_vis_decode_fixture(8, 0x1Fu, &g_vis_decode)) return 0;
+    g_vis_decode.view_leaf = 0;
+    if (out_visible) *out_visible = g_vis_decode.visible_count;
+    if (out_view_leaf) *out_view_leaf = g_vis_decode.view_leaf;
+    return 1;
+}
+
+int engine_fs_documents_gamedir_path(const char *documents_root, const char *gamedir,
+                                     char *out_engine, unsigned engine_cap,
+                                     char *out_gamedir, unsigned gamedir_cap) {
+    return aether_fs_documents_gamedir_path(documents_root, gamedir,
+                                            out_engine, engine_cap,
+                                            out_gamedir, gamedir_cap);
+}
+
+int engine_fs_ensure_documents_layout(const char *documents_root, const char *gamedir) {
+    return aether_fs_ensure_documents_layout(documents_root, gamedir, &g_docs_mount);
+}
+
+int engine_fs_mount_documents_gamedir(const char *documents_root, const char *gamedir,
+                                      unsigned *out_roots, int *out_valve, int *out_gd) {
+    aether_fs_t *fs = g_fs;
+    aether_fs_t *tmp = NULL;
+    if (!fs) {
+        tmp = aether_fs_create(documents_root ? documents_root : ".");
+        fs = tmp;
+    }
+    if (!fs) return 0;
+    aether_result_t r = aether_fs_mount_documents_gamedir(fs, documents_root, gamedir, &g_docs_mount);
+    if (out_roots) *out_roots = g_docs_mount.roots_mounted;
+    if (out_valve) *out_valve = g_docs_mount.valve_mounted ? 1 : 0;
+    if (out_gd) *out_gd = g_docs_mount.gamedir_mounted ? 1 : 0;
+    if (tmp) aether_fs_destroy(tmp);
+    return (r == AETHER_OK) ? 1 : 0;
+}
+
+unsigned engine_fs_documents_write_marker(const char *documents_root, const char *gamedir,
+                                          const char *relpath, const void *data, unsigned size) {
+    return aether_fs_documents_write_marker(documents_root, gamedir, relpath, data, size);
+}
+
+int engine_fs_documents_exists(const char *vpath) {
+    if (!vpath) return 0;
+    if (!g_docs_mount.valid || !g_docs_mount.engine_root[0]) return 0;
+    aether_fs_t *fs = aether_fs_create(g_docs_mount.engine_root);
+    if (!fs) return 0;
+    (void)aether_fs_setup_game(fs, g_docs_mount.engine_root, g_docs_mount.gamedir);
+    int ok = aether_fs_exists(fs, vpath) ? 1 : 0;
+    aether_fs_destroy(fs);
+    return ok;
 }

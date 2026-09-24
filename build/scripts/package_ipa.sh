@@ -301,3 +301,26 @@ log "Done ✔"
 #
 # DEVICE_RUN_NOTES=first_launch|entitlements|Documents/AetherEngine|game_dir|synthetic_fallback
 # Linux/CI host: cannot launch on device; these notes document the on-device path only.
+
+# ---------- Device smoke checklist polish (batch21) ----------
+# After sideload + first launch (DEVICE_RUN_NOTES), run this on-device smoke list:
+#
+# DEVICE SMOKE (unsigned IPA / resigned debug)
+#   1) Launch → synthetic BSP demo room draws (no retail assets required)
+#   2) Settings → pick a game (valve/cstrike/…) → Launch
+#      Documents/AetherEngine/<gamedir> is created; empty → synthetic fallback
+#   3) Touch: look / move / jump / crouch; HUD health/ammo/air visible
+#   4) Hi-Z / studio LOD: approach a studio fixture — LOD gate + occlusion feedback
+#      should not crash; far/occluded models may drop or coarsen LOD
+#   5) Optional: copy a user .bsp under Documents/AetherEngine/<gamedir>/maps/
+#      relaunch → map load path / PVS RLE decode exercised when VIS lump present
+#   6) Multiplayer smoke (same LAN): host listen + client connect HUD scoreboard
+#   7) Background/foreground app once; confirm Documents aether.cfg persists
+#   8) Capture: screenshot + note iOS version / device model for Actions artifact triage
+#
+# Actions artifact → device path:
+#   Download AetherEngine.ipa from workflow_dispatch artifact → sideload
+#   (Apple Configurator / Xcode Devices / ideviceinstaller) → run checklist above.
+#
+# DEVICE_SMOKE_CHECKLIST=launch|gamedir|touch_hud|hiz_lod|user_bsp_pvs|net|cfg_persist|screenshot
+# Linux/CI host: cannot execute on device; checklist is documentation + dry-run companion only.
