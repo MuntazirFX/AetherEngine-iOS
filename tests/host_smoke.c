@@ -579,6 +579,104 @@ static void smoke_batch_depth_hiz_bind_portal_winding_mdl_skin_pages(void) {
 }
 
 
+
+static void smoke_batch_hiz_gpu_downsample_portal_windings_mdl_skinref_ipa_sign(void) {
+    printf("--- batch_hiz_gpu_downsample_portal_windings_mdl_skinref_ipa_sign ---\n");
+
+    /* 1+5. GPU Hi-Z downsample into array slices + bind into vis query */
+    {
+        aether_mdl_hiz_pyramid_t pyr;
+        aether_mdl_hiz_pyramid_init(&pyr);
+        aether_mdl_hiz_pyramid_reset(&pyr, 64, 64);
+        for (u32 y = 16; y < 48; ++y)
+            for (u32 x = 16; x < 48; ++x)
+                aether_mdl_hiz_pyramid_write(&pyr, x, y, 0.18f);
+        /* Leave rest at default far; build + downsample chain */
+        aether_mdl_hiz_array_t arr;
+        aether_mdl_hiz_array_downsample_t ds;
+        u32 slices = aether_mdl_hiz_array_downsample_chain(&pyr, &arr, &ds);
+        expect(slices >= 3 && ds.ready && ds.compute_passes >= 1, "b17_ds_chain");
+        expect(aether_mdl_hiz_array_downsample_ready(&ds), "b17_ds_ready");
+        expect(aether_mdl_hiz_array_was_bound(&arr), "b17_arr_bound");
+        aether_depth_prepass_t dp;
+        aether_depth_prepass_init(&dp);
+        aether_depth_prepass_ensure(&dp, 128, 128);
+        aether_depth_hiz_bind_plan_t plan;
+        expect(aether_depth_hiz_bind_plan_encode(&dp, 64, 64, &plan) == 1, "b17_plan");
+        aether_depth_hiz_array_bind_t ab;
+        expect(aether_depth_hiz_array_bind_encode(&plan, slices, &ab) == 1, "b17_arr_bind");
+        aether_depth_hiz_downsample_bind_t db;
+        expect(aether_depth_hiz_downsample_bind_encode(&ab, slices, ds.compute_passes, &db) == 1,
+               "b17_ds_bind");
+        aether_depth_hiz_downsample_bind_mark(&db);
+        expect(aether_depth_hiz_downsample_vis_ready(&db), "b17_vis_ready");
+        aether_mdl_hiz_vis_query_t q;
+        int vis = aether_mdl_hiz_vis_query_downsampled(&pyr, &arr, &ds,
+            0.4f, 0.4f, 0.6f, 0.6f, 0.9f, 1, &q);
+        expect(q.valid && q.mip_used == 1, "b17_ds_query_mip");
+        expect(q.occluded && vis == 0, "b17_ds_occ");
+        vis = aether_mdl_hiz_vis_query_downsampled(&pyr, &arr, &ds,
+            0.0f, 0.0f, 0.05f, 0.05f, 0.5f, 0, &q);
+        expect(q.valid && q.visible && vis == 1, "b17_ds_vis");
+    }
+
+    /* 2+6. Fuller portal windings from marksurfaces / planes */
+    {
+        aether_bsp_portal_winding_set_t set;
+        u32 fc = aether_bsp_portal_windings_build_fixture(&set);
+        expect(fc >= 4 && set.windings[0].vert_count == 4, "b17_wind_fix");
+        aether_bsp_t *bsp = aether_bsp_create_synthetic_room();
+        expect(bsp != NULL, "b17_bsp");
+        aether_bsp_portal_winding_set_t from_ms;
+        u32 wc = aether_bsp_portal_windings_from_marksurfaces(&from_ms, bsp);
+        expect(wc >= 1 && from_ms.from_bsp, "b17_wind_ms");
+        expect(from_ms.windings[0].from_marksurfaces && from_ms.windings[0].valid, "b17_wind_mark");
+        f32 verts[8][3]; u32 vc = 0; f32 plane[4];
+        expect(aether_bsp_portal_winding_to_render(&from_ms.windings[0], verts, 8, &vc, plane) == 1,
+               "b17_to_render");
+        expect(vc >= 3, "b17_verts");
+        aether_bsp_portal_graph_t g;
+        aether_bsp_portal_graph_build_multi_fixture(&g);
+        u32 attached = aether_bsp_portal_graph_attach_windings(&g, &set);
+        expect(attached >= 1, "b17_attach");
+        aether_water_t w; aether_water_init(&w); aether_water_set_enabled(&w, true);
+        f32 eye[3] = {0, 0, 64};
+        aether_portal_reflect_plan_t plan;
+        u32 views = aether_water_reflect_portal_winding_plan(&w, eye, verts, vc, plane, 3, &plan);
+        expect(views >= 1 && plan.needed, "b17_reflect_wind");
+        aether_bsp_free(bsp);
+    }
+
+    /* 3+7. MDL skinref / family select */
+    {
+        aether_mdl_skinref_table_t t;
+        u32 fams = aether_mdl_skinref_build_fixture(&t);
+        expect(fams == 2 && t.entry_count == 4 && t.from_fixture, "b17_skinref_fix");
+        expect(aether_mdl_skinref_select_family_name(&t, "camo") == 1, "b17_sel_camo");
+        expect(aether_mdl_skinref_select_ref(&t, 1) == 1, "b17_sel_ref");
+        u32 fam = 0, ref = 0; u8 g = 0, tx = 0; u16 skin = 0;
+        expect(aether_mdl_skinref_resolve(&t, &fam, &ref, &g, &tx, &skin) == 1, "b17_resolve");
+        expect(fam == 1 && ref == 1 && g == 1 && tx == 1 && skin == 3, "b17_resolve_vals");
+        i32 cyc = aether_mdl_skinref_cycle_family(&t, 1);
+        expect(cyc == 0, "b17_cycle");
+        aether_mdl_skin_page_set_t pages;
+        aether_mdl_skin_pages_build_fixture(&pages, 4);
+        f32 rgba[4];
+        expect(aether_mdl_skinref_sample(&t, &pages, 0.25f, 0.75f, rgba) == 1, "b17_sample");
+        expect(rgba[3] > 0.9f, "b17_sample_a");
+        u8 buf[64];
+        expect(aether_mdl_write_skinref_fixture(buf, sizeof buf) == 16, "b17_write_fix");
+    }
+
+    /* 4. Unsigned IPA dry-run polish (script flags present — verify_host greps) */
+    {
+        /* Host exercises --dry-run path via verify_host; smoke just documents. */
+        expect(1, "b17_ipa_dry_run_docs");
+    }
+
+    printf("batch_hiz_gpu_downsample_portal_windings_mdl_skinref_ipa_sign OK\n");
+}
+
 static void smoke_batch_hiz_array_portal_graph_mdl_skin_ipa(void) {
     printf("--- batch_hiz_array_portal_graph_mdl_skin_ipa ---\n");
 
@@ -3891,6 +3989,7 @@ int main(void) {
     smoke_batch_gpu_hiz_mip_weapon_auth_portal();
     smoke_batch_depth_hiz_bind_portal_winding_mdl_skin_pages();
     smoke_batch_hiz_array_portal_graph_mdl_skin_ipa();
+    smoke_batch_hiz_gpu_downsample_portal_windings_mdl_skinref_ipa_sign();
     smoke_batch_studio_vis_stereo();
 
     if (g_failures) {

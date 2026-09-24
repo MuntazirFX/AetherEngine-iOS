@@ -545,10 +545,48 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             if studioCount > 0 {
                 _ = engine_mdl_skin_lump_bind_water_ent(0, 0)
             }
+            // GPU Hi-Z downsample into array slices → vis query bind
+            var dsSlices: UInt32 = 0, dsPasses: UInt32 = 0
+            var dsReady: Int32 = 0
+            _ = engine_mdl_hiz_array_downsample(&dsSlices, &dsPasses, &dsReady)
+            var dsBound: Int32 = 0, dsVisReady: Int32 = 0
+            _ = engine_depth_hiz_downsample_bind(dsSlices, dsPasses, &dsBound, &dsVisReady)
+            var dqVis: Int32 = 0, dqOcc: Int32 = 0, dqMip: Int32 = 0
+            var dqZ: Float = 0
+            _ = engine_mdl_hiz_vis_query_downsampled(0.4, 0.4, 0.6, 0.6, 0.85, 1,
+                                                    &dqVis, &dqOcc, &dqZ, &dqMip)
+            // Fuller portal windings from marksurfaces / planes
+            var pwCount: UInt32 = 0
+            var pwFromBsp: Int32 = 0
+            _ = engine_bsp_portal_windings_from_current(&pwCount, &pwFromBsp)
+            var pwAttached: UInt32 = 0
+            _ = engine_bsp_portal_graph_attach_windings(&pwAttached)
+            var pwPlane = [Float](repeating: 0, count: 4)
+            var pwCenter = [Float](repeating: 0, count: 3)
+            var pwVerts: UInt32 = 0
+            var pwMarks: Int32 = 0
+            _ = engine_bsp_portal_winding_get(0, &pwPlane, &pwVerts, &pwCenter, &pwMarks)
+            var pwViews: UInt32 = 0
+            _ = engine_water_reflect_portal_winding_plan(0, 0, 64, 0, 3, &pwViews)
+            // MDL skinref / family select
+            var srFam: UInt32 = 0, srEnt: UInt32 = 0
+            _ = engine_mdl_skinref_init_fixture(&srFam, &srEnt)
+            _ = engine_mdl_skinref_select_family_name("camo")
+            _ = engine_mdl_skinref_select_ref(1)
+            var rFam: UInt32 = 0, rRef: UInt32 = 0, rGrp: UInt32 = 0, rTex: UInt32 = 0, rSkin: UInt32 = 0
+            _ = engine_mdl_skinref_resolve(&rFam, &rRef, &rGrp, &rTex, &rSkin)
+            var srRgba = [Float](repeating: 0, count: 4)
+            _ = engine_mdl_skinref_sample(0.3, 0.7, &srRgba)
+            _ = engine_mdl_skinref_cycle_family(1)
             _ = arrSlices; _ = arrW; _ = arrH; _ = dhArrSlices; _ = dhArrBound
             _ = aqVis; _ = aqOcc; _ = aqZ; _ = aqMip
             _ = pgLeaves; _ = pgEdges; _ = pgReached; _ = pgDepth; _ = pgViews; _ = pgFlood
             _ = lumpCount; _ = lumpFallback; _ = lumpRgba
+            _ = dsSlices; _ = dsPasses; _ = dsReady; _ = dsBound; _ = dsVisReady
+            _ = dqVis; _ = dqOcc; _ = dqZ; _ = dqMip
+            _ = pwCount; _ = pwFromBsp; _ = pwAttached; _ = pwPlane; _ = pwCenter
+            _ = pwVerts; _ = pwMarks; _ = pwViews
+            _ = srFam; _ = srEnt; _ = rFam; _ = rRef; _ = rGrp; _ = rTex; _ = rSkin; _ = srRgba
             _ = ec; _ = mc; _ = res2; _ = dw2; _ = clr2; _ = rw2; _ = rh2; _ = studioCount
             _ = hvVis; _ = hvOcc; _ = hvZ; _ = hvMip; _ = plod; _ = pissue; _ = pocc; _ = ppx
             _ = portalMvp

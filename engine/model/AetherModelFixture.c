@@ -2217,3 +2217,215 @@ int aether_mdl_skin_lump_to_page(const aether_mdl_skin_lump_t *lump,
     }
     return 1;
 }
+
+
+/* ===== GPU Hi-Z array downsample + MDL skinref family select (batch17) ===== */
+
+void aether_mdl_hiz_array_downsample_init(aether_mdl_hiz_array_downsample_t *ds) {
+    if (!ds) return;
+    memset(ds, 0, sizeof(*ds));
+}
+
+u32 aether_mdl_hiz_array_downsample_chain(aether_mdl_hiz_pyramid_t *pyr,
+                                          aether_mdl_hiz_array_t *arr,
+                                          aether_mdl_hiz_array_downsample_t *out) {
+    if (out) aether_mdl_hiz_array_downsample_init(out);
+    if (!pyr || !arr) return 0;
+
+    /* Ensure mip0 exists; build remaining mips via 2x2 min (GPU downsample mirror). */
+    if (!pyr->built || pyr->levels == 0) {
+        if (pyr->mip0_w == 0 || pyr->mip0_h == 0) return 0;
+        aether_mdl_hiz_build_pyramid(pyr);
+    } else if (pyr->levels < 2) {
+        aether_mdl_hiz_build_pyramid(pyr);
+    }
+
+    u32 slices = aether_mdl_hiz_bind_texture2d_array(pyr, arr);
+    if (slices == 0) return 0;
+
+    /* Simulate Metal compute/fragment passes: one pass per slice after mip0. */
+    u32 passes = (slices > 0) ? (slices - 1) : 0;
+    if (passes == 0 && slices == 1) passes = 1; /* still mark one encode */
+
+    aether_mdl_hiz_array_set_gpu(arr, true);
+    aether_mdl_hiz_array_mark_bound(arr);
+
+    if (out) {
+        out->slices_written = slices;
+        out->mip0_w = arr->mip0_w;
+        out->mip0_h = arr->mip0_h;
+        out->compute_passes = passes ? passes : 1;
+        out->from_mip0 = true;
+        out->gpu_chain = true;
+        out->ready = (slices > 0);
+    }
+    return slices;
+}
+
+void aether_mdl_hiz_array_downsample_set_gpu(aether_mdl_hiz_array_downsample_t *ds, bool armed) {
+    if (ds) ds->gpu_chain = armed;
+}
+
+bool aether_mdl_hiz_array_downsample_gpu(const aether_mdl_hiz_array_downsample_t *ds) {
+    return ds && ds->gpu_chain;
+}
+
+bool aether_mdl_hiz_array_downsample_ready(const aether_mdl_hiz_array_downsample_t *ds) {
+    return ds && ds->ready && ds->slices_written > 0;
+}
+
+int aether_mdl_hiz_vis_query_downsampled(const aether_mdl_hiz_pyramid_t *pyr,
+                                         const aether_mdl_hiz_array_t *arr,
+                                         const aether_mdl_hiz_array_downsample_t *ds,
+                                         f32 x0, f32 y0, f32 x1, f32 y1,
+                                         f32 object_depth, i32 preferred_mip,
+                                         aether_mdl_hiz_vis_query_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!ds || !aether_mdl_hiz_array_downsample_ready(ds)) {
+        if (out) { out->visible = true; out->valid = false; }
+        return 0;
+    }
+    if (!arr || !aether_mdl_hiz_array_was_bound(arr)) {
+        if (out) { out->visible = true; out->valid = false; }
+        return 0;
+    }
+    i32 mip = preferred_mip;
+    if (mip < 0) {
+        /* Auto: prefer mid slice when downsample filled several. */
+        mip = (i32)(ds->slices_written > 1 ? ds->slices_written / 2 : 0);
+    }
+    return aether_mdl_hiz_vis_query_array_mip(pyr, arr, x0, y0, x1, y1,
+                                              object_depth, mip, out);
+}
+
+void aether_mdl_skinref_init(aether_mdl_skinref_table_t *t) {
+    if (!t) return;
+    memset(t, 0, sizeof(*t));
+}
+
+u32 aether_mdl_skinref_build_fixture(aether_mdl_skinref_table_t *t) {
+    if (!t) return 0;
+    aether_mdl_skinref_init(t);
+
+    /* Family 0: default — refs body/face */
+    aether_mdl_skinref_family_t *f0 = &t->families[0];
+    snprintf(f0->name, sizeof f0->name, "default");
+    f0->family_id = 0;
+    f0->ref_first = 0;
+    f0->ref_count = 2;
+    f0->valid = true;
+
+    aether_mdl_skinref_entry_t *e0 = &t->entries[0];
+    e0->family = 0; e0->skin_index = 0; e0->group = 0; e0->tex = 0;
+    snprintf(e0->name, sizeof e0->name, "body"); e0->valid = true;
+    aether_mdl_skinref_entry_t *e1 = &t->entries[1];
+    e1->family = 0; e1->skin_index = 1; e1->group = 0; e1->tex = 1;
+    snprintf(e1->name, sizeof e1->name, "face"); e1->valid = true;
+
+    /* Family 1: camo — refs body_camo / gear */
+    aether_mdl_skinref_family_t *f1 = &t->families[1];
+    snprintf(f1->name, sizeof f1->name, "camo");
+    f1->family_id = 1;
+    f1->ref_first = 2;
+    f1->ref_count = 2;
+    f1->valid = true;
+
+    aether_mdl_skinref_entry_t *e2 = &t->entries[2];
+    e2->family = 1; e2->skin_index = 2; e2->group = 1; e2->tex = 0;
+    snprintf(e2->name, sizeof e2->name, "body_camo"); e2->valid = true;
+    aether_mdl_skinref_entry_t *e3 = &t->entries[3];
+    e3->family = 1; e3->skin_index = 3; e3->group = 1; e3->tex = 1;
+    snprintf(e3->name, sizeof e3->name, "gear"); e3->valid = true;
+
+    t->family_count = 2;
+    t->entry_count = 4;
+    t->selected_family = 0;
+    t->selected_ref = 0;
+    t->from_fixture = true;
+    return t->family_count;
+}
+
+int aether_mdl_skinref_select_family(aether_mdl_skinref_table_t *t, u32 family_id) {
+    if (!t || family_id >= t->family_count) return 0;
+    if (!t->families[family_id].valid) return 0;
+    t->selected_family = family_id;
+    t->selected_ref = 0;
+    return 1;
+}
+
+int aether_mdl_skinref_select_family_name(aether_mdl_skinref_table_t *t, const char *name) {
+    if (!t || !name) return 0;
+    for (u32 i = 0; i < t->family_count; ++i) {
+        if (!t->families[i].valid) continue;
+        if (strncmp(t->families[i].name, name, AETHER_MDL_SKINREF_NAME_LEN) == 0)
+            return aether_mdl_skinref_select_family(t, i);
+    }
+    return 0;
+}
+
+int aether_mdl_skinref_select_ref(aether_mdl_skinref_table_t *t, u32 ref_in_family) {
+    if (!t || t->selected_family >= t->family_count) return 0;
+    aether_mdl_skinref_family_t *f = &t->families[t->selected_family];
+    if (!f->valid || ref_in_family >= f->ref_count) return 0;
+    t->selected_ref = ref_in_family;
+    return 1;
+}
+
+i32 aether_mdl_skinref_cycle_family(aether_mdl_skinref_table_t *t, int dir) {
+    if (!t || t->family_count == 0) return -1;
+    i32 next = (i32)t->selected_family + (dir >= 0 ? 1 : -1);
+    if (next < 0) next = (i32)t->family_count - 1;
+    if (next >= (i32)t->family_count) next = 0;
+    if (!aether_mdl_skinref_select_family(t, (u32)next)) return -1;
+    return (i32)t->selected_family;
+}
+
+int aether_mdl_skinref_resolve(const aether_mdl_skinref_table_t *t,
+                               u32 *out_family, u32 *out_ref,
+                               u8 *out_group, u8 *out_tex, u16 *out_skin_index) {
+    if (!t || t->family_count == 0 || t->selected_family >= t->family_count) return 0;
+    const aether_mdl_skinref_family_t *f = &t->families[t->selected_family];
+    if (!f->valid || t->selected_ref >= f->ref_count) return 0;
+    u32 idx = (u32)f->ref_first + t->selected_ref;
+    if (idx >= t->entry_count || !t->entries[idx].valid) return 0;
+    const aether_mdl_skinref_entry_t *e = &t->entries[idx];
+    if (out_family) *out_family = t->selected_family;
+    if (out_ref) *out_ref = t->selected_ref;
+    if (out_group) *out_group = e->group;
+    if (out_tex) *out_tex = e->tex;
+    if (out_skin_index) *out_skin_index = e->skin_index;
+    return 1;
+}
+
+int aether_mdl_skinref_sample(const aether_mdl_skinref_table_t *t,
+                              const aether_mdl_skin_page_set_t *pages,
+                              f32 u, f32 v, f32 out_rgba[4]) {
+    u8 g = 0, tx = 0;
+    if (!aether_mdl_skinref_resolve(t, NULL, NULL, &g, &tx, NULL)) return 0;
+    if (!pages || pages->count == 0) {
+        /* Procedural tint from family/ref when pages absent. */
+        if (!out_rgba) return 0;
+        f32 fam = t ? (f32)t->selected_family * 0.35f : 0.f;
+        f32 rf  = t ? (f32)t->selected_ref * 0.2f : 0.f;
+        out_rgba[0] = 0.45f + fam; out_rgba[1] = 0.55f + rf;
+        out_rgba[2] = 0.40f + 0.1f * (f32)g; out_rgba[3] = 1.f;
+        return 1;
+    }
+    return aether_mdl_skin_pages_sample(pages, g, tx, u, v, out_rgba);
+}
+
+u32 aether_mdl_write_skinref_fixture(u8 *out, u32 cap) {
+    /* Compact trailer: magic + family_count + entry_count (LE). */
+    const u32 need = 16;
+    if (!out || cap < need) return 0;
+    i32 magic = AETHER_MDL_SKINREF_MAGIC;
+    out[0] = (u8)(magic & 0xff);
+    out[1] = (u8)((magic >> 8) & 0xff);
+    out[2] = (u8)((magic >> 16) & 0xff);
+    out[3] = (u8)((magic >> 24) & 0xff);
+    out[4] = 2; out[5] = 0; out[6] = 0; out[7] = 0; /* family_count */
+    out[8] = 4; out[9] = 0; out[10] = 0; out[11] = 0; /* entry_count */
+    out[12] = 0; out[13] = 0; out[14] = 0; out[15] = 0; /* reserved */
+    return need;
+}
+

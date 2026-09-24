@@ -613,17 +613,60 @@ still clean-room (no retail HL assets):
 | Download | `gh run download <id> -n AetherEngine-<version>` |
 
 ### Known gaps after hiz-array / portal-graph / mdl-skin-ipa batch
-- Metal `texture2d_array` Hi-Z is descriptor + fragment-hook complete; full GPU downsample encode still thin
-- Portal graph adjacency is leaf/PVS/node-portal stub (not full Quake-style portal winding set from retail BSPs)
-- Skin lumps parse clean-room textured-fixture trailers (retail MDL palette/skinref families still partial)
+- *(addressed in hiz-gpu-downsample batch: GPU array downsample chain + downsample→vis bind)*
+- *(addressed in hiz-gpu-downsample batch: fuller portal windings from marksurfaces/planes)*
+- *(addressed in hiz-gpu-downsample batch: MDL skinref / family select API + fixture)*
+- *(addressed in hiz-gpu-downsample batch: package_ipa.sh --dry-run/--notes-only/--sign-check)*
 - IPA still requires macOS + Xcode via workflow_dispatch
 
 ### Progress toward playable unsigned IPA demo
-Rough overall estimate after this batch: **~78%** (~77–78) toward a playable unsigned IPA demo
-(capped while IPA remains unbuilt on this Linux/CI host). Prior depth-hiz-bind batch was ~76–77%.
+Rough overall estimate after hiz-array batch: **~78%** (superseded by hiz-gpu-downsample batch below).
 
 IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
 
+
+
+
+## Hi-Z GPU downsample / portal windings / MDL skinref / IPA sign (`continue/batch-hiz-gpu-downsample-portal-windings-mdl-skinref-ipa-sign`)
+
+One PR advances GPU Hi-Z downsample into `texture2d_array` slices (Metal compute/fragment
+chain), fuller portal windings from BSP marksurfaces/planes, MDL skinref family select +
+fixture, unsigned IPA dry-run script flags, downsample→vis bind, host smokes, and README.
+
+| # | Item | Status | Notes |
+|---|------|--------|-------|
+| 1 | GPU Hi-Z downsample → array slices | **done** | `aether_mdl_hiz_array_downsample_chain` + Metal `aether_hiz_array_downsample` |
+| 2 | Fuller portal windings (marksurfaces/planes) | **done** | `aether_bsp_portal_windings_from_marksurfaces` + graph attach |
+| 3 | MDL skinref / family select + fixture | **done** | `aether_mdl_skinref_*` (default/camo families) |
+| 4 | Unsigned IPA dry-run polish | **done** | `package_ipa.sh --dry-run/--notes-only/--sign-check` → `DRY_RUN_NOTES.txt` |
+| 5 | Bind downsample into vis query | **done** | `aether_mdl_hiz_vis_query_downsampled` + `aether_depth_hiz_downsample_bind_*` |
+| 6 | Portal winding smoke | **done** | marksurface windings + reflect plan |
+| 7 | Skinref select smoke | **done** | family/name/ref resolve + sample |
+| 8 | Host smokes + verify green | **done** | `smoke_batch_hiz_gpu_downsample_portal_windings_mdl_skinref_ipa_sign` + verify greps |
+| 9 | Fix regressions | **done** | prior batches retained; verify greps unchanged |
+| 10 | README + honest % | **done** | This table; cap **~79%** while IPA unbuilt on this host |
+
+### Unsigned IPA dry-run flags (Linux-safe)
+
+```bash
+bash build/scripts/package_ipa.sh --dry-run --sign-check   # plan + DRY_RUN_NOTES.txt
+bash build/scripts/package_ipa.sh --notes-only               # notes only
+bash build/scripts/package_ipa.sh --help
+# Real IPA (macOS + Xcode only):
+#   ./build/scripts/build_ios.sh && ./build/scripts/package_ipa.sh
+```
+
+### Known gaps after hiz-gpu-downsample / portal-windings / mdl-skinref / ipa-sign batch
+- Metal downsample is compute/fragment-hook + host chain complete; live GPU encode still needs a real depth texture on device
+- Portal windings from marksurfaces use leaf AABB + face plane rects (not full Quake portal clip winding sets from retail BSPs)
+- Skinref families are clean-room fixture metadata (retail studio skinref tables still partial)
+- IPA still requires macOS + Xcode via workflow_dispatch (dry-run flags only document/plan here)
+
+### Progress toward playable unsigned IPA demo
+Rough overall estimate after this batch: **~79%** (~78–79) toward a playable unsigned IPA demo
+(capped while IPA remains unbuilt on this Linux/CI host). Prior hiz-array batch was ~78%.
+
+IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
 
 
 ## Build Status

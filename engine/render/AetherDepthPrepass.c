@@ -246,3 +246,39 @@ void aether_depth_hiz_array_bind_mark_bound(aether_depth_hiz_array_bind_t *b) {
 bool aether_depth_hiz_array_bind_was_bound(const aether_depth_hiz_array_bind_t *b) {
     return b && b->bound;
 }
+
+
+void aether_depth_hiz_downsample_bind_init(aether_depth_hiz_downsample_bind_t *b) {
+    if (!b) return;
+    memset(b, 0, sizeof(*b));
+}
+
+int aether_depth_hiz_downsample_bind_encode(const aether_depth_hiz_array_bind_t *arr_bind,
+                                            u32 slices, u32 compute_passes,
+                                            aether_depth_hiz_downsample_bind_t *out) {
+    if (!out) return 0;
+    aether_depth_hiz_downsample_bind_init(out);
+    if (!arr_bind || !arr_bind->array_texture) return 0;
+    out->downsample_ready = (slices > 0);
+    out->vis_query_bound = (slices > 0) && arr_bind->vis_query_array;
+    out->gpu_chain = true;
+    out->slices = slices ? slices : arr_bind->slice_count;
+    out->compute_passes = compute_passes ? compute_passes : (out->slices > 1 ? out->slices - 1 : 1);
+    out->mip0_w = arr_bind->mip0_w;
+    out->mip0_h = arr_bind->mip0_h;
+    return out->downsample_ready ? 1 : 0;
+}
+
+void aether_depth_hiz_downsample_bind_mark(aether_depth_hiz_downsample_bind_t *b) {
+    if (!b) return;
+    b->bound = b->downsample_ready && b->vis_query_bound && b->slices > 0;
+}
+
+bool aether_depth_hiz_downsample_bind_was_bound(const aether_depth_hiz_downsample_bind_t *b) {
+    return b && b->bound;
+}
+
+bool aether_depth_hiz_downsample_vis_ready(const aether_depth_hiz_downsample_bind_t *b) {
+    return b && b->bound && b->vis_query_bound;
+}
+

@@ -356,3 +356,22 @@ grep -q "hiz-array\|portal-graph\|mdl-skin-ipa\|~78%" README.md || fail "missing
 grep -q "smoke_batch_hiz_array_portal_graph_mdl_skin_ipa" tests/host_smoke.c || fail "missing batch16 smoke"
 ok "batch hiz-array/portal-graph/mdl-skin-ipa API symbols present"
 
+
+info "batch hiz-gpu-downsample / portal-windings / mdl-skinref / ipa-sign"
+grep -q "aether_mdl_hiz_array_downsample_chain\|aether_mdl_hiz_vis_query_downsampled\|aether_mdl_hiz_array_downsample_ready" engine/model/AetherModelFixture.h || fail "missing Hi-Z GPU array downsample"
+grep -q "aether_bsp_portal_windings_from_marksurfaces\|aether_bsp_portal_graph_attach_windings\|aether_bsp_portal_winding_to_render" engine/bsp/AetherBSPVis.h || fail "missing portal windings from marksurfaces"
+grep -q "aether_portal_winding_from_bsp\|aether_water_reflect_portal_winding_plan" engine/render/AetherWater.h || fail "missing portal winding reflect plan"
+grep -q "aether_mdl_skinref_build_fixture\|aether_mdl_skinref_select_family\|aether_mdl_skinref_resolve" engine/model/AetherModelFixture.h || fail "missing MDL skinref family select"
+grep -q "aether_depth_hiz_downsample_bind_encode\|aether_depth_hiz_downsample_vis_ready" engine/render/AetherDepthPrepass.h || fail "missing downsample→vis bind"
+grep -q "\-\-dry-run\|DRY_RUN_NOTES\|--sign-check\|--notes-only" build/scripts/package_ipa.sh || fail "missing IPA dry-run polish flags"
+grep -q "aether_hiz_array_downsample\|aether_hiz_vis_query_downsampled_fragment\|aether_mdl_skinref_select_fragment\|aether_portal_winding_marksurface_fragment" ios/AetherApp/Shaders.metal || fail "missing Metal downsample/skinref/portal winding hooks"
+grep -q "engine_mdl_hiz_array_downsample\|engine_bsp_portal_windings_from_current\|engine_mdl_skinref_select_family\|engine_mdl_hiz_vis_query_downsampled" ios/AetherApp/EngineBridge.h || fail "missing bridge batch17"
+grep -q "engine_mdl_hiz_array_downsample\|engine_bsp_portal_windings_from_current\|engine_mdl_skinref_init_fixture\|engine_depth_hiz_downsample_bind" ios/AetherApp/MetalRenderer.swift || fail "missing metal batch17 encode"
+grep -q "hiz-gpu-downsample\|portal-windings\|mdl-skinref\|~79%" README.md || fail "missing batch17 README"
+grep -q "smoke_batch_hiz_gpu_downsample_portal_windings_mdl_skinref_ipa_sign" tests/host_smoke.c || fail "missing batch17 smoke"
+# Linux-safe IPA dry-run exercise
+bash build/scripts/package_ipa.sh --dry-run --sign-check >/dev/null || fail "package_ipa --dry-run failed"
+[ -f build/out/DRY_RUN_NOTES.txt ] || fail "missing DRY_RUN_NOTES.txt after --dry-run"
+ok "batch hiz-gpu-downsample/portal-windings/mdl-skinref/ipa-sign API symbols present"
+
+
