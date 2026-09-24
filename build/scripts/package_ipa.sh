@@ -69,3 +69,19 @@ log "Done ✔"
 #      or: gh run download <run-id> -n AetherEngine-<version>
 #   4. Optional: publish_release=true also attaches the IPA to a GitHub Release
 # This Linux/CI host does not build the IPA; the artifact steps above are macOS-only.
+
+# ---------- macOS Actions runner dry-run notes (further) ----------
+# Runner: macos-14 (see .github/workflows/build-arm64.yml build_ipa job)
+# Xcode: image default (xcode-select -p); pin via DeMille/setup-xcode if needed
+# Dry-run without signing:
+#   1. workflow_dispatch → build_ipa
+#   2. build_ios.sh → DerivedData/.../AetherEngine.app (arm64)
+#   3. package_ipa.sh → unsigned Payload zip (this script)
+#   4. upload-artifact@v4 → AetherEngine-<version> (30d)
+#   5. Optional softprops/action-gh-release when publish_release=true
+# Local macOS dry-run (no Actions):
+#   ./build/scripts/build_ios.sh && ./build/scripts/package_ipa.sh
+#   ls -lh build/out/AetherEngine.ipa
+# Linux/CI host: cannot produce IPA; verify_host.sh remains the gate here.
+# Sideload: AltStore / Sideloadly / TrollStore / ideviceinstaller — no Apple ID
+# signing baked into this unsigned IPA path.

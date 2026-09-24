@@ -313,3 +313,17 @@ grep -q "Actions artifact\|upload-artifact\|rt-skins\|assist-hiz\|~75%" README.m
 grep -q "smoke_batch_rt_skins_assist_hiz_auth" tests/host_smoke.c || fail "missing rt-skins/assist/hiz/auth smoke"
 ok "batch rt-skins/assist-hiz/auth API symbols present"
 
+
+grep -q "aether_mdl_hiz_build_pyramid\|aether_mdl_hiz_vis_query\|aether_mdl_hiz_pyramid" engine/model/AetherModelFixture.h || fail "missing Hi-Z mip pyramid"
+grep -q "aether_weapon_fire_combat_auth\|aether_game_weapon_hit_auth" engine/game/weapons/AetherWeaponFiring.h engine/game/AetherGameManager.h || fail "missing weapon→auth combat"
+grep -q "aether_water_reflect_compute_portal\|aether_water_reflect_rt_build_mirror_mvp_portal" engine/render/AetherWater.h || fail "missing portal water reflect"
+grep -q "aether_water_reflect_studio_tex_sample\|aether_water_reflect_ent_set_studio_tex" engine/render/AetherWater.h || fail "missing studio tex sample"
+grep -q "macos-14\|Local dry-run\|build_ios.sh && ./build/scripts/package_ipa" build/scripts/package_ipa.sh .github/workflows/build-arm64.yml || fail "missing IPA macos runner dry-run notes"
+grep -q "aether_scoreboard_format_assist_line\|assisted vs" engine/net/AetherNetScoreboard.h engine/net/AetherNetScoreboard.c || fail "missing assist feed polish"
+grep -q "aether_hiz_downsample\|aether_hiz_vis_query_fragment\|aether_studio_reflect_tex_fragment" ios/AetherApp/Shaders.metal || fail "missing Metal Hi-Z/studio tex hooks"
+grep -q "engine_mdl_hiz_build_pyramid\|engine_game_weapon_hit_auth\|engine_water_reflect_compute_portal\|engine_scoreboard_get_event_ex" ios/AetherApp/EngineBridge.h || fail "missing bridge batch14"
+grep -q "engine_mdl_hiz_build_pyramid\|engine_water_reflect_rt_build_mirror_mvp_portal\|engine_water_reflect_ent_sample_studio_tex" ios/AetherApp/MetalRenderer.swift || fail "missing metal batch14 encode"
+grep -q "assisted vs\|get_event_ex" ios/AetherApp/ClassicScoreboardChatOverlay.swift || fail "missing assist HUD polish"
+grep -q "gpu-hiz-mip\|weapon-auth\|~76%\|Hi-Z mip pyramid" README.md || fail "missing batch14 README"
+grep -q "smoke_batch_gpu_hiz_mip_weapon_auth_portal" tests/host_smoke.c || fail "missing batch14 smoke"
+ok "batch gpu-hiz-mip/weapon-auth/portal API symbols present"

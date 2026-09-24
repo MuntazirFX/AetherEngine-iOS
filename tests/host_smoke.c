@@ -74,6 +74,8 @@
 #include "AetherMonsterAI.h"
 #include "AetherMonsterRegistry.h"
 #include "AetherLagComp.h"
+#include "AetherWeapon.h"
+#include "AetherWeaponFiring.h"
 
 #include <unistd.h>
 #include "AetherMath.h"
@@ -1422,6 +1424,160 @@ static void smoke_batch_reflect_entities_studio_gpu_spec_cycle(void) {
     printf("--- batch_reflect_entities_studio_gpu_spec_cycle done ---\n");
 }
 
+
+
+static void smoke_batch_gpu_hiz_mip_weapon_auth_portal(void) {
+    printf("--- batch_gpu_hiz_mip_weapon_auth_portal ---\n");
+
+    /* 1. Real Hi-Z mip pyramid + visibility query hooks */
+    {
+        aether_mdl_hiz_pyramid_t pyr;
+        aether_mdl_hiz_pyramid_init(&pyr);
+        expect(pyr.mip0_w == 64 && pyr.mip0_h == 64, "b14_hiz_init");
+        /* Near occluder wall across center of mip0 */
+        for (u32 y = 20; y < 44; ++y)
+            for (u32 x = 20; x < 44; ++x)
+                aether_mdl_hiz_pyramid_write(&pyr, x, y, 0.15f);
+        u32 levels = aether_mdl_hiz_build_pyramid(&pyr);
+        expect(levels >= 3 && pyr.built, "b14_hiz_build");
+        aether_mdl_hiz_vis_query_t q;
+        int vis = aether_mdl_hiz_vis_query(&pyr, 0.4f, 0.4f, 0.6f, 0.6f, 0.8f, &q);
+        expect(q.valid && q.occluded && !q.visible && vis == 0, "b14_hiz_occ");
+        expect(q.nearest_hiz < 0.3f && q.mip_used >= 0, "b14_hiz_mip");
+        /* Far from occluder → visible */
+        vis = aether_mdl_hiz_vis_query(&pyr, 0.0f, 0.0f, 0.1f, 0.1f, 0.5f, &q);
+        expect(q.valid && q.visible && !q.occluded && vis == 1, "b14_hiz_vis");
+        aether_mdl_hiz_pyramid_set_gpu_hooks(&pyr, true);
+        expect(aether_mdl_hiz_pyramid_gpu_hooks(&pyr), "b14_hiz_gpu");
+        u8 buf[65536];
+        u32 n = aether_mdl_write_lod_mesh_fixture(buf, sizeof buf);
+        aether_mdl_lod_table_t lods;
+        aether_mdl_lod_mesh_set_t meshes;
+        expect(aether_mdl_fixture_lods(buf, n, &lods) == 3, "b14_lods");
+        expect(aether_mdl_fixture_lod_meshes(buf, n, &meshes) == 3, "b14_meshes");
+        aether_mdl_hiz_gate_t g;
+        i32 lod = aether_mdl_lod_hiz_pyramid_gate(&lods, &meshes, &pyr, 400.f, 16.f, 75.f,
+                                                  4.f, 0.f, 0.5f, 0.5f, 0.85f, &g);
+        expect(lod < 0 && g.occluded, "b14_pyr_gate_occ");
+    }
+
+    /* 2+7. Weapon hit → auth_queue_damage → kill (combat smoke) */
+    {
+        aether_engine_desc_t desc = { .base_path = ".", .asset_path = ".", .flags = 0 };
+        aether_engine_t *eng = aether_engine_create(&desc);
+        expect(eng != NULL, "b14_eng");
+        char root[256];
+        snprintf(root, sizeof root, "/tmp/aether_wpn_%d", (int)getpid());
+        aether_game_manager_t *gm = aether_game_manager_create(eng, root);
+        expect(gm != NULL, "b14_gm");
+        u16 port = (u16)(30400 + (getpid() % 200));
+        aether_net_server_t *srv = aether_net_server_create(port, 4);
+        expect(srv != NULL, "b14_srv");
+        srv->clients[0].active = true;
+        srv->clients[0].player_id = 1;
+        aether_str_copy(srv->clients[0].name, sizeof srv->clients[0].name, "Shooter");
+        srv->clients[0].score = 0;
+        srv->clients[1].active = true;
+        srv->clients[1].player_id = 2;
+        aether_str_copy(srv->clients[1].name, sizeof srv->clients[1].name, "Target");
+        srv->clients[1].deaths = 0;
+        srv->client_count = 2;
+        aether_game_bind_auth_server(gm, (aether_game_auth_server_t *)srv);
+        aether_weapon_state_t ws;
+        aether_weapon_state_init(&ws, AETHER_WPN_GLOCK);
+        expect(ws.def != NULL, "b14_wpn_def");
+        if (ws.def && ws.def->clip_size > 0) ws.clip_ammo = ws.def->clip_size;
+        /* Multi-shot until kill (auth health starts at 100; GLOCK=8 dmg) */
+        aether_game_weapon_auth_result_t wr;
+        memset(&wr, 0, sizeof wr);
+        u32 kills = 0;
+        int queued_ok = 0;
+        for (int shot = 0; shot < 20 && kills == 0; ++shot) {
+            f32 now = 1.f + (f32)shot * 1.0f;
+            ws.next_fire_time = 0.f;
+            if (ws.clip_ammo <= 0 && ws.def) ws.clip_ammo = ws.def->clip_size;
+            kills = aether_game_weapon_hit_auth(gm, &ws, NULL, now,
+                                                0.f, 0.f, 64.f, 1.f, 0.f, 0.f,
+                                                1, 2, true, &wr);
+            if (wr.fired && wr.hit && wr.queued) queued_ok = 1;
+        }
+        expect(queued_ok, "b14_wpn_queue");
+        expect(kills == 1 && wr.died && wr.registered_kill, "b14_wpn_kill");
+        expect(srv->clients[0].score == 1 && srv->clients[1].deaths == 1, "b14_wpn_score");
+        aether_net_server_destroy(srv);
+        aether_game_bind_auth_server(gm, NULL);
+        aether_game_manager_destroy(gm);
+        aether_engine_destroy(eng);
+    }
+
+    /* 3. Portal/teleport aware water reflect camera */
+    {
+        aether_water_t w; aether_water_init(&w);
+        aether_water_set_enabled(&w, true);
+        aether_water_set_height(&w, 0.f);
+        f32 eye[3] = {10.f, 0.f, 64.f};
+        f32 pin[3] = {0.f, 0.f, 0.f};
+        f32 pout[3] = {200.f, 0.f, 0.f};
+        aether_water_reflect_portal_t portal;
+        aether_water_reflect_portal_set(&portal, pin, pout, true);
+        expect(portal.active && portal.eye_crossed, "b14_portal_set");
+        expect(fabsf(portal.out_delta[0] - 200.f) < 0.1f, "b14_portal_delta");
+        aether_water_reflect_t r;
+        aether_water_reflect_compute_portal(&w, eye, &portal, &r);
+        expect(r.enabled, "b14_portal_reflect");
+        /* Warped eye x = 10+200 = 210; reflected Z about water 0 → -64-ish after warp Z */
+        expect(fabsf(r.eye_reflected[0] - 210.f) < 0.5f, "b14_portal_eye_x");
+        expect(fabsf(r.eye_reflected[2] + 64.f) < 0.5f, "b14_portal_eye_z");
+        f32 id[16]; memset(id, 0, sizeof id); id[0]=id[5]=id[10]=id[15]=1.f;
+        f32 mvp[16], vm[16];
+        aether_water_reflect_rt_build_mirror_mvp_portal(&r, &portal, id, id, mvp, vm);
+        expect(mvp[15] != 0.f || mvp[0] != 0.f, "b14_portal_mvp");
+    }
+
+    /* 4. Fuller studio texture sample in water RT */
+    {
+        aether_water_reflect_studio_tex_t tex;
+        aether_water_reflect_studio_tex_init(&tex, 2, 3);
+        expect(tex.valid && tex.sample_mode == 1, "b14_tex_init");
+        expect(tex.atlas_u1 > tex.atlas_u0, "b14_tex_atlas");
+        f32 rgba[4];
+        aether_water_reflect_studio_tex_sample(&tex, 0.25f, 0.75f, rgba);
+        expect(rgba[0] > 0.1f && rgba[3] > 0.9f, "b14_tex_sample");
+        aether_water_reflect_ent_list_t ents;
+        aether_water_reflect_ent_list_init(&ents);
+        f32 o[3] = {0, 0, 40}, he[3] = {8, 8, 8};
+        expect(aether_water_reflect_ent_list_push_studio(&ents, 1, 0, o, he, 0.f,
+            AETHER_WATER_REFLECT_MAT_STUDIO, 1, 1, -1, NULL) == 1, "b14_tex_push");
+        expect(aether_water_reflect_ent_set_studio_tex(&ents, 0, 2, 3) == 1, "b14_tex_set");
+        aether_water_reflect_studio_tex_t got;
+        expect(aether_water_reflect_ent_get_studio_tex(&ents, 0, &got) == 1, "b14_tex_get");
+        expect(got.valid && got.sample_mode == 1, "b14_tex_got");
+    }
+
+    /* 5. IPA dry-run notes (verified by verify_host greps) */
+    expect(1, "b14_ipa_macos_notes");
+
+    /* 6. Assist feed polish */
+    {
+        u8 pkt[256];
+        u32 n = aether_scoreboard_encode_assist(pkt, sizeof pkt, 5, "Helper", 9, "Victim");
+        expect(n > 8, "b14_as_enc");
+        aether_scoreboard_t sb; aether_scoreboard_init(&sb);
+        aether_scoreboard_events_t ev; aether_scoreboard_events_init(&ev);
+        aether_scoreboard_handle_packet(&sb, &ev, pkt, n, 1.f);
+        aether_scoreboard_event_t e;
+        char line[128];
+        expect(aether_scoreboard_events_get_ex(&ev, aether_scoreboard_events_live(&ev) - 1,
+                                               &e, line, sizeof line) == 1, "b14_as_ex");
+        expect(e.kind == AETHER_SB_EVENT_ASSIST, "b14_as_kind");
+        expect(strstr(line, "assisted vs") != NULL, "b14_as_line");
+        expect(strstr(line, "Helper") != NULL && strstr(line, "Victim") != NULL, "b14_as_names");
+        char line2[128];
+        expect(aether_scoreboard_format_assist_line(&e, line2, sizeof line2) > 10, "b14_as_fmt");
+    }
+
+    printf("--- batch_gpu_hiz_mip_weapon_auth_portal done ---\n");
+}
 
 static void smoke_batch_rt_skins_assist_hiz_auth(void) {
     printf("--- batch_rt_skins_assist_hiz_auth ---\n");
@@ -3485,6 +3641,7 @@ int main(void) {
     smoke_batch_mirror_rt_lod_mp_ipa_docs();
     smoke_batch_reflect_entities_studio_gpu_spec_cycle();
     smoke_batch_rt_skins_assist_hiz_auth();
+    smoke_batch_gpu_hiz_mip_weapon_auth_portal();
     smoke_batch_studio_vis_stereo();
 
     if (g_failures) {

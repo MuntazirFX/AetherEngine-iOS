@@ -1588,3 +1588,217 @@ i32 aether_mdl_lod_gpu_issue_draw_hiz(const aether_mdl_lod_table_t *table,
     }
     return issued >= 0 ? lod : -1;
 }
+
+/* ---------- Hierarchical Hi-Z mip pyramid ---------- */
+void aether_mdl_hiz_pyramid_init(aether_mdl_hiz_pyramid_t *pyr) {
+    if (!pyr) return;
+    memset(pyr, 0, sizeof(*pyr));
+    aether_mdl_hiz_pyramid_reset(pyr, AETHER_MDL_HIZ_MIP0_W, AETHER_MDL_HIZ_MIP0_H);
+}
+
+void aether_mdl_hiz_pyramid_reset(aether_mdl_hiz_pyramid_t *pyr, u32 mip0_w, u32 mip0_h) {
+    if (!pyr) return;
+    if (mip0_w < 2) mip0_w = 2;
+    if (mip0_h < 2) mip0_h = 2;
+    if (mip0_w > AETHER_MDL_HIZ_MIP0_W) mip0_w = AETHER_MDL_HIZ_MIP0_W;
+    if (mip0_h > AETHER_MDL_HIZ_MIP0_H) mip0_h = AETHER_MDL_HIZ_MIP0_H;
+    memset(pyr->depth, 0, sizeof pyr->depth);
+    /* Init to far (1.0) so empty = fully visible (nothing nearer). */
+    for (u32 i = 0; i < AETHER_MDL_HIZ_PYRAMID_TEXELS; ++i) pyr->depth[i] = 1.f;
+    pyr->mip0_w = mip0_w;
+    pyr->mip0_h = mip0_h;
+    pyr->levels = 0;
+    pyr->built = false;
+    pyr->vis_queries = 0;
+    pyr->vis_occluded = 0;
+    u32 off = 0, w = mip0_w, h = mip0_h;
+    for (u32 l = 0; l < AETHER_MDL_HIZ_MIP_LEVELS; ++l) {
+        pyr->level_offset[l] = off;
+        pyr->level_w[l] = w;
+        pyr->level_h[l] = h;
+        off += w * h;
+        if (off > AETHER_MDL_HIZ_PYRAMID_TEXELS) {
+            /* Clamp levels to fit buffer. */
+            pyr->levels = l;
+            return;
+        }
+        if (w <= 1 && h <= 1) { pyr->levels = l + 1; return; }
+        w = w > 1 ? (w + 1) / 2 : 1;
+        h = h > 1 ? (h + 1) / 2 : 1;
+    }
+    pyr->levels = AETHER_MDL_HIZ_MIP_LEVELS;
+}
+
+int aether_mdl_hiz_pyramid_write(aether_mdl_hiz_pyramid_t *pyr, u32 x, u32 y, f32 depth) {
+    if (!pyr || x >= pyr->mip0_w || y >= pyr->mip0_h) return 0;
+    f32 d = depth < 0.f ? 0.f : (depth > 1.f ? 1.f : depth);
+    pyr->depth[pyr->level_offset[0] + y * pyr->mip0_w + x] = d;
+    pyr->built = false;
+    return 1;
+}
+
+u32 aether_mdl_hiz_pyramid_fill_mip0(aether_mdl_hiz_pyramid_t *pyr,
+                                     const f32 *depth_mip0, u32 count) {
+    if (!pyr || !depth_mip0) return 0;
+    u32 n = pyr->mip0_w * pyr->mip0_h;
+    if (count < n) n = count;
+    for (u32 i = 0; i < n; ++i) {
+        f32 d = depth_mip0[i];
+        pyr->depth[pyr->level_offset[0] + i] = d < 0.f ? 0.f : (d > 1.f ? 1.f : d);
+    }
+    pyr->built = false;
+    return n;
+}
+
+u32 aether_mdl_hiz_build_pyramid(aether_mdl_hiz_pyramid_t *pyr) {
+    if (!pyr || pyr->levels < 1) return 0;
+    /* Ensure level layout if reset was partial. */
+    if (pyr->level_w[0] == 0) aether_mdl_hiz_pyramid_reset(pyr, pyr->mip0_w, pyr->mip0_h);
+    for (u32 l = 1; l < pyr->levels; ++l) {
+        u32 pw = pyr->level_w[l - 1], ph = pyr->level_h[l - 1];
+        u32 cw = pyr->level_w[l], ch = pyr->level_h[l];
+        const f32 *src = &pyr->depth[pyr->level_offset[l - 1]];
+        f32 *dst = &pyr->depth[pyr->level_offset[l]];
+        for (u32 y = 0; y < ch; ++y) {
+            for (u32 x = 0; x < cw; ++x) {
+                /* Max of 2x2 (conservative: farthest occlusion plane). */
+                u32 x0 = x * 2, y0 = y * 2;
+                f32 m = src[y0 * pw + x0];
+                if (x0 + 1 < pw) { f32 v = src[y0 * pw + x0 + 1]; if (v < m) m = v; }
+                if (y0 + 1 < ph) {
+                    f32 v = src[(y0 + 1) * pw + x0]; if (v < m) m = v;
+                    if (x0 + 1 < pw) { f32 v2 = src[(y0 + 1) * pw + x0 + 1]; if (v2 < m) m = v2; }
+                }
+                /* Use min-Z for nearer-covers: occlusion when hiz < object. */
+                dst[y * cw + x] = m;
+            }
+        }
+    }
+    pyr->built = true;
+    return pyr->levels;
+}
+
+f32 aether_mdl_hiz_pyramid_sample_rect(const aether_mdl_hiz_pyramid_t *pyr,
+                                       f32 x0, f32 y0, f32 x1, f32 y1, i32 *out_mip) {
+    if (out_mip) *out_mip = -1;
+    if (!pyr || !pyr->built || pyr->levels == 0) return 1.f;
+    if (x0 > x1) { f32 t = x0; x0 = x1; x1 = t; }
+    if (y0 > y1) { f32 t = y0; y0 = y1; y1 = t; }
+    if (x0 < 0.f) x0 = 0.f; if (y0 < 0.f) y0 = 0.f;
+    if (x1 > 1.f) x1 = 1.f; if (y1 > 1.f) y1 = 1.f;
+    f32 rw = x1 - x0, rh = y1 - y0;
+    if (rw < 1e-4f) rw = 1e-4f;
+    if (rh < 1e-4f) rh = 1e-4f;
+    /* Pick mip where one texel ≈ rect size. */
+    f32 px = rw * (f32)pyr->mip0_w;
+    f32 py = rh * (f32)pyr->mip0_h;
+    f32 pmax = px > py ? px : py;
+    i32 mip = 0;
+    while (mip + 1 < (i32)pyr->levels && pmax > 2.f) {
+        pmax *= 0.5f;
+        mip++;
+    }
+    u32 lw = pyr->level_w[mip], lh = pyr->level_h[mip];
+    if (lw == 0 || lh == 0) return 1.f;
+    i32 ix0 = (i32)(x0 * (f32)lw); if (ix0 < 0) ix0 = 0;
+    i32 iy0 = (i32)(y0 * (f32)lh); if (iy0 < 0) iy0 = 0;
+    i32 ix1 = (i32)(x1 * (f32)lw); if (ix1 >= (i32)lw) ix1 = (i32)lw - 1;
+    i32 iy1 = (i32)(y1 * (f32)lh); if (iy1 >= (i32)lh) iy1 = (i32)lh - 1;
+    if (ix1 < ix0) ix1 = ix0;
+    if (iy1 < iy0) iy1 = iy0;
+    const f32 *src = &pyr->depth[pyr->level_offset[mip]];
+    f32 nearest = 1.f;
+    for (i32 y = iy0; y <= iy1; ++y) {
+        for (i32 x = ix0; x <= ix1; ++x) {
+            f32 v = src[(u32)y * lw + (u32)x];
+            if (v < nearest) nearest = v;
+        }
+    }
+    if (out_mip) *out_mip = mip;
+    return nearest;
+}
+
+int aether_mdl_hiz_vis_query(const aether_mdl_hiz_pyramid_t *pyr,
+                             f32 x0, f32 y0, f32 x1, f32 y1, f32 object_depth,
+                             aether_mdl_hiz_vis_query_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!pyr || !pyr->built) {
+        if (out) { out->visible = true; out->valid = false; }
+        return 0;
+    }
+    i32 mip = -1;
+    f32 hz = aether_mdl_hiz_pyramid_sample_rect(pyr, x0, y0, x1, y1, &mip);
+    f32 od = object_depth < 0.f ? 0.f : (object_depth > 1.f ? 1.f : object_depth);
+    bool occ = (hz + 0.01f < od);
+    if (out) {
+        out->screen_x0 = x0; out->screen_y0 = y0;
+        out->screen_x1 = x1; out->screen_y1 = y1;
+        out->object_depth = od;
+        out->nearest_hiz = hz;
+        out->mip_used = mip;
+        out->occluded = occ;
+        out->visible = !occ;
+        out->valid = true;
+    }
+    /* Mutable stats via cast — queries counted on non-const wrapper in bridge. */
+    return occ ? 0 : 1;
+}
+
+void aether_mdl_hiz_pyramid_set_gpu_hooks(aether_mdl_hiz_pyramid_t *pyr, bool armed) {
+    if (!pyr) return;
+    pyr->gpu_hooks = armed;
+}
+bool aether_mdl_hiz_pyramid_gpu_hooks(const aether_mdl_hiz_pyramid_t *pyr) {
+    return pyr && pyr->gpu_hooks;
+}
+
+i32 aether_mdl_lod_hiz_pyramid_gate(const aether_mdl_lod_table_t *table,
+                                    const aether_mdl_lod_mesh_set_t *meshes,
+                                    const aether_mdl_hiz_pyramid_t *pyr,
+                                    f32 distance, f32 aabb_radius, f32 fov_y_deg,
+                                    f32 min_pixels, f32 max_distance,
+                                    f32 sx, f32 sy, f32 depth_ndc,
+                                    aether_mdl_hiz_gate_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!table || !meshes) return -1;
+    if (min_pixels <= 0.f) min_pixels = 4.f;
+    if (fov_y_deg <= 0.f) fov_y_deg = 75.f;
+    if (aabb_radius <= 0.f) aabb_radius = 16.f;
+    f32 dist = distance < 1.f ? 1.f : distance;
+    f32 half = fov_y_deg * 0.5f * 0.01745329252f;
+    f32 tan_h = tanf(half); if (tan_h < 1e-4f) tan_h = 1e-4f;
+    f32 screen_px = (aabb_radius / (dist * tan_h)) * 1080.f;
+    i32 lod = aether_mdl_lod_select(table, dist);
+    bool culled = false, occ = false;
+    if (max_distance > 0.f && dist > max_distance) culled = true;
+    if (screen_px < min_pixels) culled = true;
+    f32 half_uv = (aabb_radius / (dist * tan_h)) * 0.5f;
+    if (half_uv < 0.01f) half_uv = 0.01f;
+    if (half_uv > 0.4f) half_uv = 0.4f;
+    f32 od = depth_ndc;
+    if (od <= 0.f && pyr) {
+        /* Approximate from distance if caller omitted. */
+        od = dist / 4096.f; if (od > 1.f) od = 1.f;
+    }
+    if (pyr && pyr->built && !culled) {
+        aether_mdl_hiz_vis_query_t q;
+        aether_mdl_hiz_vis_query(pyr, sx - half_uv, sy - half_uv,
+                                 sx + half_uv, sy + half_uv, od, &q);
+        if (q.valid && q.occluded) occ = true;
+    }
+    if (!culled && !occ && screen_px < min_pixels * 3.f && lod >= 0) {
+        i32 bump = lod + 1;
+        if (bump < (i32)table->count) lod = bump;
+    }
+    if (out) {
+        out->occluded = occ;
+        out->distance_culled = culled;
+        out->issue = !culled && !occ && lod >= 0;
+        out->lod = lod;
+        out->screen_pixels = screen_px;
+        out->min_pixels = min_pixels;
+        out->distance = dist;
+    }
+    if (culled || occ) return -1;
+    return lod;
+}

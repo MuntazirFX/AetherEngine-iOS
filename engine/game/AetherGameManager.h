@@ -3,6 +3,9 @@
 
 #include "../core/AetherCore.h"
 #include "../core/AetherEngine.h"
+#include "../player/AetherPlayerInventory.h"
+#include "weapons/AetherWeapon.h"
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -99,6 +102,29 @@ aether_result_t  aether_game_resolve_path (const aether_game_manager_t *m, aethe
 /* True if Documents/<dir> exists and contains pak0.pak, maps/, or any file. */
 bool aether_game_data_present(const aether_game_manager_t *m, aether_game_id_t id);
 bool aether_game_data_present_dir(const char *user_data_root, const char *dir_name);
+
+/* ---------- Weapon hit → auth_queue_damage combat path ---------- */
+typedef struct aether_game_weapon_auth_result {
+    bool fired;
+    bool hit;
+    bool queued;
+    bool died;
+    bool registered_kill;
+    f32  damage;
+    u32  pellets;
+} aether_game_weapon_auth_result_t;
+
+/* Fire weapon hitscan → queue auth damage → process tick_auth (kill/score).
+ * force_hit: smoke/demo path treats all pellets as hits. */
+u32 aether_game_weapon_hit_auth(aether_game_manager_t *m,
+                                aether_weapon_state_t *ws,
+                                aether_player_inventory_t *inv,
+                                f32 now,
+                                f32 ox, f32 oy, f32 oz,
+                                f32 dx, f32 dy, f32 dz,
+                                u32 killer_id, u32 victim_id,
+                                bool force_hit,
+                                aether_game_weapon_auth_result_t *out);
 
 #ifdef __cplusplus
 }

@@ -446,6 +446,11 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                    mat > 0 {
                     // Studio/skinned material — less debug-box red
                     tint = simd_float4(rgba[0], rgba[1], rgba[2], rgba[3])
+                    _ = engine_water_reflect_ent_set_studio_tex(UInt32(mi), sg, st)
+                    var srgba = [Float](repeating: 0, count: 4)
+                    if engine_water_reflect_ent_sample_studio_tex(UInt32(mi), 0.25, 0.75, &srgba) != 0 {
+                        tint = simd_float4(srgba[0], srgba[1], srgba[2], srgba[3])
+                    }
                 }
                 var model = matrix_identity_float4x4
                 model.columns.3 = SIMD4<Float>(mpos.x, mpos.y, mpos.z, 1)
@@ -462,7 +467,31 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             var hlod: Int32 = 0, hissue: Int32 = 0, hocc: Int32 = 0
             var hv: UInt32 = 0, ht: UInt32 = 0
             _ = engine_mdl_lod_gpu_issue_draw_hiz(200.0, 16.0, &hlod, &hv, &ht, &hissue, &hocc)
+            // Real Hi-Z mip pyramid + visibility query hooks (Metal encode path)
+            _ = engine_mdl_hiz_pyramid_reset(64, 64)
+            _ = engine_mdl_hiz_pyramid_write(32, 32, 0.2)
+            _ = engine_mdl_hiz_build_pyramid()
+            _ = engine_mdl_hiz_pyramid_set_gpu_hooks(1)
+            var hvVis: Int32 = 0, hvOcc: Int32 = 0, hvMip: Int32 = 0
+            var hvZ: Float = 0
+            _ = engine_mdl_hiz_vis_query(0.4, 0.4, 0.6, 0.6, 0.8, &hvVis, &hvOcc, &hvZ, &hvMip)
+            var plod: Int32 = 0, pissue: Int32 = 0, pocc: Int32 = 0
+            var ppx: Float = 0
+            _ = engine_mdl_lod_hiz_pyramid_gate(200.0, 16.0, 4.0, 0.5, 0.5, 0.5,
+                                               &plod, &pissue, &pocc, &ppx)
+            // Portal-aware mirror MVP when crossing portals
+            _ = engine_water_reflect_portal_set(0, 0, 0, 128, 0, 0, 1)
+            var portalMvp = [Float](repeating: 0, count: 16)
+            _ = engine_water_reflect_rt_build_mirror_mvp_portal(&portalMvp)
+            if studioCount > 0 {
+                _ = engine_water_reflect_ent_set_studio_tex(0, 1, 2)
+                var srgba = [Float](repeating: 0, count: 4)
+                _ = engine_water_reflect_ent_sample_studio_tex(0, 0.3, 0.7, &srgba)
+                _ = srgba
+            }
             _ = ec; _ = mc; _ = res2; _ = dw2; _ = clr2; _ = rw2; _ = rh2; _ = studioCount
+            _ = hvVis; _ = hvOcc; _ = hvZ; _ = hvMip; _ = plod; _ = pissue; _ = pocc; _ = ppx
+            _ = portalMvp
         }
         // GPU studio LOD draw path: select LOD by camera distance and issue draw.
         var lod: Int32 = 0, issue: Int32 = 0

@@ -129,3 +129,6 @@ jobs:
           echo "- Artifact upload: actions/upload-artifact@v4 (AetherEngine-<version>, 30d)" >> $GITHUB_STEP_SUMMARY
           echo "- Artifact download: Actions UI → Artifacts, or: gh run download <run-id> -n AetherEngine-<version>" >> $GITHUB_STEP_SUMMARY
           echo "- Optional Release attach when publish_release=true" >> $GITHUB_STEP_SUMMARY
+          echo "- Runner: macos-14; unsigned IPA via build_ios.sh + package_ipa.sh" >> $GITHUB_STEP_SUMMARY
+          echo "- Local dry-run: ./build/scripts/build_ios.sh && ./build/scripts/package_ipa.sh" >> $GITHUB_STEP_SUMMARY
+          echo "- Sideload: AltStore / Sideloadly / TrollStore (no baked signing)" >> $GITHUB_STEP_SUMMARY

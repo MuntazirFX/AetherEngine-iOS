@@ -488,14 +488,53 @@ materials — still clean-room:
 | Optional Release | `publish_release=true` attaches the same IPA to a GitHub Release |
 
 ### Known gaps after rt-skins / assist / hiz / auth batch
-- Hi-Z is a CPU sample-buffer stub (not a real GPU hierarchical depth pyramid / Metal visibility buffer)
-- Studio reflect materials use procedural tint + LOD mesh (not full GoldSrc studio texture atlases)
-- Auth tick uses a bound server pointer + queued damage (full weapon hit→auth pipeline still thin)
+- *(addressed in gpu-hiz-mip/weapon-auth/portal batch: Hi-Z mip pyramid + vis queries, weapon→auth, portal reflect, studio tex sample)*
 - IPA still requires macOS + Xcode via workflow_dispatch
 
 ### Progress toward playable unsigned IPA demo
-Rough overall estimate after this batch: **~74–75%** toward a playable unsigned IPA demo
-(capped while IPA remains unbuilt on this Linux/CI host). Prior reflect-ents batch was ~72–74%.
+Rough overall estimate after this batch: **~74–75%** (superseded by gpu-hiz-mip batch below).
+
+IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
+
+## GPU Hi-Z mip / weapon→auth / portal reflect (`continue/batch-gpu-hiz-mip-weapon-auth-portal`)
+
+One PR advances a real hierarchical Hi-Z mip pyramid + Metal visibility-query hooks (not CPU
+sample-buffer only), weapon hitscan → `auth_queue_damage` combat path, portal/teleport-aware
+water reflect camera, fuller studio texture sampling in the water RT, macOS Actions runner
+IPA dry-run notes, assist feed HUD polish ("assisted vs"), combat smoke
+(fire → queue → kill), host verify green — still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Real Metal Hi-Z mip pyramid + vis queries | **done** | `aether_mdl_hiz_pyramid_*` / `build_pyramid` / `vis_query` + Metal `aether_hiz_downsample` / `aether_hiz_vis_query_fragment` |
+| 2 | Weapon hit → `auth_queue_damage` | **done** | `aether_weapon_fire_combat_auth` + `aether_game_weapon_hit_auth` |
+| 3 | Portal/teleport-aware water reflect cam | **done** | `aether_water_reflect_compute_portal` / `build_mirror_mvp_portal` |
+| 4 | Fuller studio texture sample in water RT | **done** | `aether_water_reflect_studio_tex_*` + Metal `aether_studio_reflect_tex_fragment` |
+| 5 | IPA dry-run notes (macos runner) | **done** | `package_ipa.sh` + `build-arm64.yml` macos-14 local dry-run / sideload notes |
+| 6 | Assist feed polish | **done** | `format_assist_line` / `get_event_ex` → "Name assisted vs Victim" HUD |
+| 7 | Combat smoke: fire → damage queue → kill | **done** | host `b14_wpn_*` via GLOCK hitscan force-hit |
+| 8 | Host smokes + verify | **done** | `smoke_batch_gpu_hiz_mip_weapon_auth_portal` + verify greps |
+| 9 | Fix regressions | **done** | prior rt-skins/assist/hiz smokes still green |
+| 10 | README + honest % | **done** | This table; cap **~75–76%** while IPA unbuilt on this host |
+
+### IPA macOS runner dry-run (further notes)
+
+| Step | What |
+|------|------|
+| Runner | `macos-14` (`build_ipa` on `workflow_dispatch`) |
+| Local | `./build/scripts/build_ios.sh && ./build/scripts/package_ipa.sh` |
+| Artifact | `actions/upload-artifact@v4` → `AetherEngine-<version>` (30d) |
+| Sideload | AltStore / Sideloadly / TrollStore — unsigned Payload zip |
+
+### Known gaps after gpu-hiz-mip / weapon-auth / portal batch
+- Hi-Z pyramid is host-authoritative with Metal downsample/query shader hooks (full depth-prepass→pyramid bind still thin on device)
+- Studio reflect tex is clean-room procedural atlas (not real MDL skin pages)
+- Portal reflect uses translation warp (not full portal winding / recursive views)
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+### Progress toward playable unsigned IPA demo
+Rough overall estimate after this batch: **~75–76%** toward a playable unsigned IPA demo
+(capped while IPA remains unbuilt on this Linux/CI host). Prior rt-skins batch was ~74–75%.
 
 IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
 

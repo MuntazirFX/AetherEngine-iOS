@@ -539,3 +539,141 @@ int aether_water_reflect_ent_get_studio(const aether_water_reflect_ent_list_t *l
     out->has_attach = e->has_attach != 0;
     return 1;
 }
+
+void aether_water_reflect_portal_init(aether_water_reflect_portal_t *p) {
+    if (!p) return;
+    memset(p, 0, sizeof(*p));
+}
+
+void aether_water_reflect_portal_set(aether_water_reflect_portal_t *p,
+                                     const f32 in_origin[3], const f32 out_origin[3],
+                                     bool eye_crossed) {
+    if (!p) return;
+    memset(p, 0, sizeof(*p));
+    p->active = true;
+    p->eye_crossed = eye_crossed;
+    if (in_origin) {
+        p->in_origin[0] = in_origin[0]; p->in_origin[1] = in_origin[1]; p->in_origin[2] = in_origin[2];
+    }
+    if (out_origin) {
+        p->out_origin[0] = out_origin[0]; p->out_origin[1] = out_origin[1]; p->out_origin[2] = out_origin[2];
+        p->out_delta[0] = out_origin[0] - (in_origin ? in_origin[0] : 0.f);
+        p->out_delta[1] = out_origin[1] - (in_origin ? in_origin[1] : 0.f);
+        p->out_delta[2] = out_origin[2] - (in_origin ? in_origin[2] : 0.f);
+    }
+}
+
+void aether_water_reflect_compute_portal(const aether_water_t *w, const f32 eye[3],
+                                         const aether_water_reflect_portal_t *portal,
+                                         aether_water_reflect_t *out) {
+    f32 eye_use[3] = {0, 0, 64};
+    if (eye) { eye_use[0]=eye[0]; eye_use[1]=eye[1]; eye_use[2]=eye[2]; }
+    if (portal && portal->active && portal->eye_crossed) {
+        eye_use[0] += portal->out_delta[0];
+        eye_use[1] += portal->out_delta[1];
+        eye_use[2] += portal->out_delta[2];
+        /* Stash warped eye on a mutable portal copy via out later — reflect uses warped. */
+    }
+    aether_water_reflect_compute(w, eye_use, out);
+    if (portal && portal->active && out) {
+        /* Record warped eye into reflect eye_reflected already from compute;
+         * also overwrite plane if needed — compute already set eye_reflected. */
+        (void)portal;
+    }
+}
+
+void aether_water_reflect_rt_build_mirror_mvp_portal(
+    const aether_water_reflect_t *reflect,
+    const aether_water_reflect_portal_t *portal,
+    const f32 view[16], const f32 proj[16],
+    f32 out_mvp[16], f32 out_view_m[16]) {
+    f32 view_adj[16];
+    mat4_identity(view_adj);
+    if (view) memcpy(view_adj, view, sizeof view_adj);
+    /* When portal-crossed, translate view by -delta so mirrored camera tracks teleport. */
+    if (portal && portal->active && portal->eye_crossed) {
+        view_adj[12] -= portal->out_delta[0];
+        view_adj[13] -= portal->out_delta[1];
+        view_adj[14] -= portal->out_delta[2];
+    }
+    aether_water_reflect_rt_build_mirror_mvp(reflect, view_adj, proj, out_mvp, out_view_m);
+}
+
+void aether_water_reflect_studio_tex_init(aether_water_reflect_studio_tex_t *tex,
+                                          u8 skin_group, u8 skin_tex) {
+    if (!tex) return;
+    memset(tex, 0, sizeof(*tex));
+    /* 4x4 atlas cells in UV space from skin indices (clean-room procedural). */
+    u8 cell = (u8)((skin_group * 3 + skin_tex) & 15);
+    u8 cx = cell & 3, cy = (cell >> 2) & 3;
+    tex->atlas_u0 = (f32)cx * 0.25f;
+    tex->atlas_v0 = (f32)cy * 0.25f;
+    tex->atlas_u1 = tex->atlas_u0 + 0.25f;
+    tex->atlas_v1 = tex->atlas_v0 + 0.25f;
+    tex->uv_scale[0] = 1.f; tex->uv_scale[1] = 1.f;
+    tex->uv_offset[0] = 0.f; tex->uv_offset[1] = 0.f;
+    tex->sample_mode = 1; /* procedural atlas */
+    aether_water_reflect_skin_tint(skin_group, skin_tex, tex->sample_rgba);
+    tex->valid = true;
+}
+
+void aether_water_reflect_studio_tex_sample(const aether_water_reflect_studio_tex_t *tex,
+                                            f32 u, f32 v, f32 out_rgba[4]) {
+    if (!out_rgba) return;
+    if (!tex || !tex->valid) {
+        out_rgba[0]=out_rgba[1]=out_rgba[2]=0.5f; out_rgba[3]=1.f;
+        return;
+    }
+    f32 uu = u * tex->uv_scale[0] + tex->uv_offset[0];
+    f32 vv = v * tex->uv_scale[1] + tex->uv_offset[1];
+    /* Wrap into atlas cell and procedural filter. */
+    uu = uu - floorf(uu); vv = vv - floorf(vv);
+    f32 au = tex->atlas_u0 + uu * (tex->atlas_u1 - tex->atlas_u0);
+    f32 av = tex->atlas_v0 + vv * (tex->atlas_v1 - tex->atlas_v0);
+    f32 wave = 0.5f + 0.5f * sinf(au * 40.f + av * 28.f);
+    f32 checker = (((int)(au * 16.f) + (int)(av * 16.f)) & 1) ? 1.f : 0.85f;
+    out_rgba[0] = tex->sample_rgba[0] * (0.75f + 0.25f * wave) * checker;
+    out_rgba[1] = tex->sample_rgba[1] * (0.80f + 0.20f * (1.f - wave));
+    out_rgba[2] = tex->sample_rgba[2] * (0.70f + 0.30f * wave);
+    out_rgba[3] = tex->sample_rgba[3];
+}
+
+int aether_water_reflect_ent_set_studio_tex(aether_water_reflect_ent_list_t *list,
+                                            u32 index, u8 skin_group, u8 skin_tex) {
+    if (!list || index >= list->count) return 0;
+    aether_water_reflect_studio_tex_t tex;
+    aether_water_reflect_studio_tex_init(&tex, skin_group, skin_tex);
+    aether_water_reflect_ent_t *e = &list->items[index];
+    e->skin_group = skin_group;
+    e->skin_tex = skin_tex;
+    e->tex_sample_mode = tex.sample_mode;
+    e->tex_uv_scale[0] = tex.uv_scale[0]; e->tex_uv_scale[1] = tex.uv_scale[1];
+    e->tex_uv_offset[0] = tex.uv_offset[0]; e->tex_uv_offset[1] = tex.uv_offset[1];
+    e->tex_atlas[0] = tex.atlas_u0; e->tex_atlas[1] = tex.atlas_v0;
+    e->tex_atlas[2] = tex.atlas_u1; e->tex_atlas[3] = tex.atlas_v1;
+    e->tex_sample_rgba[0] = tex.sample_rgba[0]; e->tex_sample_rgba[1] = tex.sample_rgba[1];
+    e->tex_sample_rgba[2] = tex.sample_rgba[2]; e->tex_sample_rgba[3] = tex.sample_rgba[3];
+    e->has_studio_tex = 1;
+    if (e->material == AETHER_WATER_REFLECT_MAT_DEBUG_BOX)
+        e->material = AETHER_WATER_REFLECT_MAT_STUDIO;
+    memcpy(e->tint, tex.sample_rgba, sizeof e->tint);
+    return 1;
+}
+
+int aether_water_reflect_ent_get_studio_tex(const aether_water_reflect_ent_list_t *list,
+                                            u32 index,
+                                            aether_water_reflect_studio_tex_t *out) {
+    if (!list || !out || index >= list->count) return 0;
+    const aether_water_reflect_ent_t *e = &list->items[index];
+    if (!e->has_studio_tex) return 0;
+    memset(out, 0, sizeof(*out));
+    out->uv_scale[0] = e->tex_uv_scale[0]; out->uv_scale[1] = e->tex_uv_scale[1];
+    out->uv_offset[0] = e->tex_uv_offset[0]; out->uv_offset[1] = e->tex_uv_offset[1];
+    out->atlas_u0 = e->tex_atlas[0]; out->atlas_v0 = e->tex_atlas[1];
+    out->atlas_u1 = e->tex_atlas[2]; out->atlas_v1 = e->tex_atlas[3];
+    out->sample_mode = e->tex_sample_mode;
+    out->sample_rgba[0] = e->tex_sample_rgba[0]; out->sample_rgba[1] = e->tex_sample_rgba[1];
+    out->sample_rgba[2] = e->tex_sample_rgba[2]; out->sample_rgba[3] = e->tex_sample_rgba[3];
+    out->valid = true;
+    return 1;
+}

@@ -108,6 +108,14 @@ void aether_scoreboard_apply_assist(aether_scoreboard_t *sb,
 void aether_scoreboard_set_score(aether_scoreboard_t *sb, u32 player_id,
                                  const char *name, i32 score, i32 deaths);
 
+/* Assist feed polish: formatted HUD line "Name assisted vs Victim". */
+u32 aether_scoreboard_format_assist_line(const aether_scoreboard_event_t *e,
+                                         char *out, u32 cap);
+/* Extended event getter with victim name (assist/kill polish). */
+int aether_scoreboard_events_get_ex(const aether_scoreboard_events_t *ev, u32 index,
+                                    aether_scoreboard_event_t *out,
+                                    char *line, u32 line_cap);
+
 #ifdef __cplusplus
 }
 #endif
