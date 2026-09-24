@@ -98,4 +98,41 @@ void aether_depth_prepass_encode_plan_ex(const aether_depth_prepass_t *d,
                                          const aether_depth_prepass_camera_t *cam,
                                          aether_depth_prepass_plan_ex_t *out);
 
+
+/* ---------- Depth prepass → Hi-Z pyramid bind plan (encode order + texture views) ---------- */
+#define AETHER_DEPTH_HIZ_MAX_MIP_VIEWS 8
+
+typedef struct aether_depth_hiz_tex_view {
+    u32 mip;
+    u32 width;
+    u32 height;
+    u32 texel_offset;   /* into pyramid depth[] */
+    bool valid;
+} aether_depth_hiz_tex_view_t;
+
+typedef struct aether_depth_hiz_bind_plan {
+    bool depth_first;          /* encode depth prepass before Hi-Z fill */
+    bool fill_mip0_from_depth; /* copy linearized depth → pyramid mip0 */
+    bool build_pyramid;        /* downsample mips after fill */
+    bool texture_views;        /* expose per-mip views for Metal */
+    bool needed;
+    bool bound;                /* host/Metal marked bind complete */
+    u32  encode_steps;         /* 0..4 */
+    u32  mip_view_count;
+    u32  mip0_w, mip0_h;
+    aether_depth_hiz_tex_view_t views[AETHER_DEPTH_HIZ_MAX_MIP_VIEWS];
+} aether_depth_hiz_bind_plan_t;
+
+void aether_depth_hiz_bind_plan_init(aether_depth_hiz_bind_plan_t *plan);
+/* Plan encode order when depth prepass is needed: depth → fill → build → views. */
+int  aether_depth_hiz_bind_plan_encode(const aether_depth_prepass_t *d,
+                                       u32 mip0_w, u32 mip0_h,
+                                       aether_depth_hiz_bind_plan_t *out);
+void aether_depth_hiz_bind_plan_mark_bound(aether_depth_hiz_bind_plan_t *plan);
+bool aether_depth_hiz_bind_plan_was_bound(const aether_depth_hiz_bind_plan_t *plan);
+/* Fill texture-view descriptors for levels (no GPU alloc on host). */
+u32  aether_depth_hiz_bind_plan_fill_views(aether_depth_hiz_bind_plan_t *plan,
+                                           const u32 *level_w, const u32 *level_h,
+                                           const u32 *level_off, u32 levels);
+
 #endif /* AETHER_DEPTH_PREPASS_H */

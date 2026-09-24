@@ -440,6 +440,144 @@ static void smoke_batch_faceid_bone_portal_attach(void) {
 
 
 
+
+
+static void smoke_batch_depth_hiz_bind_portal_winding_mdl_skin_pages(void) {
+    printf("--- batch_depth_hiz_bind_portal_winding_mdl_skin_pages ---\n");
+
+    /* 1. Bind depth prepass → Hi-Z pyramid (encode order + texture views) */
+    {
+        aether_depth_prepass_t dp;
+        aether_depth_prepass_init(&dp);
+        aether_depth_prepass_ensure(&dp, 128, 128);
+        aether_depth_hiz_bind_plan_t plan;
+        expect(aether_depth_hiz_bind_plan_encode(&dp, 64, 64, &plan) == 1, "b15_bind_enc");
+        expect(plan.needed && plan.depth_first && plan.fill_mip0_from_depth
+               && plan.build_pyramid && plan.encode_steps == 4, "b15_bind_order");
+        aether_mdl_hiz_pyramid_t pyr;
+        f32 depths[64 * 64];
+        for (u32 i = 0; i < 64 * 64; ++i) depths[i] = 1.f;
+        for (u32 y = 16; y < 48; ++y)
+            for (u32 x = 16; x < 48; ++x)
+                depths[y * 64 + x] = 0.12f;
+        aether_mdl_hiz_bind_result_t br;
+        u32 levels = aether_mdl_hiz_bind_from_depth(&pyr, depths, 64 * 64, 64, 64, &br);
+        expect(levels >= 3 && br.built && br.filled, "b15_bind_from_depth");
+        u32 vw[8], vh[8], vo[8];
+        u32 vc = aether_mdl_hiz_pyramid_texture_views(&pyr, vw, vh, vo, 8);
+        expect(vc >= 3 && vw[0] == 64, "b15_tex_views");
+        expect(aether_depth_hiz_bind_plan_fill_views(&plan, vw, vh, vo, vc) == vc, "b15_fill_views");
+        aether_depth_hiz_bind_plan_mark_bound(&plan);
+        expect(aether_depth_hiz_bind_plan_was_bound(&plan), "b15_bound");
+    }
+
+    /* 2. Portal winding / recursive reflect views */
+    {
+        aether_portal_winding_t wind;
+        f32 c[3] = {0, 0, 32}, n[3] = {0, 1, 0};
+        expect(aether_portal_winding_make_rect(&wind, c, n, 32.f, 48.f) == 1, "b15_wind_rect");
+        expect(wind.valid && wind.count == 4, "b15_wind_verts");
+        f32 clip[4] = {0, 0, 1, -16.f}; /* keep z >= 16 */
+        aether_portal_winding_t clipped;
+        u32 cv = aether_portal_winding_clip(&wind, clip, &clipped);
+        expect(cv >= 3 && clipped.valid, "b15_wind_clip");
+        aether_water_t w; aether_water_init(&w);
+        aether_water_set_enabled(&w, true);
+        aether_water_set_height(&w, 0.f);
+        f32 eye[3] = {0, -64.f, 48.f};
+        aether_portal_reflect_plan_t rplan;
+        u32 views = aether_water_reflect_recursive_plan(&w, eye, &wind, 3, &rplan);
+        expect(views >= 2 && rplan.needed && rplan.max_depth == 3, "b15_recur_views");
+        expect(rplan.views[0].active && rplan.views[0].depth == 0, "b15_recur_d0");
+        expect(rplan.views[1].active && rplan.views[1].depth == 1, "b15_recur_d1");
+    }
+
+    /* 3. Real MDL skin-page sample in water RT */
+    {
+        aether_mdl_skin_page_set_t pages;
+        expect(aether_mdl_skin_pages_build_fixture(&pages, 4) == 4, "b15_skin_build");
+        expect(pages.pages[0].valid && pages.pages[0].width == 16, "b15_skin_page0");
+        f32 rgba[4];
+        expect(aether_mdl_skin_pages_sample(&pages, 0, 0, 0.25f, 0.75f, rgba) == 1, "b15_skin_samp");
+        expect(rgba[3] > 0.9f && (rgba[0] + rgba[1] + rgba[2]) > 0.2f, "b15_skin_rgb");
+        aether_water_reflect_ent_list_t ents;
+        aether_water_reflect_ent_list_init(&ents);
+        f32 o[3] = {0, 0, 40}, he[3] = {8, 8, 8};
+        expect(aether_water_reflect_ent_list_push_studio(&ents, 1, 0, o, he, 0.f,
+            AETHER_WATER_REFLECT_MAT_STUDIO, 0, 0, -1, NULL) == 1, "b15_skin_push");
+        expect(aether_water_reflect_ent_bind_skin_page(&ents, 0, &pages.pages[0]) == 1, "b15_skin_bind");
+        f32 s2[4];
+        expect(aether_water_reflect_ent_sample_skin_page(&ents, 0, 0.1f, 0.2f, s2) == 1, "b15_skin_ent");
+        expect(ents.items[0].tex_sample_mode == 2, "b15_skin_mode");
+    }
+
+    /* 4. Weapon auth hitgroup polish (headshot scale) */
+    {
+        expect(aether_weapon_hitgroup_scale(AETHER_HITGROUP_HEAD) == 4.f, "b15_hg_head");
+        expect(aether_weapon_hitgroup_scale(AETHER_HITGROUP_LEG) == 0.75f, "b15_hg_leg");
+        aether_engine_desc_t desc = { .base_path = ".", .asset_path = ".", .flags = 0 };
+        aether_engine_t *eng = aether_engine_create(&desc);
+        expect(eng != NULL, "b15_eng");
+        char root[256];
+        snprintf(root, sizeof root, "/tmp/aether_hg_%d", (int)getpid());
+        aether_game_manager_t *gm = aether_game_manager_create(eng, root);
+        expect(gm != NULL, "b15_gm");
+        u16 port = (u16)(30500 + (getpid() % 200));
+        aether_net_server_t *srv = aether_net_server_create(port, 4);
+        expect(srv != NULL, "b15_srv");
+        srv->clients[0].active = true;
+        srv->clients[0].player_id = 1;
+        aether_str_copy(srv->clients[0].name, sizeof srv->clients[0].name, "HS");
+        srv->clients[1].active = true;
+        srv->clients[1].player_id = 2;
+        aether_str_copy(srv->clients[1].name, sizeof srv->clients[1].name, "Victim");
+        srv->client_count = 2;
+        aether_game_bind_auth_server(gm, (aether_game_auth_server_t *)srv);
+        aether_weapon_state_t ws;
+        aether_weapon_state_init(&ws, AETHER_WPN_GLOCK);
+        if (ws.def && ws.def->clip_size > 0) ws.clip_ammo = ws.def->clip_size;
+        aether_game_weapon_auth_result_t wr;
+        /* Headshot 4x: GLOCK ~8 → 32; 4 shots kill from 100 HP */
+        u32 kills = 0;
+        int hs_ok = 0;
+        for (int shot = 0; shot < 8 && kills == 0; ++shot) {
+            f32 now = 1.f + (f32)shot;
+            ws.next_fire_time = 0.f;
+            if (ws.clip_ammo <= 0 && ws.def) ws.clip_ammo = ws.def->clip_size;
+            kills = aether_game_weapon_hit_auth_hitgroup(gm, &ws, NULL, now,
+                0, 0, 64, 1, 0, 0, 1, 2, true, AETHER_HITGROUP_HEAD, &wr);
+            if (wr.headshot && wr.queued && wr.damage >= 30.f) hs_ok = 1;
+        }
+        expect(hs_ok, "b15_hs_scale");
+        expect(kills == 1 && wr.died && wr.registered_kill, "b15_hs_kill");
+        aether_net_server_destroy(srv);
+        aether_game_bind_auth_server(gm, NULL);
+        aether_game_manager_destroy(gm);
+        aether_engine_destroy(eng);
+    }
+
+    /* 8–9. Vis query using pyramid mips (explicit + multi-mip) */
+    {
+        aether_mdl_hiz_pyramid_t pyr;
+        aether_mdl_hiz_pyramid_init(&pyr);
+        for (u32 y = 20; y < 44; ++y)
+            for (u32 x = 20; x < 44; ++x)
+                aether_mdl_hiz_pyramid_write(&pyr, x, y, 0.1f);
+        aether_mdl_hiz_build_pyramid(&pyr);
+        aether_mdl_hiz_vis_query_t q;
+        int vis = aether_mdl_hiz_vis_query_at_mip(&pyr, 0.4f, 0.4f, 0.6f, 0.6f, 0.9f, 1, &q);
+        expect(q.valid && q.mip_used == 1, "b15_mip_query");
+        expect(q.occluded && vis == 0, "b15_mip_occ");
+        vis = aether_mdl_hiz_vis_query_multi_mip(&pyr, 0.4f, 0.4f, 0.6f, 0.6f, 0.9f, &q);
+        expect(q.valid && q.occluded && vis == 0, "b15_multi_occ");
+        vis = aether_mdl_hiz_vis_query_multi_mip(&pyr, 0.0f, 0.0f, 0.05f, 0.05f, 0.5f, &q);
+        expect(q.valid && q.visible && vis == 1, "b15_multi_vis");
+    }
+
+    expect(1, "b15_ipa_docs");
+    printf("--- batch_depth_hiz_bind_portal_winding_mdl_skin_pages done ---\n");
+}
+
 static void smoke_batch_studio_vis_stereo(void) {
     printf("--- batch_studio_vis_stereo ---\n");
 
@@ -3642,6 +3780,7 @@ int main(void) {
     smoke_batch_reflect_entities_studio_gpu_spec_cycle();
     smoke_batch_rt_skins_assist_hiz_auth();
     smoke_batch_gpu_hiz_mip_weapon_auth_portal();
+    smoke_batch_depth_hiz_bind_portal_winding_mdl_skin_pages();
     smoke_batch_studio_vis_stereo();
 
     if (g_failures) {

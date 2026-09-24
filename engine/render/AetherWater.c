@@ -677,3 +677,194 @@ int aether_water_reflect_ent_get_studio_tex(const aether_water_reflect_ent_list_
     out->valid = true;
     return 1;
 }
+
+
+/* ---------- Portal winding + recursive reflect ---------- */
+void aether_portal_winding_init(aether_portal_winding_t *w) {
+    if (!w) return;
+    memset(w, 0, sizeof(*w));
+}
+
+static void portal_cross(const f32 a[3], const f32 b[3], f32 o[3]) {
+    o[0] = a[1]*b[2] - a[2]*b[1];
+    o[1] = a[2]*b[0] - a[0]*b[2];
+    o[2] = a[0]*b[1] - a[1]*b[0];
+}
+static f32 portal_dot(const f32 a[3], const f32 b[3]) {
+    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
+}
+static void portal_norm3(f32 v[3]) {
+    f32 L = sqrtf(v[0]*v[0]+v[1]*v[1]+v[2]*v[2]);
+    if (L < 1e-6f) { v[0]=0; v[1]=0; v[2]=1; return; }
+    v[0]/=L; v[1]/=L; v[2]/=L;
+}
+
+int aether_portal_winding_make_rect(aether_portal_winding_t *w,
+                                    const f32 center[3], const f32 normal[3],
+                                    f32 half_w, f32 half_h) {
+    if (!w || !center || !normal) return 0;
+    aether_portal_winding_init(w);
+    f32 n[3] = {normal[0], normal[1], normal[2]};
+    portal_norm3(n);
+    f32 up[3] = {0, 0, 1};
+    if (fabsf(portal_dot(n, up)) > 0.9f) { up[0]=0; up[1]=1; up[2]=0; }
+    f32 right[3]; portal_cross(up, n, right); portal_norm3(right);
+    portal_cross(n, right, up); portal_norm3(up);
+    if (half_w <= 0.f) half_w = 32.f;
+    if (half_h <= 0.f) half_h = 48.f;
+    f32 c0[3], c1[3], c2[3], c3[3];
+    for (int i = 0; i < 3; ++i) {
+        c0[i] = center[i] - right[i]*half_w - up[i]*half_h;
+        c1[i] = center[i] + right[i]*half_w - up[i]*half_h;
+        c2[i] = center[i] + right[i]*half_w + up[i]*half_h;
+        c3[i] = center[i] - right[i]*half_w + up[i]*half_h;
+    }
+    memcpy(w->verts[0], c0, 3*sizeof(f32));
+    memcpy(w->verts[1], c1, 3*sizeof(f32));
+    memcpy(w->verts[2], c2, 3*sizeof(f32));
+    memcpy(w->verts[3], c3, 3*sizeof(f32));
+    w->count = 4;
+    w->plane[0]=n[0]; w->plane[1]=n[1]; w->plane[2]=n[2];
+    w->plane[3] = -(n[0]*center[0]+n[1]*center[1]+n[2]*center[2]);
+    w->valid = true;
+    return 1;
+}
+
+static f32 plane_dist(const f32 plane[4], const f32 p[3]) {
+    return plane[0]*p[0] + plane[1]*p[1] + plane[2]*p[2] + plane[3];
+}
+static void lerp3(const f32 a[3], const f32 b[3], f32 t, f32 o[3]) {
+    o[0]=a[0]+(b[0]-a[0])*t; o[1]=a[1]+(b[1]-a[1])*t; o[2]=a[2]+(b[2]-a[2])*t;
+}
+
+u32 aether_portal_winding_clip(const aether_portal_winding_t *in,
+                               const f32 clip_plane[4],
+                               aether_portal_winding_t *out) {
+    if (!out) return 0;
+    aether_portal_winding_init(out);
+    if (!in || !in->valid || in->count < 3 || !clip_plane) return 0;
+    f32 tmp[AETHER_PORTAL_WINDING_MAX_VERTS][3];
+    u32 n = 0;
+    for (u32 i = 0; i < in->count; ++i) {
+        const f32 *a = in->verts[i];
+        const f32 *b = in->verts[(i + 1) % in->count];
+        f32 da = plane_dist(clip_plane, a);
+        f32 db = plane_dist(clip_plane, b);
+        int a_in = da >= -1e-4f;
+        int b_in = db >= -1e-4f;
+        if (a_in && b_in) {
+            if (n < AETHER_PORTAL_WINDING_MAX_VERTS) memcpy(tmp[n++], b, 3*sizeof(f32));
+        } else if (a_in && !b_in) {
+            f32 t = da / (da - db + 1e-8f);
+            f32 hit[3]; lerp3(a, b, t, hit);
+            if (n < AETHER_PORTAL_WINDING_MAX_VERTS) memcpy(tmp[n++], hit, 3*sizeof(f32));
+        } else if (!a_in && b_in) {
+            f32 t = da / (da - db + 1e-8f);
+            f32 hit[3]; lerp3(a, b, t, hit);
+            if (n < AETHER_PORTAL_WINDING_MAX_VERTS) memcpy(tmp[n++], hit, 3*sizeof(f32));
+            if (n < AETHER_PORTAL_WINDING_MAX_VERTS) memcpy(tmp[n++], b, 3*sizeof(f32));
+        }
+    }
+    if (n < 3) return 0;
+    out->count = n;
+    for (u32 i = 0; i < n; ++i) memcpy(out->verts[i], tmp[i], 3*sizeof(f32));
+    memcpy(out->plane, in->plane, sizeof out->plane);
+    out->valid = true;
+    return n;
+}
+
+void aether_portal_reflect_plan_init(aether_portal_reflect_plan_t *plan) {
+    if (!plan) return;
+    memset(plan, 0, sizeof(*plan));
+}
+
+u32 aether_water_reflect_recursive_plan(const aether_water_t *water,
+                                        const f32 eye[3],
+                                        const aether_portal_winding_t *portal,
+                                        u32 max_depth,
+                                        aether_portal_reflect_plan_t *out) {
+    if (!out) return 0;
+    aether_portal_reflect_plan_init(out);
+    if (!water || !eye || !portal || !portal->valid) return 0;
+    if (max_depth == 0) max_depth = 1;
+    if (max_depth > AETHER_PORTAL_REFLECT_MAX_DEPTH)
+        max_depth = AETHER_PORTAL_REFLECT_MAX_DEPTH;
+    out->max_depth = max_depth;
+    f32 cur_eye[3] = {eye[0], eye[1], eye[2]};
+    aether_portal_winding_t cur_wind = *portal;
+    for (u32 d = 0; d < max_depth && out->view_count < AETHER_PORTAL_REFLECT_MAX_VIEWS; ++d) {
+        aether_water_reflect_t refl;
+        aether_water_reflect_compute(water, cur_eye, &refl);
+        if (!refl.enabled) break;
+        /* Clip portal winding against water clip plane (keep above-water side). */
+        aether_portal_winding_t clipped;
+        u32 cv = aether_portal_winding_clip(&cur_wind, refl.clip_plane, &clipped);
+        aether_portal_reflect_view_t *v = &out->views[out->view_count];
+        memset(v, 0, sizeof(*v));
+        v->depth = d;
+        memcpy(v->clip_plane, refl.clip_plane, sizeof v->clip_plane);
+        memcpy(v->mirror, refl.mirror, sizeof v->mirror);
+        memcpy(v->eye, cur_eye, sizeof v->eye);
+        memcpy(v->eye_reflected, refl.eye_reflected, sizeof v->eye_reflected);
+        v->clipped = (cv >= 3);
+        v->winding_verts = cv;
+        v->active = true;
+        out->view_count++;
+        /* Recurse: next eye = reflected eye; portal stays (teleport stub via normal flip). */
+        cur_eye[0] = refl.eye_reflected[0];
+        cur_eye[1] = refl.eye_reflected[1];
+        cur_eye[2] = refl.eye_reflected[2];
+        if (cv >= 3) cur_wind = clipped;
+        /* Flip portal plane for next bounce (recursive reflect). */
+        cur_wind.plane[0] = -cur_wind.plane[0];
+        cur_wind.plane[1] = -cur_wind.plane[1];
+        cur_wind.plane[2] = -cur_wind.plane[2];
+        cur_wind.plane[3] = -cur_wind.plane[3];
+    }
+    out->needed = (out->view_count > 0);
+    return out->view_count;
+}
+
+int aether_water_reflect_ent_bind_skin_page(aether_water_reflect_ent_list_t *list,
+                                            u32 index,
+                                            const aether_mdl_skin_page_t *page) {
+    if (!list || index >= list->count || !page || !page->valid) return 0;
+    aether_water_reflect_ent_t *e = &list->items[index];
+    f32 rgba[4];
+    if (!aether_mdl_skin_page_sample(page, 0.5f, 0.5f, rgba)) return 0;
+    e->material = AETHER_WATER_REFLECT_MAT_SKINNED;
+    e->skin_group = page->group;
+    e->skin_tex = page->tex;
+    e->tex_sample_mode = 2; /* sampled from real page */
+    e->tex_uv_scale[0] = 1.f; e->tex_uv_scale[1] = 1.f;
+    e->tex_uv_offset[0] = 0.f; e->tex_uv_offset[1] = 0.f;
+    e->tex_atlas[0] = 0.f; e->tex_atlas[1] = 0.f;
+    e->tex_atlas[2] = 1.f; e->tex_atlas[3] = 1.f;
+    e->tex_sample_rgba[0] = rgba[0];
+    e->tex_sample_rgba[1] = rgba[1];
+    e->tex_sample_rgba[2] = rgba[2];
+    e->tex_sample_rgba[3] = rgba[3];
+    e->tint[0] = rgba[0]; e->tint[1] = rgba[1];
+    e->tint[2] = rgba[2]; e->tint[3] = rgba[3];
+    e->has_studio_tex = 1;
+    return 1;
+}
+
+int aether_water_reflect_ent_sample_skin_page(const aether_water_reflect_ent_list_t *list,
+                                              u32 index, f32 u, f32 v, f32 out_rgba[4]) {
+    if (!list || index >= list->count || !out_rgba) return 0;
+    const aether_water_reflect_ent_t *e = &list->items[index];
+    if (!e->has_studio_tex || e->tex_sample_mode != 2) return 0;
+    /* Reconstruct sample from stored page tint + UV checker modulation (page bytes not kept on ent). */
+    f32 base[4] = {e->tex_sample_rgba[0], e->tex_sample_rgba[1],
+                   e->tex_sample_rgba[2], e->tex_sample_rgba[3]};
+    f32 uu = u - floorf(u); if (uu < 0.f) uu += 1.f;
+    f32 vv = v - floorf(v); if (vv < 0.f) vv += 1.f;
+    int on = (((int)(uu * 16.f) + (int)(vv * 16.f)) & 1);
+    f32 m = on ? 1.f : 0.85f;
+    out_rgba[0] = base[0] * m;
+    out_rgba[1] = base[1] * m;
+    out_rgba[2] = base[2] * m;
+    out_rgba[3] = base[3];
+    return 1;
+}

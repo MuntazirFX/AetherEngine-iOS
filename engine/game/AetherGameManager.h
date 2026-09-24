@@ -112,6 +112,8 @@ typedef struct aether_game_weapon_auth_result {
     bool registered_kill;
     f32  damage;
     u32  pellets;
+    u8   hitgroup;
+    bool headshot;
 } aether_game_weapon_auth_result_t;
 
 /* Fire weapon hitscan → queue auth damage → process tick_auth (kill/score).
@@ -125,6 +127,17 @@ u32 aether_game_weapon_hit_auth(aether_game_manager_t *m,
                                 u32 killer_id, u32 victim_id,
                                 bool force_hit,
                                 aether_game_weapon_auth_result_t *out);
+
+/* Hitgroup-aware combat auth (headshot scale → faster kill). */
+u32 aether_game_weapon_hit_auth_hitgroup(aether_game_manager_t *m,
+                                         aether_weapon_state_t *ws,
+                                         aether_player_inventory_t *inv,
+                                         f32 now,
+                                         f32 ox, f32 oy, f32 oz,
+                                         f32 dx, f32 dy, f32 dz,
+                                         u32 killer_id, u32 victim_id,
+                                         bool force_hit, u8 hitgroup,
+                                         aether_game_weapon_auth_result_t *out);
 
 #ifdef __cplusplus
 }

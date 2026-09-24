@@ -527,14 +527,60 @@ IPA dry-run notes, assist feed HUD polish ("assisted vs"), combat smoke
 | Sideload | AltStore / Sideloadly / TrollStore — unsigned Payload zip |
 
 ### Known gaps after gpu-hiz-mip / weapon-auth / portal batch
-- Hi-Z pyramid is host-authoritative with Metal downsample/query shader hooks (full depth-prepass→pyramid bind still thin on device)
-- Studio reflect tex is clean-room procedural atlas (not real MDL skin pages)
-- Portal reflect uses translation warp (not full portal winding / recursive views)
+- *(addressed in depth-hiz-bind/portal-winding/mdl-skin-pages batch: depth→Hi-Z bind, portal winding/recursion, fixture skin pages)*
 - IPA still requires macOS + Xcode via workflow_dispatch
 
 ### Progress toward playable unsigned IPA demo
 Rough overall estimate after this batch: **~75–76%** toward a playable unsigned IPA demo
 (capped while IPA remains unbuilt on this Linux/CI host). Prior rt-skins batch was ~74–75%.
+
+IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
+
+
+
+## Depth→Hi-Z bind / portal winding / MDL skin pages (`continue/batch-depth-hiz-bind-portal-winding-mdl-skin-pages`)
+
+One PR binds depth prepass → Hi-Z pyramid on Metal (encode order + texture views), adds portal
+winding clip + recursive reflect views (limited depth), samples real fixture MDL skin pages in
+the water RT (no HL assets), polishes weapon auth with hitgroup/headshot scale, clarifies
+unsigned IPA dry-run on Actions macos-14, multi-mip Hi-Z vis queries, host smokes, verify green —
+still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Bind depth prepass → Hi-Z pyramid | **done** | `aether_depth_hiz_bind_plan_*` + `aether_mdl_hiz_bind_from_depth` + Metal texture-view hooks |
+| 2 | Portal winding / recursive reflect | **done** | `aether_portal_winding_*` + `aether_water_reflect_recursive_plan` (max depth 3) |
+| 3 | Real MDL skin-page sample in water RT | **done** | `aether_mdl_skin_pages_*` + `aether_water_reflect_ent_bind_skin_page` |
+| 4 | Weapon auth path polish | **done** | `aether_weapon_fire_combat_auth_hitgroup` / headshot 4× scale |
+| 5 | Unsigned IPA dry-run on macos-14 (clearer) | **done** | package_ipa checklist + Actions summary dry-run steps |
+| 6 | Host smokes (bind / portal / skin) | **done** | `smoke_batch_depth_hiz_bind_portal_winding_mdl_skin_pages` |
+| 7 | Fix regressions | **done** | prior gpu-hiz-mip / rt-skins smokes still green |
+| 8 | Vis query using pyramid mips | **done** | `aether_mdl_hiz_vis_query_at_mip` + `vis_query_multi_mip` |
+| 9 | Related gap fill | **done** | texture views from pyramid levels; recursive clip plane per view |
+| 10 | README + honest % | **done** | This table; cap **~76–77%** while IPA unbuilt on this host |
+
+### Unsigned IPA dry-run (Actions macos-14) — clear checklist
+
+| Step | What |
+|------|------|
+| 1 | Actions → Build AetherEngine IPA → Run workflow (`workflow_dispatch`) |
+| 2 | Inputs: `version` (e.g. `v0.1.15`), `publish_release=false` for dry-run |
+| 3 | Job **Unsigned IPA (dispatch only)** on **macos-14**: `build_ios.sh` → `package_ipa.sh` |
+| 4 | Artifact `AetherEngine-<version>` via `upload-artifact@v4` (30d) |
+| 5 | `gh run download <run-id> -n AetherEngine-<version>` or Actions UI |
+| 6 | Sideload: AltStore / Sideloadly / TrollStore — no baked signing |
+| Local | `./build/scripts/build_ios.sh && ./build/scripts/package_ipa.sh` |
+| Note | PR/push runs `verify_host` only; IPA is dispatch-only |
+
+### Known gaps after depth-hiz-bind / portal-winding / mdl-skin-pages batch
+- Hi-Z texture views are host-authoritative descriptors (device Metal array texture still thin)
+- Portal recursion is planar water + winding clip (not full multi-portal leaf graph)
+- Skin pages are clean-room fixture RGBA (not packed MDL texture lumps from retail)
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+### Progress toward playable unsigned IPA demo
+Rough overall estimate after this batch: **~76–77%** toward a playable unsigned IPA demo
+(capped while IPA remains unbuilt on this Linux/CI host). Prior gpu-hiz-mip batch was ~75–76%.
 
 IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
 

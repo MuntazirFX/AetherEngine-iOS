@@ -808,4 +808,44 @@ int  engine_scoreboard_get_event_ex(int index, int *out_kind, unsigned *out_id,
                                     char *victim, int victim_cap,
                                     char *line, int line_cap, float *out_time);
 
+
+/* ---------- Batch: depth→hiz bind / portal winding / mdl skin pages / weapon hitgroup ---------- */
+int  engine_depth_hiz_bind_plan(unsigned mip0_w, unsigned mip0_h,
+                                int *out_needed, int *out_steps, unsigned *out_views);
+int  engine_depth_hiz_bind_execute(unsigned mip0_w, unsigned mip0_h,
+                                   const float *depth_samples, unsigned count,
+                                   int *out_levels, int *out_views, int *out_bound);
+int  engine_mdl_hiz_vis_query_at_mip(float x0, float y0, float x1, float y1,
+                                     float obj_depth, int mip,
+                                     int *out_visible, int *out_occluded, float *out_hiz);
+int  engine_mdl_hiz_vis_query_multi_mip(float x0, float y0, float x1, float y1,
+                                        float obj_depth,
+                                        int *out_visible, int *out_occluded,
+                                        float *out_hiz, int *out_mip);
+
+int  engine_portal_winding_make_rect(float cx, float cy, float cz,
+                                     float nx, float ny, float nz,
+                                     float half_w, float half_h);
+int  engine_portal_winding_clip_water(void);
+unsigned engine_water_reflect_recursive_plan(float eye_x, float eye_y, float eye_z,
+                                             unsigned max_depth,
+                                             unsigned *out_views, unsigned *out_max_depth);
+
+int  engine_mdl_skin_pages_build(unsigned page_count);
+int  engine_mdl_skin_pages_sample(unsigned group, unsigned tex, float u, float v,
+                                  float *out_rgba4);
+int  engine_water_reflect_ent_bind_skin_page(unsigned ent_index, unsigned page_index);
+int  engine_water_reflect_ent_sample_skin_page(unsigned ent_index, float u, float v,
+                                               float *out_rgba4);
+
+int  engine_game_weapon_hit_auth_hitgroup(unsigned weapon_id, float now,
+                                          float ox, float oy, float oz,
+                                          float dx, float dy, float dz,
+                                          unsigned killer_id, unsigned victim_id,
+                                          int force_hit, unsigned hitgroup,
+                                          int *out_fired, int *out_queued, int *out_died,
+                                          int *out_registered, float *out_damage,
+                                          int *out_headshot);
+
 #endif /* ENGINE_BRIDGE_H */
+

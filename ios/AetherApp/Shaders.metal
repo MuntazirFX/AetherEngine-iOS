@@ -853,3 +853,52 @@ fragment float4 aether_studio_reflect_tex_fragment(WaterVertexOut in [[stage_in]
     float3 rgb = tint.rgb * float3(0.75 + 0.25 * wave, 0.80 + 0.20 * (1.0 - wave), 0.70 + 0.30 * wave) * checker;
     return float4(rgb, tint.a);
 }
+
+
+/* ============ Depth → Hi-Z bind + portal recursive + skin-page sample hooks ============ */
+struct DepthHizBindUniforms {
+    uint mip0W;
+    uint mip0H;
+    uint levels;
+    uint bound;
+};
+
+/* Documents Metal texture-view bind after depth prepass (host fills pyramid). */
+fragment float4 aether_depth_hiz_bind_fragment(constant DepthHizBindUniforms &U [[buffer(0)]],
+                                               texture2d_array<float> hizMips [[texture(0)]],
+                                               sampler samp [[sampler(0)]],
+                                               float2 uv [[stage_in]]) {
+    float z = hizMips.sample(samp, uv, 0).r;
+    if (U.levels > 1) {
+        float z1 = hizMips.sample(samp, uv, 1).r;
+        z = min(z, z1);
+    }
+    return float4(z, z, U.bound > 0 ? 1.0 : 0.0, 1.0);
+}
+
+struct PortalRecursiveUniforms {
+    float4 clipPlane;
+    float4x4 mirror;
+    uint depth;
+    uint maxDepth;
+    uint pad0, pad1;
+};
+
+vertex float4 aether_portal_recursive_vertex(uint vid [[vertex_id]],
+                                             constant PortalRecursiveUniforms &U [[buffer(0)]],
+                                             constant float3 *positions [[buffer(1)]]) {
+    float3 p = positions[vid];
+    float4 h = U.mirror * float4(p, 1.0);
+    /* Clip against portal/water plane for recursive view. */
+    float cd = dot(U.clipPlane.xyz, h.xyz) + U.clipPlane.w;
+    if (cd < 0.0 && U.depth > 0) h.z = h.z; /* keep; real clip is raster clip plane */
+    return h;
+}
+
+fragment float4 aether_mdl_skin_page_fragment(WaterVertexOut in [[stage_in]],
+                                              texture2d<float> skinPage [[texture(0)]],
+                                              sampler samp [[sampler(0)]],
+                                              constant float4 &tint [[buffer(2)]]) {
+    float4 s = skinPage.sample(samp, in.uv);
+    return float4(s.rgb * tint.rgb, s.a * tint.a);
+}
