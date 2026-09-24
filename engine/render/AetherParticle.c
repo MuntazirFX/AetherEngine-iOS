@@ -190,3 +190,56 @@ u32 aether_particles_spawn_viewmodel_fire(aether_particles_t *p,
     n += aether_particles_spawn_trail(p, muzzle, to, trail_count);
     return n;
 }
+
+#include "AetherDynLight.h"
+
+u32 aether_particles_sync_muzzle_world(aether_particles_t *p,
+                                       aether_dyn_lights_t *dl,
+                                       const f32 view_muzzle[3],
+                                       const f32 view_fwd[3],
+                                       const f32 eye_pos[3],
+                                       const f32 eye_fwd[3],
+                                       const f32 eye_right[3],
+                                       const f32 eye_up[3],
+                                       u32 particle_count,
+                                       aether_muzzle_sync_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!p || !view_muzzle || !eye_pos || !eye_fwd || !eye_right || !eye_up)
+        return 0;
+    /* view_muzzle is in view/camera space (x=right, y=up, z=forward/-forward).
+     * Map to world: eye + right*x + up*y + fwd*z */
+    f32 wx = eye_pos[0] + eye_right[0]*view_muzzle[0] + eye_up[0]*view_muzzle[1] + eye_fwd[0]*view_muzzle[2];
+    f32 wy = eye_pos[1] + eye_right[1]*view_muzzle[0] + eye_up[1]*view_muzzle[1] + eye_fwd[1]*view_muzzle[2];
+    f32 wz = eye_pos[2] + eye_right[2]*view_muzzle[0] + eye_up[2]*view_muzzle[1] + eye_fwd[2]*view_muzzle[2];
+    f32 wfwd[3];
+    if (view_fwd) {
+        wfwd[0] = eye_right[0]*view_fwd[0] + eye_up[0]*view_fwd[1] + eye_fwd[0]*view_fwd[2];
+        wfwd[1] = eye_right[1]*view_fwd[0] + eye_up[1]*view_fwd[1] + eye_fwd[1]*view_fwd[2];
+        wfwd[2] = eye_right[2]*view_fwd[0] + eye_up[2]*view_fwd[1] + eye_fwd[2]*view_fwd[2];
+        f32 len = sqrtf(wfwd[0]*wfwd[0]+wfwd[1]*wfwd[1]+wfwd[2]*wfwd[2]);
+        if (len > 1e-5f) { wfwd[0]/=len; wfwd[1]/=len; wfwd[2]/=len; }
+        else { wfwd[0]=eye_fwd[0]; wfwd[1]=eye_fwd[1]; wfwd[2]=eye_fwd[2]; }
+    } else {
+        wfwd[0]=eye_fwd[0]; wfwd[1]=eye_fwd[1]; wfwd[2]=eye_fwd[2];
+    }
+    f32 origin[3] = {wx, wy, wz};
+    u32 n = aether_particles_spawn_viewmodel_fire(p, origin, wfwd,
+                                                  particle_count ? particle_count : 8,
+                                                  particle_count ? particle_count + 2 : 10);
+    u32 light_ok = 0;
+    if (dl) {
+        f32 col[3] = {1.f, 0.75f, 0.35f};
+        if (aether_dyn_lights_add(dl, origin, col, 96.f, 1.4f) == AETHER_OK)
+            light_ok = 1;
+    }
+    if (out) {
+        out->world_pos[0]=wx; out->world_pos[1]=wy; out->world_pos[2]=wz;
+        out->world_fwd[0]=wfwd[0]; out->world_fwd[1]=wfwd[1]; out->world_fwd[2]=wfwd[2];
+        out->light_color[0]=1.f; out->light_color[1]=0.75f; out->light_color[2]=0.35f;
+        out->light_radius = 96.f;
+        out->light_intensity = 1.4f;
+        out->particles_spawned = n;
+        out->light_added = light_ok;
+    }
+    return n;
+}

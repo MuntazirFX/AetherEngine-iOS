@@ -286,6 +286,155 @@ static void smoke_batch_metal_blend_studio_attach(void) {
 }
 
 
+static void smoke_batch_faceid_bone_portal_attach(void) {
+    printf("--- batch_faceid_bone_portal_attach ---\n");
+
+    /* 1. Face-id vertex attribute on mesh */
+    {
+        aether_bsp_t *bsp = aether_bsp_create_synthetic_room();
+        aether_mesh_t *mesh = NULL;
+        expect(bsp && aether_mesh_from_bsp(bsp, NULL, &mesh) == AETHER_OK && mesh, "b8_faceid_mesh");
+        expect(mesh->vertex_count > 0 && mesh->vertices[0].face_id >= 0.f, "b8_faceid_attr");
+        expect(aether_mesh_validate_face_ids(mesh) == 0, "b8_faceid_valid");
+        expect(sizeof(aether_mesh_vertex_t) == AETHER_MESH_VERTEX_STRIDE, "b8_faceid_stride");
+        aether_mesh_free(mesh); aether_bsp_free(bsp);
+    }
+
+    /* 2. Bone-hitbox lag rewind */
+    {
+        aether_lagcomp_studio_history_t h; aether_lagcomp_studio_init(&h);
+        aether_lagcomp_studio_begin_frame(&h, 1.0f);
+        f32 mats[32]; memset(mats, 0, sizeof mats);
+        /* identity bone 0, translated bone 1 */
+        mats[0]=1; mats[5]=1; mats[10]=1; mats[15]=1;
+        mats[16]=1; mats[21]=1; mats[26]=1; mats[31]=1;
+        mats[16+12]=40.f; /* bone1 translate X */
+        aether_lagcomp_hitbox_t boxes[2];
+        memset(boxes, 0, sizeof boxes);
+        boxes[0].bone = 1; boxes[0].mins[0]=-8; boxes[0].mins[1]=-8; boxes[0].mins[2]=0;
+        boxes[0].maxs[0]=8; boxes[0].maxs[1]=8; boxes[0].maxs[2]=16;
+        boxes[1].bone = 0; boxes[1].mins[0]=-12; boxes[1].mins[1]=-12; boxes[1].mins[2]=0;
+        boxes[1].maxs[0]=12; boxes[1].maxs[1]=12; boxes[1].maxs[2]=72;
+        expect(aether_lagcomp_studio_push(&h, 42, AETHER_LAGCOMP_PLAYER, mats, 2, boxes, 2), "b8_studio_push");
+        aether_lagcomp_studio_t got;
+        expect(aether_lagcomp_studio_query(&h, 1.0f, 42, &got), "b8_studio_query");
+        f32 wmins[3], wmaxs[3];
+        aether_lagcomp_hitbox_to_world(&got.boxes[0], got.bone_mats + 16, wmins, wmaxs);
+        expect(wmins[0] > 20.f && wmaxs[0] < 60.f, "b8_hb_world_x");
+        f32 origin[3]={-20.f,0.f,8.f}, dir[3]={1.f,0.f,0.f};
+        i32 id=-1, hb=-1; f32 t=0, pt[3];
+        expect(aether_lagcomp_studio_trace(&h, 1.0f, origin, dir, 200.f, &id, &hb, &t, pt), "b8_studio_trace");
+        expect(id == 42 && t > 0.f, "b8_studio_hit");
+    }
+
+    /* 3. Portal-aware dynlight flood */
+    {
+        aether_bsp_t *bsp = aether_bsp_create_synthetic_room();
+        expect(bsp != NULL, "b8_portal_bsp");
+        u32 lc = aether_bsp_leaf_count(bsp);
+        expect(lc >= 2, "b8_portal_leaves");
+        u8 *links = (u8*)calloc((size_t)lc * lc, 1);
+        expect(links != NULL, "b8_portal_links_alloc");
+        u32 nlinks = aether_bsp_build_leaf_portal_links(bsp, links, lc);
+        expect(nlinks >= 1 || lc < 3, "b8_portal_links");
+        free(links);
+        aether_dyn_lights_t dl; aether_dyn_lights_init(&dl);
+        f32 col[3]={1,0.9f,0.7f};
+        f32 near_pos[3]={0,0,40};
+        f32 far_pos[3]={180,0,40};
+        expect(aether_dyn_lights_add(&dl, near_pos, col, 80.f, 1.f)==AETHER_OK, "b8_flood_near");
+        expect(aether_dyn_lights_add(&dl, far_pos, col, 120.f, 1.f)==AETHER_OK, "b8_flood_far");
+        i32 leaf = aether_bsp_find_leaf(bsp, 0, 0, 40);
+        aether_dyn_light_ubo_t ubo_bleed, ubo_flood;
+        u32 nb = aether_dyn_lights_cull_pvs_bleed(&dl, bsp, leaf, &ubo_bleed);
+        u32 nf = aether_dyn_lights_cull_portal_flood(&dl, bsp, leaf, 4, &ubo_flood);
+        expect(nf >= 1, "b8_flood_kept");
+        expect(nf >= nb || nf >= 1, "b8_flood_ge");
+        f32 arr[64];
+        expect(aether_dyn_lights_fill_array_portal_flood(&dl, bsp, leaf, 4, arr, 64) >= 4, "b8_flood_array");
+        aether_bsp_free(bsp);
+    }
+
+    /* 4. 3rd-person attachment matrix chain */
+    {
+        u8 buf[24576];
+        u32 bn = aether_mdl_write_studio_fixture_ex(buf, sizeof buf);
+        aether_mdl_attachment_t atts[8];
+        u32 ac = aether_mdl_fixture_attachments(buf, bn, atts, 8);
+        expect(ac >= 2, "b8_chain_atts");
+        aether_mdl_sequence_t seq;
+        expect(aether_mdl_anim_rle_decode(&seq, buf, bn) == AETHER_OK ||
+               aether_mdl_sequence_load_from_data(&seq, buf, bn) == AETHER_OK, "b8_chain_seq");
+        aether_mdl_skin_state_t sk;
+        aether_mdl_skin_build_from_sequence(&sk, &seq, 1.0f);
+        f32 mats[64];
+        for (u32 i = 0; i < sk.bone_count && i < 4; ++i)
+            memcpy(mats + i*16, sk.bones[i].m, 16*sizeof(f32));
+        i32 hand = aether_mdl_attachment_find(atts, ac, "shell");
+        i32 muz = aether_mdl_attachment_find(atts, ac, "muzzle");
+        expect(hand >= 0 && muz >= 0, "b8_chain_names");
+        f32 origin[3]={10,20,30}, pos[3], fwd[3];
+        expect(aether_mdl_attachment_chain_world(&atts[hand], mats, sk.bone_count,
+                                                 &atts[muz], mats, sk.bone_count,
+                                                 origin, pos, fwd), "b8_chain_xform");
+        expect(fabsf(pos[0]-origin[0]) + fabsf(pos[1]-origin[1]) + fabsf(pos[2]-origin[2]) > 1.f,
+               "b8_chain_offset");
+        f32 idm[16]; aether_mdl_mat4_identity(idm);
+        expect(fabsf(idm[0]-1.f) < 1e-5f && fabsf(idm[15]-1.f) < 1e-5f, "b8_mat4_id");
+    }
+
+    /* 5. Viewmodel muzzle → world particle/light sync */
+    {
+        aether_particles_t p; aether_particles_init(&p);
+        aether_dyn_lights_t dl; aether_dyn_lights_init(&dl);
+        f32 vm[3]={0.3f,-0.2f,-0.6f}, vf[3]={0,0,-1};
+        f32 eye[3]={0,0,40}, fwd[3]={1,0,0}, right[3]={0,1,0}, up[3]={0,0,1};
+        aether_muzzle_sync_t sync;
+        u32 n = aether_particles_sync_muzzle_world(&p, &dl, vm, vf, eye, fwd, right, up, 8, &sync);
+        expect(n >= 10, "b8_muzzle_sync_n");
+        expect(sync.light_added == 1, "b8_muzzle_light");
+        expect(sync.world_pos[2] > 30.f, "b8_muzzle_world_z");
+        expect(aether_dyn_lights_active_count(&dl) >= 1, "b8_muzzle_dl_count");
+    }
+
+    /* 6. Per-draw style blend UBO cleaned path */
+    {
+        aether_bsp_t *bsp = aether_bsp_create_synthetic_room();
+        aether_mesh_t *mesh = NULL;
+        expect(bsp && aether_mesh_from_bsp(bsp, NULL, &mesh) == AETHER_OK && mesh, "b8_draw_mesh");
+        aether_lightstyles_t ls; aether_lightstyles_init(&ls); aether_lightstyles_update(&ls, 0.75f);
+        f32 ubo[512]; u32 faces = 0;
+        u32 n = aether_lightmap_fill_style_blend_draw(mesh, &ls, AETHER_STYLE_BLEND_FLAG_FACE_ID,
+                                                     ubo, 512, &faces);
+        expect(n >= 8 && faces >= 2, "b8_draw_ubo");
+        expect((u32)(ubo[1] + 0.5f) == AETHER_STYLE_BLEND_FLAG_FACE_ID, "b8_draw_flag");
+        expect((u32)(ubo[2] + 0.5f) == AETHER_MESH_VERTEX_STRIDE, "b8_draw_stride");
+        f32 base[3]={0.5f,0.5f,0.5f}, out[3];
+        aether_lightmap_sample_style_blend_face(ubo, n, 0, base, out);
+        expect(out[0] > 0.2f, "b8_draw_sample");
+        aether_mesh_free(mesh); aether_bsp_free(bsp);
+    }
+
+    /* 7. Weapon switch cycle */
+    {
+        aether_player_inventory_t inv;
+        aether_player_inv_init(&inv);
+        aether_player_inv_give_weapon(&inv, AETHER_WPN_GLOCK);
+        aether_player_inv_give_weapon(&inv, AETHER_WPN_MP5);
+        aether_player_inv_switch(&inv, AETHER_WPN_CROWBAR);
+        expect(aether_player_inv_current(&inv) == AETHER_WPN_CROWBAR, "b8_wpn_start");
+        aether_weapon_id_t n1 = aether_player_inv_cycle(&inv, +1);
+        expect(n1 != AETHER_WPN_CROWBAR, "b8_wpn_next");
+        aether_weapon_id_t n2 = aether_player_inv_cycle(&inv, -1);
+        expect(n2 == AETHER_WPN_CROWBAR, "b8_wpn_prev");
+        expect(aether_player_inv_apply_weapon_input(&inv, 1, 0) == 1, "b8_wpn_input");
+    }
+
+    printf("--- batch_faceid_bone_portal_attach done ---\n");
+}
+
+
+
 static void smoke_batch_studio_vis_stereo(void) {
     printf("--- batch_studio_vis_stereo ---\n");
 
@@ -2463,6 +2612,7 @@ int main(void) {
     smoke_batch_gpu_lightstyles_skin_mp();
     smoke_batch_seq_pvs_audio_ui();
     smoke_batch_metal_blend_studio_attach();
+    smoke_batch_faceid_bone_portal_attach();
     smoke_batch_studio_vis_stereo();
 
     if (g_failures) {

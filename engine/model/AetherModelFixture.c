@@ -771,3 +771,93 @@ u32 aether_mdl_studio_events_fire(const aether_mdl_studio_event_t *evts, u32 cou
     }
     return n;
 }
+
+void aether_mdl_mat4_identity(f32 out[16]) {
+    if (!out) return;
+    memset(out, 0, 16 * sizeof(f32));
+    out[0] = out[5] = out[10] = out[15] = 1.f;
+}
+
+void aether_mdl_mat4_translate(const f32 origin[3], f32 out[16]) {
+    aether_mdl_mat4_identity(out);
+    if (!origin || !out) return;
+    out[12] = origin[0];
+    out[13] = origin[1];
+    out[14] = origin[2];
+}
+
+void aether_mdl_mat4_mul(const f32 A[16], const f32 B[16], f32 out[16]) {
+    if (!A || !B || !out) return;
+    f32 tmp[16];
+    for (int c = 0; c < 4; ++c) {
+        for (int r = 0; r < 4; ++r) {
+            tmp[c * 4 + r] =
+                A[0 * 4 + r] * B[c * 4 + 0] +
+                A[1 * 4 + r] * B[c * 4 + 1] +
+                A[2 * 4 + r] * B[c * 4 + 2] +
+                A[3 * 4 + r] * B[c * 4 + 3];
+        }
+    }
+    memcpy(out, tmp, sizeof tmp);
+}
+
+bool aether_mdl_attachment_chain_world(const aether_mdl_attachment_t *hand_att,
+                                       const f32 *player_bone_mats, u32 player_bones,
+                                       const aether_mdl_attachment_t *weapon_att,
+                                       const f32 *weapon_bone_mats, u32 weapon_bones,
+                                       const f32 player_origin[3],
+                                       f32 out_pos[3], f32 out_forward[3]) {
+    if (!hand_att || !weapon_att || !out_pos) return false;
+    /* 1) Weapon attach in weapon bone space */
+    f32 muz_pos[3], muz_fwd[3];
+    if (!aether_mdl_attachment_transform(weapon_att, weapon_bone_mats, weapon_bones,
+                                         muz_pos, muz_fwd))
+        return false;
+    /* 2) Hand attach on player → world-relative bone space */
+    f32 hand_pos[3], hand_fwd[3];
+    if (!aether_mdl_attachment_transform(hand_att, player_bone_mats, player_bones,
+                                         hand_pos, hand_fwd))
+        return false;
+    /* 3) Build hand basis (forward = hand_fwd, up = Z, right = cross) and place muzzle */
+    f32 fx = hand_fwd[0], fy = hand_fwd[1], fz = hand_fwd[2];
+    f32 fl = sqrtf(fx*fx + fy*fy + fz*fz);
+    if (fl < 1e-5f) { fx = 1.f; fy = 0.f; fz = 0.f; fl = 1.f; }
+    fx /= fl; fy /= fl; fz /= fl;
+    /* right = forward × up(0,0,1) approx; fallback if parallel */
+    f32 rx = fy * 1.f - fz * 0.f;
+    f32 ry = fz * 0.f - fx * 1.f;
+    f32 rz = fx * 0.f - fy * 0.f;
+    f32 rl = sqrtf(rx*rx + ry*ry + rz*rz);
+    if (rl < 1e-5f) { rx = 0.f; ry = 1.f; rz = 0.f; rl = 1.f; }
+    rx /= rl; ry /= rl; rz /= rl;
+    /* up = right × forward */
+    f32 ux = ry * fz - rz * fy;
+    f32 uy = rz * fx - rx * fz;
+    f32 uz = rx * fy - ry * fx;
+    /* weapon local muzzle offset relative to weapon origin, treated as hand-local offset */
+    f32 lx = muz_pos[0], ly = muz_pos[1], lz = muz_pos[2];
+    f32 wx = hand_pos[0] + rx * lx + ux * ly + fx * lz;
+    f32 wy = hand_pos[1] + ry * lx + uy * ly + fy * lz;
+    f32 wz = hand_pos[2] + rz * lx + uz * ly + fz * lz;
+    if (player_origin) {
+        wx += player_origin[0];
+        wy += player_origin[1];
+        wz += player_origin[2];
+    }
+    out_pos[0] = wx; out_pos[1] = wy; out_pos[2] = wz;
+    if (out_forward) {
+        /* compose hand forward with weapon muzzle forward (weapon fwd in hand basis) */
+        f32 mfx = muz_fwd[0], mfy = muz_fwd[1], mfz = muz_fwd[2];
+        out_forward[0] = rx * mfx + ux * mfy + fx * mfz;
+        out_forward[1] = ry * mfx + uy * mfy + fy * mfz;
+        out_forward[2] = rz * mfx + uz * mfy + fz * mfz;
+        f32 ml = sqrtf(out_forward[0]*out_forward[0] + out_forward[1]*out_forward[1] +
+                       out_forward[2]*out_forward[2]);
+        if (ml > 1e-5f) {
+            out_forward[0] /= ml; out_forward[1] /= ml; out_forward[2] /= ml;
+        } else {
+            out_forward[0] = fx; out_forward[1] = fy; out_forward[2] = fz;
+        }
+    }
+    return true;
+}

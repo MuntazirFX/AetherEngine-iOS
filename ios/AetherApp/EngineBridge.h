@@ -538,4 +538,32 @@ int  engine_postfx_bloom_encode_plan(unsigned *out_passes, unsigned *out_w, unsi
 int  engine_mdl_fixture_attachments_count(void);
 int  engine_lagcomp_push_attack_cmd(float now, float yaw, float pitch, unsigned seq);
 
+ /* ENGINE_BRIDGE_H */
+
+/* ---------- Batch: face-id / bone lagcomp / portal flood / attach chain ---------- */
+int  engine_mesh_validate_face_ids(void);
+int  engine_lightmap_fill_style_blend_draw(float *out, unsigned max_floats, unsigned *out_face_count);
+int  engine_lightmap_sample_style_blend_face(const float *draw_ubo, unsigned float_count,
+                                             unsigned face_id,
+                                             const float base_rgb[3], float out_rgb[3]);
+int  engine_lagcomp_studio_push_demo(float time, int id,
+                                     const float *bone_mats, unsigned bone_count,
+                                     const float *hitbox_mins3, const float *hitbox_maxs3,
+                                     int hitbox_bone, unsigned hitbox_count);
+int  engine_lagcomp_studio_trace(float time,
+                                 float ox, float oy, float oz,
+                                 float dx, float dy, float dz, float max_dist,
+                                 int *out_id, int *out_hitbox, float *out_t);
+int  engine_dynlights_fill_ubo_portal_flood(float view_x, float view_y, float view_z,
+                                            unsigned max_hops,
+                                            float *out_array, int max_floats);
+int  engine_mdl_attachment_chain_world(float *out_pos3, float *out_fwd3);
+int  engine_particles_sync_muzzle_world(float vm_x, float vm_y, float vm_z,
+                                        float vf_x, float vf_y, float vf_z,
+                                        unsigned particle_count,
+                                        float *out_world_pos3);
+int  engine_inv_cycle(int dir);
+int  engine_inv_apply_weapon_input(void);
+int  engine_inv_current_weapon(void);
+
 #endif /* ENGINE_BRIDGE_H */

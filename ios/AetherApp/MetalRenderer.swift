@@ -25,6 +25,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     let queue:  MTLCommandQueue
 
     var bspPipeline:  MTLRenderPipelineState?
+    var styleBlendPipeline: MTLRenderPipelineState?
+    var styleBlendUboBuffer: MTLBuffer?
     var mdlPipeline:  MTLRenderPipelineState?
     var depthState:   MTLDepthStencilState?
     var samplerState: MTLSamplerState?
@@ -147,7 +149,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         vd.attributes[1].format = .float3; vd.attributes[1].offset = 12; vd.attributes[1].bufferIndex = 0
         vd.attributes[2].format = .float2; vd.attributes[2].offset = 24; vd.attributes[2].bufferIndex = 0
         vd.attributes[3].format = .float2; vd.attributes[3].offset = 32; vd.attributes[3].bufferIndex = 0
-        vd.layouts[0].stride = 40
+        vd.attributes[4].format = .float;  vd.attributes[4].offset = 40; vd.attributes[4].bufferIndex = 0
+        vd.layouts[0].stride = 44
         vd.layouts[0].stepFunction = .perVertex
         let d = MTLRenderPipelineDescriptor()
         d.vertexFunction = vfn; d.fragmentFunction = ffn; d.vertexDescriptor = vd
@@ -155,6 +158,15 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         d.depthAttachmentPixelFormat      = mtkView.depthStencilPixelFormat
         do { bspPipeline = try device.makeRenderPipelineState(descriptor: d) }
         catch { print("[MetalRenderer] BSP pipeline error: \(error)") }
+        // Live face-id multi-style LM blend pipeline (cleaned UBO upload path).
+        if let sfn = lib.makeFunction(name: "aether_fragment_style_blend") {
+            let sd = MTLRenderPipelineDescriptor()
+            sd.vertexFunction = vfn; sd.fragmentFunction = sfn; sd.vertexDescriptor = vd
+            sd.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+            sd.depthAttachmentPixelFormat = mtkView.depthStencilPixelFormat
+            do { styleBlendPipeline = try device.makeRenderPipelineState(descriptor: sd) }
+            catch { print("[MetalRenderer] style blend pipeline error: \(error)") }
+        }
     }
 
     private func buildMdlPipeline(mtkView: MTKView) {
@@ -329,12 +341,12 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let vCount = Int(engine_bsp_mesh_vertex_count())
         let iCount = Int(engine_bsp_mesh_index_count())
         guard vCount > 0, iCount > 0 else { return }
-        // aether_mesh_vertex_t: pos3+n3+uv2+luv2 = 10 floats (40 bytes)
-        var vData = [Float](repeating: 0, count: vCount * 10)
+        // aether_mesh_vertex_t: pos3+n3+uv2+luv2+face_id = 11 floats (44 bytes)
+        var vData = [Float](repeating: 0, count: vCount * 11)
         _ = vData.withUnsafeMutableBufferPointer { buf -> Int32 in
             Int32(engine_bsp_mesh_copy_vertices(buf.baseAddress, Int32(vCount)))
         }
-        vertexBuffer = device.makeBuffer(bytes: vData, length: vCount * 40, options: .storageModeShared)
+        vertexBuffer = device.makeBuffer(bytes: vData, length: vCount * 44, options: .storageModeShared)
         var iData = [UInt32](repeating: 0, count: iCount)
         _ = iData.withUnsafeMutableBufferPointer { buf -> Int32 in
             Int32(engine_bsp_mesh_copy_indices(buf.baseAddress, Int32(iCount)))
@@ -730,7 +742,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let bspIndexBuffer = culledIndexBuffer ?? indexBuffer
         if let vb = vertexBuffer, let ib = bspIndexBuffer, bspIndexCount > 0 {
             let useDyn = (bspDynPipeline != nil)
-            let pipeline = useDyn ? bspDynPipeline! : bspPipeline
+            let useStyle = (!useDyn && styleBlendPipeline != nil && hasLightmap)
+            let pipeline = useDyn ? bspDynPipeline! : (useStyle ? styleBlendPipeline! : bspPipeline)
             if let pipeline = pipeline {
             enc.setRenderPipelineState(pipeline)
             var U = Uniforms(model: matrix_identity_float4x4,
@@ -744,6 +757,32 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             enc.setVertexBuffer(vb, offset: 0, index: 0)
             enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
             enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+            if useStyle {
+                var packed = [Float](repeating: 0, count: 4 + 64 * 4)
+                var faceCount: UInt32 = 0
+                let n = packed.withUnsafeMutableBufferPointer { buf -> Int32 in
+                    Int32(engine_lightmap_fill_style_blend_draw(buf.baseAddress, UInt32(packed.count), &faceCount))
+                }
+                if n >= 4 {
+                    // buffer(2) = FaceStyleBlendUniforms header (4 floats)
+                    var hdr = packed
+                    enc.setFragmentBytes(&hdr, length: 16, index: 2)
+                    // buffer(3) = weights float4[64]
+                    var weights = Array(packed[4..<min(packed.count, 4 + 64 * 4)])
+                    while weights.count < 64 * 4 { weights.append(0) }
+                    enc.setFragmentBytes(&weights, length: 64 * 4 * MemoryLayout<Float>.stride, index: 3)
+                    if styleBlendUboBuffer == nil || styleBlendUboBuffer!.length < Int(n) * 4 {
+                        styleBlendUboBuffer = device.makeBuffer(length: max(Int(n) * 4, 1024), options: .storageModeShared)
+                    }
+                    if let buf = styleBlendUboBuffer {
+                        packed.withUnsafeBytes { raw in
+                            if let base = raw.baseAddress {
+                                memcpy(buf.contents(), base, Int(n) * MemoryLayout<Float>.stride)
+                            }
+                        }
+                    }
+                }
+            }
             if useDyn {
                 var packed = [Float](repeating: 0, count: 4 + 16 * 8)
                 let n = packed.withUnsafeMutableBufferPointer { buf -> Int32 in
@@ -1024,7 +1063,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             vd.attributes[1].format = .float3; vd.attributes[1].offset = 12; vd.attributes[1].bufferIndex = 0
             vd.attributes[2].format = .float2; vd.attributes[2].offset = 24; vd.attributes[2].bufferIndex = 0
             vd.attributes[3].format = .float2; vd.attributes[3].offset = 32; vd.attributes[3].bufferIndex = 0
-            vd.layouts[0].stride = 40
+            vd.attributes[4].format = .float;  vd.attributes[4].offset = 40; vd.attributes[4].bufferIndex = 0
+            vd.layouts[0].stride = 44
             vd.layouts[0].stepFunction = .perVertex
             let d = MTLRenderPipelineDescriptor()
             d.vertexFunction = vfn; d.fragmentFunction = ffn; d.vertexDescriptor = vd

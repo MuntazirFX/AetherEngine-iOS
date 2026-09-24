@@ -120,4 +120,24 @@ u32 aether_mdl_write_studio_fixture_ex(u8 *out, u32 cap);
 i32 aether_mdl_attachment_find(const aether_mdl_attachment_t *atts, u32 count,
                                const char *name);
 
-#endif
+
+
+/* 3rd-person studio attachment matrix chain:
+ * weapon muzzle (weapon bones) → player hand attach (player bones) → world. */
+bool aether_mdl_attachment_chain_world(const aether_mdl_attachment_t *hand_att,
+                                       const f32 *player_bone_mats, u32 player_bones,
+                                       const aether_mdl_attachment_t *weapon_att,
+                                       const f32 *weapon_bone_mats, u32 weapon_bones,
+                                       const f32 player_origin[3],
+                                       f32 out_pos[3], f32 out_forward[3]);
+
+/* Fill identity 4x4 into out[16]. */
+void aether_mdl_mat4_identity(f32 out[16]);
+
+/* Multiply column-major 4x4: out = A * B. */
+void aether_mdl_mat4_mul(const f32 A[16], const f32 B[16], f32 out[16]);
+
+/* Translate matrix from origin. */
+void aether_mdl_mat4_translate(const f32 origin[3], f32 out[16]);
+
+#endif /* AETHER_MODEL_FIXTURE_H */

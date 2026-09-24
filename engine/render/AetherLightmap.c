@@ -608,3 +608,54 @@ u32 aether_lightmap_fill_style_blend_ubo(const struct aether_mesh *mesh,
     memcpy(out + 4, w4, faces * 4u * sizeof(f32));
     return need;
 }
+
+u32 aether_lightmap_fill_style_blend_draw(const struct aether_mesh *mesh,
+                                          const aether_lightstyles_t *ls,
+                                          u32 flags,
+                                          f32 *out, u32 max_floats,
+                                          u32 *out_face_count) {
+    if (out_face_count) *out_face_count = 0;
+    if (!out || max_floats < 8) return 0;
+    f32 w4[256 * 4];
+    u32 faces = aether_lightmap_fill_face_style_blend(mesh, ls, w4, 256);
+    if (faces == 0) {
+        out[0]=0; out[1]=(f32)flags; out[2]=(f32)AETHER_MESH_VERTEX_STRIDE; out[3]=0;
+        return 4;
+    }
+    u32 need = 4u + faces * 4u;
+    if (need > max_floats) {
+        faces = (max_floats - 4u) / 4u;
+        need = 4u + faces * 4u;
+    }
+    out[0] = (f32)faces;
+    out[1] = (f32)flags;
+    out[2] = (f32)AETHER_MESH_VERTEX_STRIDE; /* hint for Metal upload */
+    out[3] = 0.f;
+    memcpy(out + 4, w4, faces * 4u * sizeof(f32));
+    if (out_face_count) *out_face_count = faces;
+    return need;
+}
+
+void aether_lightmap_sample_style_blend_face(const f32 *draw_ubo, u32 float_count,
+                                             u32 face_id,
+                                             const f32 base_rgb[3],
+                                             f32 out_rgb[3]) {
+    if (!out_rgb) return;
+    if (!base_rgb || !draw_ubo || float_count < 8) {
+        if (base_rgb) { out_rgb[0]=base_rgb[0]; out_rgb[1]=base_rgb[1]; out_rgb[2]=base_rgb[2]; }
+        else out_rgb[0]=out_rgb[1]=out_rgb[2]=0.f;
+        return;
+    }
+    u32 faces = (u32)(draw_ubo[0] + 0.5f);
+    if (faces == 0) {
+        out_rgb[0]=base_rgb[0]; out_rgb[1]=base_rgb[1]; out_rgb[2]=base_rgb[2];
+        return;
+    }
+    if (face_id >= faces) face_id = faces - 1;
+    const f32 *w4 = draw_ubo + 4u + face_id * 4u;
+    if ((u32)(4u + (face_id + 1u) * 4u) > float_count) {
+        out_rgb[0]=base_rgb[0]; out_rgb[1]=base_rgb[1]; out_rgb[2]=base_rgb[2];
+        return;
+    }
+    aether_lightmap_sample_style_blend(w4, base_rgb, out_rgb);
+}

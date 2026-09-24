@@ -388,3 +388,171 @@ u32 aether_dyn_lights_fill_array_pvs_bleed(const aether_dyn_lights_t *dl,
     }
     return need;
 }
+
+#include "../bsp/AetherBSPVis.h"
+
+u32 aether_bsp_build_leaf_portal_links(const aether_bsp_t *bsp,
+                                       u8 *out_links, u32 leaf_cap) {
+    if (!bsp || !out_links) return 0;
+    u32 lc = aether_bsp_leaf_count(bsp);
+    if (lc == 0 || leaf_cap < lc) return 0;
+    memset(out_links, 0, (size_t)lc * (size_t)lc);
+    u32 links = 0;
+    for (u32 a = 0; a < lc; ++a) {
+        if (!aether_bsp_leaf_is_drawable(bsp, (i32)a)) continue;
+        const aether_bsp_leaf_t *la = aether_bsp_leaf_at(bsp, a);
+        if (!la) continue;
+        for (u32 b = a + 1; b < lc; ++b) {
+            if (!aether_bsp_leaf_is_drawable(bsp, (i32)b)) continue;
+            const aether_bsp_leaf_t *lb = aether_bsp_leaf_at(bsp, b);
+            if (!lb) continue;
+            /* AABB touch / near-touch = portal stub link */
+            int touch = 1;
+            for (int ax = 0; ax < 3; ++ax) {
+                f32 gap = 0.f;
+                if (la->maxs[ax] < lb->mins[ax]) gap = (f32)(lb->mins[ax] - la->maxs[ax]);
+                else if (lb->maxs[ax] < la->mins[ax]) gap = (f32)(la->mins[ax] - lb->maxs[ax]);
+                if (gap > 4.f) { touch = 0; break; }
+            }
+            if (!touch) continue;
+            out_links[a * lc + b] = 1;
+            out_links[b * lc + a] = 1;
+            links++;
+        }
+    }
+    return links;
+}
+
+u32 aether_dyn_lights_cull_portal_flood(const aether_dyn_lights_t *dl,
+                                        const aether_bsp_t *bsp,
+                                        i32 view_leaf,
+                                        u32 max_hops,
+                                        aether_dyn_light_ubo_t *ubo) {
+    if (ubo) memset(ubo, 0, sizeof(*ubo));
+    if (!dl || !bsp || !ubo || view_leaf < 0) return 0;
+    u32 leaf_count = aether_bsp_leaf_count(bsp);
+    if (leaf_count == 0 || (u32)view_leaf >= leaf_count) return 0;
+    if (max_hops == 0) max_hops = 4;
+
+    /* PVS face → leaf visibility seed */
+    u8 *face_bits = NULL;
+    u32 face_count = aether_bsp_face_count(bsp);
+    if (face_count > 0) {
+        face_bits = (u8 *)calloc(face_count, 1);
+        if (face_bits) {
+            (void)aether_bsp_vis_mark_faces(bsp, view_leaf, AETHER_BSP_VIS_USE_PVS,
+                                           face_bits, face_count);
+        }
+    }
+    const u8 *mark_raw = aether_bsp_lump_data(bsp, AETHER_BSP_LUMP_MARKSURFACES);
+    u32 mark_count = aether_bsp_lump_size(bsp, AETHER_BSP_LUMP_MARKSURFACES) / 2u;
+
+    u8 *leaf_vis = (u8 *)calloc(leaf_count, 1);
+    u8 *links = (u8 *)calloc((size_t)leaf_count * leaf_count, 1);
+    u8 *flooded = (u8 *)calloc(leaf_count, 1);
+    u16 *queue = (u16 *)calloc(leaf_count, sizeof(u16));
+    u8 *depth = (u8 *)calloc(leaf_count, 1);
+    if (!leaf_vis || !links || !flooded || !queue || !depth) {
+        free(face_bits); free(leaf_vis); free(links); free(flooded); free(queue); free(depth);
+        return aether_dyn_lights_cull_pvs_bleed(dl, bsp, view_leaf, ubo);
+    }
+
+    for (u32 li = 0; li < leaf_count; ++li) {
+        if (!aether_bsp_leaf_is_drawable(bsp, (i32)li)) continue;
+        const aether_bsp_leaf_t *leaf = aether_bsp_leaf_at(bsp, li);
+        if (!leaf) continue;
+        if (!face_bits || !mark_raw || leaf->num_marksurfaces == 0 || mark_count == 0) {
+            leaf_vis[li] = 1;
+            continue;
+        }
+        int any = 0;
+        for (u32 m = 0; m < leaf->num_marksurfaces; ++m) {
+            u32 off = (u32)leaf->first_marksurface + m;
+            if (off >= mark_count) break;
+            u16 fi = (u16)(mark_raw[off * 2u] | (mark_raw[off * 2u + 1u] << 8));
+            if (fi < face_count && face_bits[fi]) { any = 1; break; }
+        }
+        leaf_vis[li] = (u8)(any ? 1 : 0);
+    }
+    leaf_vis[view_leaf] = 1;
+    (void)aether_bsp_build_leaf_portal_links(bsp, links, leaf_count);
+
+    /* BFS flood through portal links among PVS-visible leaves */
+    u32 qh = 0, qt = 0;
+    queue[qt++] = (u16)view_leaf;
+    flooded[view_leaf] = 1;
+    depth[view_leaf] = 0;
+    while (qh < qt) {
+        u16 cur = queue[qh++];
+        if (depth[cur] >= max_hops) continue;
+        for (u32 n = 0; n < leaf_count; ++n) {
+            if (!links[cur * leaf_count + n]) continue;
+            if (!leaf_vis[n]) continue;
+            if (flooded[n]) continue;
+            flooded[n] = 1;
+            depth[n] = (u8)(depth[cur] + 1);
+            queue[qt++] = (u16)n;
+        }
+    }
+
+    u32 packed = 0;
+    for (u32 i = 0; i < dl->count && packed < AETHER_DYN_LIGHT_UBO_MAX; ++i) {
+        const aether_dyn_light_t *L = &dl->items[i];
+        if (!L->active) continue;
+        int keep = 0;
+        i32 leaf = aether_bsp_find_leaf(bsp, L->position[0], L->position[1], L->position[2]);
+        if (leaf >= 0 && (u32)leaf < leaf_count && flooded[leaf])
+            keep = 1;
+        if (!keep) {
+            /* Radius bleed into any flooded leaf AABB (portal-aware) */
+            for (u32 li = 0; li < leaf_count; ++li) {
+                if (!flooded[li]) continue;
+                const aether_bsp_leaf_t *lf = aether_bsp_leaf_at(bsp, li);
+                if (!lf) continue;
+                f32 cx = 0.5f * ((f32)lf->mins[0] + (f32)lf->maxs[0]);
+                f32 cy = 0.5f * ((f32)lf->mins[1] + (f32)lf->maxs[1]);
+                f32 cz = 0.5f * ((f32)lf->mins[2] + (f32)lf->maxs[2]);
+                f32 hx = 0.5f * ((f32)lf->maxs[0] - (f32)lf->mins[0]);
+                f32 hy = 0.5f * ((f32)lf->maxs[1] - (f32)lf->mins[1]);
+                f32 hz = 0.5f * ((f32)lf->maxs[2] - (f32)lf->mins[2]);
+                f32 dx = fabsf(L->position[0] - cx) - hx;
+                f32 dy = fabsf(L->position[1] - cy) - hy;
+                f32 dz = fabsf(L->position[2] - cz) - hz;
+                if (dx < 0.f) dx = 0.f;
+                if (dy < 0.f) dy = 0.f;
+                if (dz < 0.f) dz = 0.f;
+                f32 dist = sqrtf(dx*dx + dy*dy + dz*dz);
+                if (dist <= L->radius) { keep = 1; break; }
+            }
+        }
+        if (!keep) continue;
+        aether_dyn_light_vertex_t *v = &ubo->lights[packed++];
+        v->x = L->position[0]; v->y = L->position[1]; v->z = L->position[2];
+        v->radius = L->radius;
+        v->r = L->color[0]; v->g = L->color[1]; v->b = L->color[2];
+        v->intensity = L->intensity;
+    }
+    ubo->count = packed;
+    free(face_bits); free(leaf_vis); free(links); free(flooded); free(queue); free(depth);
+    return packed;
+}
+
+u32 aether_dyn_lights_fill_array_portal_flood(const aether_dyn_lights_t *dl,
+                                              const aether_bsp_t *bsp,
+                                              i32 view_leaf,
+                                              u32 max_hops,
+                                              f32 *out, u32 max_floats) {
+    if (!out || max_floats < 4) return 0;
+    aether_dyn_light_ubo_t ubo;
+    u32 n = aether_dyn_lights_cull_portal_flood(dl, bsp, view_leaf, max_hops, &ubo);
+    out[0] = (f32)n; out[1]=0; out[2]=0; out[3]=0;
+    u32 written = 4;
+    for (u32 i = 0; i < n; ++i) {
+        if (written + 8 > max_floats) break;
+        const aether_dyn_light_vertex_t *L = &ubo.lights[i];
+        out[written+0]=L->x; out[written+1]=L->y; out[written+2]=L->z; out[written+3]=L->radius;
+        out[written+4]=L->r; out[written+5]=L->g; out[written+6]=L->b; out[written+7]=L->intensity;
+        written += 8;
+    }
+    return written;
+}

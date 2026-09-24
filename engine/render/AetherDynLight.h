@@ -109,4 +109,22 @@ u32 aether_dyn_lights_fill_array_pvs_bleed(const aether_dyn_lights_t *dl,
                                            i32 view_leaf,
                                            f32 *out, u32 max_floats);
 
+/* Portal-aware dynlight flood: bleed through visible portal/leaf links (PVS adjacency). */
+u32 aether_dyn_lights_cull_portal_flood(const aether_dyn_lights_t *dl,
+                                        const struct aether_bsp *bsp,
+                                        i32 view_leaf,
+                                        u32 max_hops,
+                                        aether_dyn_light_ubo_t *ubo);
+
+u32 aether_dyn_lights_fill_array_portal_flood(const aether_dyn_lights_t *dl,
+                                              const struct aether_bsp *bsp,
+                                              i32 view_leaf,
+                                              u32 max_hops,
+                                              f32 *out, u32 max_floats);
+
+/* Build leaf portal-link bits: leaf_links[i*leaf_count+j]=1 if leaves share AABB contact
+ * and both are drawable (clean-room portal stub). Returns link count. */
+u32 aether_bsp_build_leaf_portal_links(const struct aether_bsp *bsp,
+                                       u8 *out_links, u32 leaf_cap);
+
 #endif /* AETHER_DYN_LIGHT_H */
