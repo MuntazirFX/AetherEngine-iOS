@@ -87,4 +87,62 @@ bool aether_lagcomp_validate_hit(const aether_lagcomp_history_t *h,
                                  const f32 eye_origin[3], f32 max_dist,
                                  aether_lagcomp_hit_t *out);
 
-#endif
+/* ---------- Bone-hitbox lag rewind (studio hitboxes at rewound bones) ---------- */
+#define AETHER_LAGCOMP_MAX_BONES    8
+#define AETHER_LAGCOMP_MAX_HITBOXES 8
+
+typedef struct aether_lagcomp_hitbox {
+    i32 bone;
+    i32 group;
+    f32 mins[3];
+    f32 maxs[3];
+} aether_lagcomp_hitbox_t;
+
+typedef struct aether_lagcomp_studio {
+    i32 id;
+    u8  kind;
+    u8  bone_count;
+    u8  hitbox_count;
+    u8  pad;
+    f32 bone_mats[AETHER_LAGCOMP_MAX_BONES * 16]; /* column-major 4x4 */
+    aether_lagcomp_hitbox_t boxes[AETHER_LAGCOMP_MAX_HITBOXES];
+} aether_lagcomp_studio_t;
+
+typedef struct aether_lagcomp_studio_frame {
+    f32 time;
+    u32 count;
+    aether_lagcomp_studio_t items[AETHER_LAGCOMP_MAX_ENTS];
+} aether_lagcomp_studio_frame_t;
+
+typedef struct aether_lagcomp_studio_history {
+    aether_lagcomp_studio_frame_t frames[AETHER_LAGCOMP_MAX_FRAMES];
+    u32 head;
+    u32 count;
+} aether_lagcomp_studio_history_t;
+
+void aether_lagcomp_studio_init(aether_lagcomp_studio_history_t *h);
+void aether_lagcomp_studio_clear(aether_lagcomp_studio_history_t *h);
+void aether_lagcomp_studio_begin_frame(aether_lagcomp_studio_history_t *h, f32 time);
+
+/* Push entity studio pose (bone mats + hitboxes) into current frame. */
+bool aether_lagcomp_studio_push(aether_lagcomp_studio_history_t *h, i32 id, u8 kind,
+                                const f32 *bone_mats, u32 bone_count,
+                                const aether_lagcomp_hitbox_t *boxes, u32 hitbox_count);
+
+/* Query rewound studio pose for id. */
+bool aether_lagcomp_studio_query(const aether_lagcomp_studio_history_t *h, f32 time, i32 id,
+                                 aether_lagcomp_studio_t *out);
+
+/* Transform local hitbox AABB by bone matrix → world mins/maxs. */
+void aether_lagcomp_hitbox_to_world(const aether_lagcomp_hitbox_t *box,
+                                    const f32 *bone_mat16,
+                                    f32 out_mins[3], f32 out_maxs[3]);
+
+/* Ray vs rewound studio hitboxes (bones at rewind time). */
+bool aether_lagcomp_studio_trace(const aether_lagcomp_studio_history_t *h, f32 time,
+                                 const f32 origin[3], const f32 dir[3], f32 max_dist,
+                                 i32 *out_id, i32 *out_hitbox, f32 *out_t, f32 out_point[3]);
+
+u32 aether_lagcomp_studio_frame_count(const aether_lagcomp_studio_history_t *h);
+
+#endif /* AETHER_LAGCOMP_H */

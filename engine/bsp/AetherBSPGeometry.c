@@ -115,6 +115,7 @@ aether_result_t aether_mesh_from_bsp(const aether_bsp_t *bsp,
             out->nx = nx; out->ny = ny; out->nz = nz;
             out->u = u_atlas; out->v = v_atlas;
             out->lu = 0.f; out->lv = 0.f; /* filled by aether_lightmap_assign_mesh_uvs */
+            out->face_id = (f32)f; /* live Metal multi-style LM face index */
 
             if (v->x < m->bounds_min[0]) m->bounds_min[0] = v->x;
             if (v->y < m->bounds_min[1]) m->bounds_min[1] = v->y;
@@ -165,4 +166,33 @@ void aether_mesh_dump(const aether_mesh_t *mesh) {
     if (!mesh) return;
     aether_log(AETHER_LOG_INFO, "bsp-geo", "MESH: %u verts, %u tris",
                mesh->vertex_count, mesh->index_count / 3);
+}
+
+u32 aether_mesh_assign_face_ids(aether_mesh_t *mesh) {
+    if (!mesh || !mesh->vertices || !mesh->face_ranges || mesh->face_count == 0) return 0;
+    u32 stamped = 0;
+    for (u32 f = 0; f < mesh->face_count; ++f) {
+        const aether_mesh_face_range_t *fr = &mesh->face_ranges[f];
+        for (u32 v = 0; v < fr->vertex_count; ++v) {
+            u32 idx = fr->first_vertex + v;
+            if (idx >= mesh->vertex_count) break;
+            mesh->vertices[idx].face_id = (f32)f;
+            stamped++;
+        }
+    }
+    return stamped;
+}
+
+u32 aether_mesh_validate_face_ids(const aether_mesh_t *mesh) {
+    if (!mesh || !mesh->vertices || !mesh->face_ranges) return 0;
+    u32 bad = 0;
+    for (u32 f = 0; f < mesh->face_count; ++f) {
+        const aether_mesh_face_range_t *fr = &mesh->face_ranges[f];
+        for (u32 v = 0; v < fr->vertex_count; ++v) {
+            u32 idx = fr->first_vertex + v;
+            if (idx >= mesh->vertex_count) { bad++; continue; }
+            if ((u32)(mesh->vertices[idx].face_id + 0.5f) != f) bad++;
+        }
+    }
+    return bad;
 }

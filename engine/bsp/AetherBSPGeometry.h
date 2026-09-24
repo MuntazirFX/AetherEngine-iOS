@@ -16,7 +16,12 @@ typedef struct aether_mesh_vertex {
     f32 nx, ny, nz;   /* normal */
     f32 u, v;         /* atlas UV (0..1) */
     f32 lu, lv;       /* lightmap UV (0..1) — procedural stub or BSP lightmap */
+    f32 face_id;      /* BSP face index for Metal multi-style LM blend (attr) */
 } aether_mesh_vertex_t;
+
+/* Floats per mesh vertex (pos3+n3+uv2+luv2+face_id). */
+#define AETHER_MESH_VERTEX_FLOATS 11
+#define AETHER_MESH_VERTEX_STRIDE 44
 
 /* Maps one BSP face → a contiguous index range in the mesh (for VIS culling). */
 typedef struct aether_mesh_face_range {
@@ -47,6 +52,13 @@ aether_result_t aether_mesh_from_bsp(const aether_bsp_t *bsp,
 
 void aether_mesh_free(aether_mesh_t *mesh);
 void aether_mesh_dump(const aether_mesh_t *mesh);
+
+/* Stamp face_id onto every vertex from face_ranges (idempotent). Returns verts stamped. */
+u32 aether_mesh_assign_face_ids(aether_mesh_t *mesh);
+
+/* Verify face_id matches owning face_ranges. Returns mismatch count (0 = ok). */
+u32 aether_mesh_validate_face_ids(const aether_mesh_t *mesh);
+
 
 #ifdef __cplusplus
 }

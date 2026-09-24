@@ -10,6 +10,7 @@ struct BSPVertexIn {
     float3 normal   [[attribute(1)]];
     float2 uv       [[attribute(2)]];
     float2 luv      [[attribute(3)]]; /* lightmap UV */
+    float  face_id  [[attribute(4)]]; /* BSP face index for style blend */
 };
 
 struct BSPVertexOut {
@@ -17,6 +18,7 @@ struct BSPVertexOut {
     float3 normal;
     float2 uv;
     float2 luv;
+    float  face_id;
 };
 
 struct Uniforms {
@@ -39,6 +41,7 @@ vertex BSPVertexOut aether_vertex_main(BSPVertexIn in [[stage_in]],
     out.normal = normalize((U.model * float4(in.normal, 0.0)).xyz);
     out.uv = in.uv;
     out.luv = in.luv;
+    out.face_id = in.face_id;
     return out;
 }
 
@@ -644,7 +647,9 @@ vertex MdlVertexOut aether_mdl_skinned_vertex(MdlVertexIn in [[stage_in]],
 /* ============ Multi-style lightmap blend sample ============ */
 struct FaceStyleBlendUniforms {
     float face_count;
-    float pad0, pad1, pad2;
+    float flags;       /* bit0 = live face_id attribute */
+    float stride_hint; /* CPU mesh vertex stride */
+    float pad2;
     /* weights packed as float4 per face immediately after in buffer — Metal
      * constant buffer consumers pass FaceStyleBlendWeights separately. */
 };
@@ -678,8 +683,12 @@ fragment float4 aether_fragment_style_blend(BSPVertexOut in [[stage_in]],
         float3 lm = lightmap.sample(samp, in.luv).rgb;
         uint fi = 0u;
         if (FB.face_count > 0.5) {
-            /* Derive coarse face index from lightmap UV tile (stub). */
-            fi = uint(clamp(in.luv.x * FB.face_count, 0.0, FB.face_count - 1.0));
+            /* Live face_id vertex attribute (preferred); LUV stub only if flag clear. */
+            if (FB.flags >= 0.5) {
+                fi = uint(clamp(in.face_id, 0.0, FB.face_count - 1.0));
+            } else {
+                fi = uint(clamp(in.luv.x * FB.face_count, 0.0, FB.face_count - 1.0));
+            }
             if (fi > 63u) fi = 63u;
         }
         lm = aether_apply_style_blend(lm, FW.w[fi]);

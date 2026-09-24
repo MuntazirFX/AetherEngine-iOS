@@ -91,4 +91,12 @@ void aether_player_inv_dump(const aether_player_inventory_t *inv);
 #ifdef __cplusplus
 }
 #endif
+
+/* Cycle to next/prev owned weapon (dir >0 next, <0 prev). Returns new active id. */
+aether_weapon_id_t aether_player_inv_cycle(aether_player_inventory_t *inv, int dir);
+
+/* Apply input weapon-next/prev edges. Returns 1 if switched. */
+int aether_player_inv_apply_weapon_input(aether_player_inventory_t *inv,
+                                         int next_pressed, int prev_pressed);
+
 #endif /* AETHER_PLAYER_INVENTORY_H */

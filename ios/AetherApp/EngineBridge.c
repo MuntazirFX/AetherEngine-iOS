@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <math.h>
 
 #include "../../engine/core/AetherCore.h"
 #include "../../engine/core/AetherEngine.h"
@@ -398,6 +399,11 @@ void engine_player_tick(float dt) {
                        kind, cls, hit[0], hit[1], hit[2]);
         }
     }
+    /* Simple weapon switch cycle on input edges. */
+    (void)aether_player_inv_apply_weapon_input(
+        &g_player_inventory,
+        aether_input_just_pressed(g_input, AETHER_ACTION_WEAPON_NEXT) ? 1 : 0,
+        aether_input_just_pressed(g_input, AETHER_ACTION_WEAPON_PREV) ? 1 : 0);
     aether_input_end_frame(g_input);
 
     /* Drown damage: only while drowning flag set (air depleted + eye under). */
@@ -3024,4 +3030,170 @@ int engine_mdl_fixture_attachments_count(void) {
     u32 n = aether_mdl_write_studio_fixture_ex(buf, sizeof buf);
     aether_mdl_attachment_t atts[8];
     return (int)aether_mdl_fixture_attachments(buf, n, atts, 8);
+}
+
+
+/* ---------- Batch: face-id / bone lagcomp / portal flood / attach chain ---------- */
+static aether_lagcomp_studio_history_t g_lagcomp_studio;
+static int g_lagcomp_studio_init = 0;
+
+int engine_mesh_validate_face_ids(void) {
+    if (!g_active_mesh) return -1;
+    (void)aether_mesh_assign_face_ids(g_active_mesh);
+    return (int)aether_mesh_validate_face_ids(g_active_mesh);
+}
+
+int engine_lightmap_fill_style_blend_draw(float *out, unsigned max_floats, unsigned *out_face_count) {
+    if (!g_active_mesh || !out) return 0;
+    if (!g_lightstyles_init) { aether_lightstyles_init(&g_lightstyles); g_lightstyles_init = 1; }
+    u32 fc = 0;
+    u32 n = aether_lightmap_fill_style_blend_draw(g_active_mesh, &g_lightstyles,
+                                                  AETHER_STYLE_BLEND_FLAG_FACE_ID,
+                                                  out, max_floats, &fc);
+    if (out_face_count) *out_face_count = fc;
+    return (int)n;
+}
+
+int engine_lightmap_sample_style_blend_face(const float *draw_ubo, unsigned float_count,
+                                            unsigned face_id,
+                                            const float base_rgb[3], float out_rgb[3]) {
+    if (!out_rgb) return 0;
+    aether_lightmap_sample_style_blend_face(draw_ubo, float_count, face_id, base_rgb, out_rgb);
+    return 1;
+}
+
+int engine_lagcomp_studio_push_demo(float time, int id,
+                                    const float *bone_mats, unsigned bone_count,
+                                    const float *hitbox_mins3, const float *hitbox_maxs3,
+                                    int hitbox_bone, unsigned hitbox_count) {
+    if (!bone_mats || !hitbox_mins3 || !hitbox_maxs3 || hitbox_count == 0) return 0;
+    if (!g_lagcomp_studio_init) {
+        aether_lagcomp_studio_init(&g_lagcomp_studio);
+        g_lagcomp_studio_init = 1;
+    }
+    aether_lagcomp_studio_begin_frame(&g_lagcomp_studio, time);
+    aether_lagcomp_hitbox_t boxes[AETHER_LAGCOMP_MAX_HITBOXES];
+    u32 hc = hitbox_count;
+    if (hc > AETHER_LAGCOMP_MAX_HITBOXES) hc = AETHER_LAGCOMP_MAX_HITBOXES;
+    for (u32 i = 0; i < hc; ++i) {
+        boxes[i].bone = hitbox_bone;
+        boxes[i].group = 0;
+        boxes[i].mins[0] = hitbox_mins3[i*3+0];
+        boxes[i].mins[1] = hitbox_mins3[i*3+1];
+        boxes[i].mins[2] = hitbox_mins3[i*3+2];
+        boxes[i].maxs[0] = hitbox_maxs3[i*3+0];
+        boxes[i].maxs[1] = hitbox_maxs3[i*3+1];
+        boxes[i].maxs[2] = hitbox_maxs3[i*3+2];
+    }
+    return aether_lagcomp_studio_push(&g_lagcomp_studio, id, AETHER_LAGCOMP_PLAYER,
+                                      bone_mats, bone_count, boxes, hc) ? 1 : 0;
+}
+
+int engine_lagcomp_studio_trace(float time,
+                                float ox, float oy, float oz,
+                                float dx, float dy, float dz, float max_dist,
+                                int *out_id, int *out_hitbox, float *out_t) {
+    if (!g_lagcomp_studio_init) return 0;
+    f32 origin[3] = {ox,oy,oz};
+    f32 dir[3] = {dx,dy,dz};
+    i32 id=-1, hb=-1; f32 t=0, pt[3];
+    if (!aether_lagcomp_studio_trace(&g_lagcomp_studio, time, origin, dir, max_dist,
+                                     &id, &hb, &t, pt))
+        return 0;
+    if (out_id) *out_id = id;
+    if (out_hitbox) *out_hitbox = hb;
+    if (out_t) *out_t = t;
+    return 1;
+}
+
+int engine_dynlights_fill_ubo_portal_flood(float view_x, float view_y, float view_z,
+                                           unsigned max_hops,
+                                           float *out_array, int max_floats) {
+    if (!out_array || max_floats <= 0) return 0;
+    if (!g_dynlights_init) { aether_dyn_lights_init(&g_dynlights); g_dynlights_init = 1; }
+    if (!g_active_bsp) return (int)aether_dyn_lights_fill_array(&g_dynlights, out_array, (u32)max_floats);
+    i32 leaf = aether_bsp_find_leaf(g_active_bsp, view_x, view_y, view_z);
+    return (int)aether_dyn_lights_fill_array_portal_flood(&g_dynlights, g_active_bsp, leaf,
+                                                          max_hops, out_array, (u32)max_floats);
+}
+
+int engine_mdl_attachment_chain_world(float *out_pos3, float *out_fwd3) {
+    if (!out_pos3) return 0;
+    u8 buf[24576];
+    u32 n = aether_mdl_write_studio_fixture_ex(buf, sizeof buf);
+    aether_mdl_attachment_t atts[8];
+    u32 ac = aether_mdl_fixture_attachments(buf, n, atts, 8);
+    if (ac < 2) return 0;
+    /* hand = shell (bone 0), weapon muzzle = muzzle (bone 1) */
+    i32 hand_i = aether_mdl_attachment_find(atts, ac, "shell");
+    i32 muz_i = aether_mdl_attachment_find(atts, ac, "muzzle");
+    if (hand_i < 0) hand_i = 1;
+    if (muz_i < 0) muz_i = 0;
+    aether_mdl_sequence_t seq;
+    if (aether_mdl_anim_rle_decode(&seq, buf, n) != AETHER_OK)
+        aether_mdl_sequence_load_from_data(&seq, buf, n);
+    aether_mdl_skin_state_t sk;
+    aether_mdl_skin_build_from_sequence(&sk, &seq, 1.0f);
+    f32 mats[AETHER_MDL_MAX_BONES * 16];
+    u32 bc = sk.bone_count < AETHER_MDL_MAX_BONES ? sk.bone_count : AETHER_MDL_MAX_BONES;
+    for (u32 i = 0; i < bc; ++i)
+        memcpy(mats + i*16, sk.bones[i].m, 16 * sizeof(f32));
+    f32 origin[3] = {0, 0, 0};
+    aether_vec3_t eye = aether_player_eye_position(&g_player);
+    origin[0]=eye.x; origin[1]=eye.y; origin[2]=eye.z - 36.f;
+    f32 fwd[3];
+    return aether_mdl_attachment_chain_world(&atts[hand_i], mats, bc,
+                                             &atts[muz_i], mats, bc,
+                                             origin, out_pos3, out_fwd3 ? out_fwd3 : fwd) ? 1 : 0;
+}
+
+int engine_particles_sync_muzzle_world(float vm_x, float vm_y, float vm_z,
+                                       float vf_x, float vf_y, float vf_z,
+                                       unsigned particle_count,
+                                       float *out_world_pos3) {
+    aether_particles_t *p = bridge_particles();
+    if (!p) return 0;
+    if (!g_dynlights_init) { aether_dyn_lights_init(&g_dynlights); g_dynlights_init = 1; }
+    f32 vm[3]={vm_x,vm_y,vm_z}, vf[3]={vf_x,vf_y,vf_z};
+    aether_vec3_t eye = aether_player_eye_position(&g_player);
+    f32 eye_pos[3]={eye.x,eye.y,eye.z};
+    f32 eye_fwd[3], eye_right[3], eye_up[3]={0,0,1};
+    aether_lagcomp_look_dir(g_player.yaw, g_player.pitch, eye_fwd);
+    /* right = fwd × up */
+    eye_right[0] = eye_fwd[1]*eye_up[2] - eye_fwd[2]*eye_up[1];
+    eye_right[1] = eye_fwd[2]*eye_up[0] - eye_fwd[0]*eye_up[2];
+    eye_right[2] = eye_fwd[0]*eye_up[1] - eye_fwd[1]*eye_up[0];
+    f32 rl = sqrtf(eye_right[0]*eye_right[0]+eye_right[1]*eye_right[1]+eye_right[2]*eye_right[2]);
+    if (rl > 1e-5f) { eye_right[0]/=rl; eye_right[1]/=rl; eye_right[2]/=rl; }
+    else { eye_right[0]=0; eye_right[1]=1; eye_right[2]=0; }
+    /* recompute up = right × fwd */
+    eye_up[0] = eye_right[1]*eye_fwd[2] - eye_right[2]*eye_fwd[1];
+    eye_up[1] = eye_right[2]*eye_fwd[0] - eye_right[0]*eye_fwd[2];
+    eye_up[2] = eye_right[0]*eye_fwd[1] - eye_right[1]*eye_fwd[0];
+    aether_muzzle_sync_t sync;
+    u32 n = aether_particles_sync_muzzle_world(p, &g_dynlights, vm, vf,
+                                              eye_pos, eye_fwd, eye_right, eye_up,
+                                              particle_count, &sync);
+    if (out_world_pos3) {
+        out_world_pos3[0]=sync.world_pos[0];
+        out_world_pos3[1]=sync.world_pos[1];
+        out_world_pos3[2]=sync.world_pos[2];
+    }
+    return (int)n;
+}
+
+int engine_inv_cycle(int dir) {
+    return (int)aether_player_inv_cycle(&g_player_inventory, dir);
+}
+
+int engine_inv_apply_weapon_input(void) {
+    if (!g_input) return 0;
+    return aether_player_inv_apply_weapon_input(
+        &g_player_inventory,
+        aether_input_just_pressed(g_input, AETHER_ACTION_WEAPON_NEXT) ? 1 : 0,
+        aether_input_just_pressed(g_input, AETHER_ACTION_WEAPON_PREV) ? 1 : 0);
+}
+
+int engine_inv_current_weapon(void) {
+    return (int)aether_player_inv_current(&g_player_inventory);
 }

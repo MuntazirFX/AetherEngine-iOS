@@ -265,11 +265,38 @@ and separable bloom encode — still clean-room:
 | 10 | README + gaps | **done** | This table |
 
 ### Known gaps after metal-blend / studio-attach batch
-- Style-blend Metal fragment uses LUV-derived face index stub (not per-draw face id attribute yet)
-- Viewmodel attachments are clean-room fixture points (not full GoldSrc `mstudiobone_t` attachment array)
-- Lag-comp hit uses AABB history + cmd look (no hitbox bone rewind / backtrack lag window UI)
+- *(addressed in face-id/bone/portal/attach batch: live face_id attr, bone-hitbox rewind, portal flood, attach chain, muzzle world sync, weapon cycle)*
 - Anim RLE is a clean-room run-length of key channels (not byte-identical `mstudioanim_t`)
-- Dynlight bleed is sphere↔leaf AABB (not portal/visbit radius flood)
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+
+
+## Face-id / Bone lagcomp / Portal flood / Attach chain batch (`continue/batch-faceid-bone-portal-attach`)
+
+One PR advances live face-id vertex attributes for Metal multi-style LM blend, bone-hitbox
+lag rewind, portal-aware dynlight flood, 3rd-person attachment matrix chain, viewmodel
+muzzle→world particle/light sync, cleaned style-blend UBO upload, and weapon switch cycle
+— still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Face-id vertex attribute | **done** | `aether_mesh_vertex_t.face_id` + Metal attr(4); style blend uses live face index |
+| 2 | Bone-hitbox lag rewind | **done** | `aether_lagcomp_studio_*` stores bone mats + hitboxes; `hitbox_to_world` + `studio_trace` |
+| 3 | Portal-aware dynlight flood | **done** | leaf portal links + BFS flood; `cull_portal_flood` / `fill_array_portal_flood` |
+| 4 | 3rd-person attach chain | **done** | `aether_mdl_attachment_chain_world` hand→weapon→world matrix chain |
+| 5 | Viewmodel muzzle→world sync | **done** | `aether_particles_sync_muzzle_world` particles + dynlight at world muzzle |
+| 6 | Style blend UBO cleaned | **done** | `fill_style_blend_draw` flags/stride hint; Metal styleBlend pipeline upload |
+| 7 | Weapon switch cycle | **done** | `aether_player_inv_cycle` / `apply_weapon_input` on WEAPON_NEXT/PREV |
+| 8 | Host smokes | **done** | face-id, bone lagcomp, portal flood, attach chain (+ muzzle/draw/cycle) |
+| 9 | Verify regressions | **done** | `verify_host.sh` greps + smoke green |
+| 10 | README + gaps | **done** | This table |
+
+### Known gaps after face-id / bone / portal / attach batch
+- Face-id is per-vertex f32 (not indexed 16-bit); style UBO still capped at 64 faces for Metal weights buffer
+- Bone lagcomp stores up to 8 bones × 8 hitboxes per ent (not full GoldSrc studio bone count)
+- Portal links are AABB-touch stubs among PVS leaves (not Quake-style portal winding clip)
+- 3rd-person attach chain uses clean-room fixture attachments (not full player/weapon MDL load)
+- Muzzle world sync uses eye basis from yaw/pitch (no full viewmatrix from Metal camera)
 - IPA still requires macOS + Xcode via workflow_dispatch
 
 

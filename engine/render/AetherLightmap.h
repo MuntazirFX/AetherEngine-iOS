@@ -143,4 +143,23 @@ u32 aether_lightmap_fill_style_blend_ubo(const struct aether_mesh *mesh,
                                          const aether_lightstyles_t *ls,
                                          f32 *out, u32 max_floats);
 
-#endif /* AETHER_LIGHTMAP_H */
+
+
+/* Per-draw Metal style-blend UBO pack (cleaned upload path).
+ * Layout: [face_count, flags, stride_hint, pad, weights[face*4]...]
+ * flags bit0 = face_id attribute live (not LUV stub). Returns floats written. */
+#define AETHER_STYLE_BLEND_FLAG_FACE_ID 1u
+
+u32 aether_lightmap_fill_style_blend_draw(const struct aether_mesh *mesh,
+                                          const aether_lightstyles_t *ls,
+                                          u32 flags,
+                                          f32 *out, u32 max_floats,
+                                          u32 *out_face_count);
+
+/* Sample style blend for a specific face_id using draw UBO floats. */
+void aether_lightmap_sample_style_blend_face(const f32 *draw_ubo, u32 float_count,
+                                             u32 face_id,
+                                             const f32 base_rgb[3],
+                                             f32 out_rgb[3]);
+
+#endif

@@ -63,4 +63,31 @@ u32 aether_particles_spawn_viewmodel_fire(aether_particles_t *p,
                                           const f32 muzzle[3], const f32 forward[3],
                                           u32 muzzle_count, u32 trail_count);
 
-#endif
+
+
+/* Viewmodel muzzle → world particle + dynlight sync. */
+typedef struct aether_muzzle_sync {
+    f32 world_pos[3];
+    f32 world_fwd[3];
+    f32 light_color[3];
+    f32 light_radius;
+    f32 light_intensity;
+    u32 particles_spawned;
+    u32 light_added;
+} aether_muzzle_sync_t;
+
+struct aether_dyn_lights;
+
+/* Transform view-space muzzle to world via eye pos/forward, spawn particles + optional dynlight. */
+u32 aether_particles_sync_muzzle_world(aether_particles_t *p,
+                                       struct aether_dyn_lights *dl,
+                                       const f32 view_muzzle[3],
+                                       const f32 view_fwd[3],
+                                       const f32 eye_pos[3],
+                                       const f32 eye_fwd[3],
+                                       const f32 eye_right[3],
+                                       const f32 eye_up[3],
+                                       u32 particle_count,
+                                       aether_muzzle_sync_t *out);
+
+#endif /* AETHER_PARTICLE_H */

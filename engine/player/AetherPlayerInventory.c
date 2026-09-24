@@ -135,3 +135,39 @@ void aether_player_inv_dump(const aether_player_inventory_t *inv) {
                inv->has_longjump ? "yes" : "no");
     aether_log(AETHER_LOG_INFO, "inv", "=====================");
 }
+
+aether_weapon_id_t aether_player_inv_cycle(aether_player_inventory_t *inv, int dir) {
+    if (!inv || dir == 0) return inv ? inv->active : AETHER_WPN_NONE;
+    /* Collect owned weapons in id order (slot-ish). */
+    aether_weapon_id_t owned[AETHER_WPN_COUNT];
+    int n = 0;
+    for (int w = 1; w < AETHER_WPN_COUNT; ++w) {
+        if (inv->own_weapon[w]) owned[n++] = (aether_weapon_id_t)w;
+    }
+    if (n == 0) return AETHER_WPN_NONE;
+    int cur = -1;
+    for (int i = 0; i < n; ++i) {
+        if (owned[i] == inv->active) { cur = i; break; }
+    }
+    if (cur < 0) cur = 0;
+    int next = (dir > 0) ? (cur + 1) % n : (cur - 1 + n) % n;
+    inv->active = owned[next];
+    aether_log(AETHER_LOG_INFO, "inv", "cycle dir=%d -> weapon id=%d", dir, (int)inv->active);
+    return inv->active;
+}
+
+int aether_player_inv_apply_weapon_input(aether_player_inventory_t *inv,
+                                         int next_pressed, int prev_pressed) {
+    if (!inv) return 0;
+    if (next_pressed) {
+        aether_weapon_id_t before = inv->active;
+        aether_player_inv_cycle(inv, +1);
+        return inv->active != before ? 1 : 0;
+    }
+    if (prev_pressed) {
+        aether_weapon_id_t before = inv->active;
+        aether_player_inv_cycle(inv, -1);
+        return inv->active != before ? 1 : 0;
+    }
+    return 0;
+}
