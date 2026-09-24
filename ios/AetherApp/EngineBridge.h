@@ -118,6 +118,25 @@ int   engine_water_render_vertex_capacity(void);
 #define ENGINE_CMD_DRAW_WATER 6
 
 
+/* ---------- Fog (render-feature fullscreen tint) ---------- */
+int   engine_fog_enabled(void);
+void  engine_fog_set_enabled(bool enabled);
+float engine_fog_density(void);
+float engine_fog_factor(void);
+float engine_fog_start(void);
+float engine_fog_end(void);
+void  engine_fog_set_density(float density);
+void  engine_fog_set_factor(float factor);
+void  engine_fog_set_range(float start, float end);
+void  engine_fog_set_color(float r, float g, float b, float a);
+void  engine_fog_get_color(float out_rgba[4]);
+/* Copy fog fullscreen verts as flat floats: [x,y,u,v,r,g,b,a] * N. Returns N. */
+int   engine_fog_copy_render(float *out_xy_uv_rgba, int max_vertices);
+int   engine_fog_render_vertex_capacity(void);
+/* AETHER_CMD_DRAW_FOG = 8 — submit feature draw through backend. */
+#define ENGINE_CMD_DRAW_FOG 8
+
+
 /* ---------- BSP ---------- */
 int  engine_bsp_inspect(const char *bsp_path);
 int  engine_bsp_inspect_vfs(const char *vpath);

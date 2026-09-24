@@ -24,6 +24,7 @@
 #include "AetherParticle.h"
 #include "AetherSky.h"
 #include "AetherWater.h"
+#include "AetherFog.h"
 #include "AetherMath.h"
 
 /* Host stubs for Metal backend entry points (Swift provides these on iOS). */
@@ -123,6 +124,34 @@ int main(void) {
 
 
 
+
+
+    /* Fog state: init → params → copy_render (feeds Metal fullscreen tint). */
+    {
+        aether_fog_t fog;
+        expect(aether_fog_init(&fog) == AETHER_OK, "fog_init");
+        expect(fog.enabled, "fog_enabled_default");
+        expect(fog.density > 0.f, "fog_density_default");
+        expect(fog.factor > 0.f, "fog_factor_default");
+        expect(fog.end > fog.start, "fog_range_default");
+        f32 fcol[4] = {0.5f, 0.6f, 0.7f, 1.f};
+        expect(aether_fog_set_color(&fog, fcol) == AETHER_OK, "fog_set_color");
+        expect(aether_fog_set_factor(&fog, 0.4f) == AETHER_OK, "fog_set_factor");
+        aether_fog_set_density(&fog, 0.5f);
+        aether_fog_set_range(&fog, 64.f, 2048.f);
+        expect(fabsf(fog.start - 64.f) < 1e-5f, "fog_start");
+        expect(fabsf(fog.end - 2048.f) < 1e-5f, "fog_end");
+        u32 need = aether_fog_render_vertex_count();
+        expect(need == 6u, "fog_render_vertex_count");
+        aether_fog_vertex_t verts[6];
+        u32 copied = aether_fog_copy_render(&fog, verts, need);
+        expect(copied == need, "fog_copy_render");
+        expect(verts[0].a > 0.f, "fog_vertex_alpha");
+        aether_fog_set_enabled(&fog, false);
+        expect(aether_fog_copy_render(&fog, verts, need) == 0, "fog_copy_disabled");
+        aether_fog_shutdown(&fog);
+        expect(!fog.enabled, "fog_shutdown");
+    }
 
     /* Water state: init → update → copy_render (feeds Metal plane). */
     {
@@ -232,6 +261,9 @@ int main(void) {
         expect(feat->water.enabled, "renderer_water_enabled");
         expect(aether_renderer_draw_feature(rend, AETHER_CMD_DRAW_WATER) == AETHER_OK,
                "renderer_draw_water");
+        expect(feat->fog.enabled, "renderer_fog_enabled");
+        expect(aether_renderer_draw_feature(rend, AETHER_CMD_DRAW_FOG) == AETHER_OK,
+               "renderer_draw_fog");
         aether_renderer_tick_features(rend, 1.f / 30.f);
         expect(feat->water.wave_time > 0.f, "renderer_water_wave_ticks");
     }
