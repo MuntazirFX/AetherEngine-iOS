@@ -56,39 +56,19 @@ struct ClassicHUDOverlay: View {
     }
 
     private var statusPanel: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            Text("HEALTH")
-                .font(.system(size: 14, weight: .bold, design: .serif))
-                .foregroundColor(.white.opacity(0.82))
-            Text("\(health)")
-                .font(.system(size: 31, weight: .bold, design: .serif))
-                .foregroundColor(healthColor)
+        HStack(alignment: .bottom, spacing: 12) {
+            hudLabeledValue(label: "HEALTH", value: "\(health)", valueColor: healthColor, valueSize: 30)
             if armor > 0 {
-                Text("ARMOR")
-                    .font(.system(size: 12, weight: .bold, design: .serif))
-                    .foregroundColor(.white.opacity(0.65))
-                Text("\(armor)")
-                    .font(.system(size: 24, weight: .bold, design: .serif))
-                    .foregroundColor(.white)
+                hudLabeledValue(label: "ARMOR", value: "\(armor)", valueColor: .white, valueSize: 24)
             }
             if battery > 0 {
-                Text("HEV \(battery)")
-                    .font(.system(size: 12, weight: .bold, design: .serif))
-                    .foregroundColor(.white.opacity(0.65))
+                hudLabeledValue(label: "HEV", value: "\(battery)", valueColor: .white.opacity(0.85), valueSize: 18)
             }
-            // Air meter when breath is draining or drowning (HEV-style).
             if air < airMax || drowning {
-                Text("AIR")
-                    .font(.system(size: 12, weight: .bold, design: .serif))
-                    .foregroundColor(.white.opacity(0.65))
-                Text("\(air)")
-                    .font(.system(size: 24, weight: .bold, design: .serif))
-                    .foregroundColor(airColor)
+                hudLabeledValue(label: "AIR", value: "\(air)", valueColor: airColor, valueSize: 24)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.black.opacity(0.42))
+        .hudPanelChrome()
     }
 
     @ViewBuilder
@@ -107,9 +87,19 @@ struct ClassicHUDOverlay: View {
                         .foregroundColor(.white.opacity(0.80))
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(Color.black.opacity(0.42))
+            .hudPanelChrome()
+        }
+    }
+
+    private func hudLabeledValue(label: String, value: String, valueColor: Color, valueSize: CGFloat) -> some View {
+        HStack(alignment: .lastTextBaseline, spacing: 6) {
+            Text(label)
+                .font(.system(size: 12, weight: .bold, design: .serif))
+                .foregroundColor(.white.opacity(0.70))
+            Text(value)
+                .font(.system(size: valueSize, weight: .bold, design: .serif))
+                .foregroundColor(valueColor)
+                .monospacedDigit()
         }
     }
 
@@ -191,5 +181,15 @@ private struct CrosshairView: View {
             }
             .foregroundColor(.green)
         }
+    }
+}
+
+private extension View {
+    func hudPanelChrome() -> some View {
+        self
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.black.opacity(0.45))
+            .overlay(Rectangle().stroke(Color.white.opacity(0.18), lineWidth: 1))
     }
 }

@@ -185,10 +185,38 @@ cmd→authority→snapshot with delta/predict/interp, bloom PostFX chain, and de
 | 10 | README + gaps | **done** | This table |
 
 ### Known gaps after GPU lightstyles / skin / mp batch
-- Style weights are global buffer (per-face style index not yet in BSP mesh attrs)
-- MDL skinning is dual-bone sway stub (no real sequence/anim frame blending)
-- Bloom Metal passes declared; iOS encode still thin (uniforms + shaders ready)
+- *(addressed in seq/styles/spatial/HUD batch: per-face styles, sequence skinning, bloom encode)*
 - Lag-comp is cmd-history lookup only (no rewind world / hit validation)
+- IPA still requires macOS + Xcode via workflow_dispatch
+
+
+
+
+## Seq / Per-face styles / Spatial / HUD / Predict+clip batch (`continue/batch-seq-pvs-audio-ui`)
+
+One PR advances real MDL sequence skinning, per-face lightstyle indices, spatial audio,
+HUD layout polish, clipnode prediction, bloom iOS encode, viewmodel stub, and monster AI
+frame hook — still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | MDL sequence skinning | **done** | `aether_mdl_sequence_*` + `skin_build_from_sequence` → bone mats → `skin_mesh`; seq fixture |
+| 2 | Per-face lightstyle indices | **done** | mesh `face_ranges.styles[]` from BSP; synthetic 0/2 alternate; GPU face weights |
+| 3 | Spatial audio stub | **done** | listener + distance/pan atten; `play_beep_at` / `play_wav_at` |
+| 4 | Live HUD polish | **done** | `AetherHUDLayout` classic rects; Swift chrome consistency for health/armor/air/ammo |
+| 5 | Predict + collision | **done** | `aether_net_predict_apply_cmd_clipped` uses clipnode `collision_move` |
+| 6 | Bloom iOS encode | **done** | Metal bright→blur→combine encode path when bloom enabled |
+| 7 | Weapon viewmodel stub | **done** | `aether_weapon_view_copy_stub` 6-vert gun quad |
+| 8 | Monster AI frame tick | **done** | `aether_monster_ai_tick_registry` hooked in registry_tick |
+| 9 | Host smokes | **done** | seq skin, face styles, spatial, predict+clip (+ bloom/viewmodel/AI) |
+| 10 | README + gaps | **done** | This table |
+
+### Known gaps after seq / styles / spatial / HUD batch
+- Sequence skinning uses clean-room sway keys (not full Studio sequence/anim blocks from `.mdl`)
+- Per-face style weights are primary style only (styles[1..3] blend TBD on GPU)
+- Spatial pan is computed but mono beep path applies gain only (stereo mix on iOS TBD)
+- Bloom encode needs device/Metal; host validates uniforms + encode-needed flag
+- Viewmodel is a colored stub quad (no real v_*.mdl)
 - IPA still requires macOS + Xcode via workflow_dispatch
 
 

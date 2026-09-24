@@ -120,3 +120,19 @@ void aether_postfx_fill_uniforms_ex(const aether_postfx_t *p, f32 out8[8]) {
     aether_postfx_fill_bloom(p, &b);
     out8[4] = b.threshold; out8[5] = b.intensity; out8[6] = b.blur_radius; out8[7] = b.enabled;
 }
+
+
+bool aether_postfx_bloom_encode_needed(const aether_postfx_t *p) {
+    if (!p || !p->enabled || !p->bloom_enabled) return false;
+    if (!aether_postfx_has_offscreen(p)) return false;
+    return p->bloom_intensity > 1e-4f;
+}
+
+void aether_postfx_bloom_target_size(const aether_postfx_t *p, u32 *out_w, u32 *out_h) {
+    u32 w = p && p->target_width ? p->target_width : 1;
+    u32 h = p && p->target_height ? p->target_height : 1;
+    w = w > 1 ? (w / 2) : 1;
+    h = h > 1 ? (h / 2) : 1;
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+}

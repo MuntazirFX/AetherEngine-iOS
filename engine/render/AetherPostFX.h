@@ -74,6 +74,12 @@ void aether_postfx_fill_bloom(const aether_postfx_t *p, aether_postfx_bloom_t *o
 /* Extended: [brightness,gamma,exposure,enabled, threshold,intensity,blur,bloom_on] */
 void aether_postfx_fill_uniforms_ex(const aether_postfx_t *p, f32 out8[8]);
 
+/* True when Metal should run bright→blur→combine instead of single PostFX pass. */
+bool aether_postfx_bloom_encode_needed(const aether_postfx_t *p);
+
+/* Half-res hint for bloom targets (min 1). */
+void aether_postfx_bloom_target_size(const aether_postfx_t *p, u32 *out_w, u32 *out_h);
+
 #ifdef __cplusplus
 }
 #endif

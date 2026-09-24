@@ -24,6 +24,7 @@ typedef struct aether_mesh_face_range {
     u32 index_count;
     u32 first_vertex;
     u32 vertex_count;
+    u8  styles[4];   /* BSP face lightstyle indices (255 = unused) */
 } aether_mesh_face_range_t;
 
 typedef struct aether_mesh {

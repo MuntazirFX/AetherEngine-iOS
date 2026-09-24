@@ -2639,3 +2639,131 @@ int engine_net_lagcomp_cmd_seq(unsigned player_id, float lag_ms) {
     const aether_net_cmd_t *c = aether_net_server_lagcomp_cmd(g_net_server, player_id, lag_ms);
     return c ? (int)c->seq : -1;
 }
+
+/* ---------- Batch: seq skin / per-face styles / spatial / HUD / predict+clip ---------- */
+#include "../../engine/client/hud/AetherHUDLayout.h"
+#include "../../engine/game/weapons/AetherWeaponView.h"
+#include "../../engine/game/monsters/AetherMonsterAI.h"
+
+static aether_mdl_sequence_t g_seq;
+static int g_seq_init = 0;
+static aether_weapon_view_t g_weapon_view;
+static int g_weapon_view_init = 0;
+static aether_hud_layout_t g_hud_layout;
+static int g_hud_layout_init = 0;
+
+static void ensure_seq(void) {
+    if (!g_seq_init) {
+        aether_mdl_sequence_init_sway(&g_seq, 2, 4, 10.f);
+        g_seq_init = 1;
+    }
+}
+static void ensure_weapon_view(void) {
+    if (!g_weapon_view_init) {
+        aether_weapon_view_init(&g_weapon_view, AETHER_WPN_GLOCK);
+        g_weapon_view_init = 1;
+    }
+}
+static void ensure_hud_layout(void) {
+    if (!g_hud_layout_init) {
+        aether_hud_layout_classic(&g_hud_layout);
+        g_hud_layout_init = 1;
+    }
+}
+
+int engine_mdl_skin_build_from_sequence(float frame) {
+    ensure_skin();
+    ensure_seq();
+    aether_mdl_skin_build_from_sequence(&g_skin, &g_seq, frame);
+    return (int)g_skin.bone_count;
+}
+int engine_mdl_skin_mesh(const unsigned char *bone_indices, const float *weights,
+                         const float *in_xyz, float *out_xyz, unsigned vert_count) {
+    ensure_skin();
+    if (!in_xyz || !out_xyz || vert_count == 0) return 0;
+    return (int)aether_mdl_skin_mesh(&g_skin, bone_indices, weights, in_xyz, out_xyz, vert_count);
+}
+int engine_mdl_write_seq_fixture(const char *filepath) {
+    return (int)aether_mdl_write_seq_fixture_file(filepath);
+}
+
+int engine_lightmap_fill_face_style_indices(unsigned char *out, unsigned max_faces) {
+    if (!g_active_mesh || !out) return 0;
+    return (int)aether_lightmap_fill_face_style_indices(g_active_mesh, out, max_faces);
+}
+int engine_lightmap_fill_face_style_weights(float *out, unsigned max_faces) {
+    ensure_lightstyles();
+    if (!g_active_mesh || !out) return 0;
+    return (int)aether_lightmap_fill_face_style_weights(g_active_mesh, &g_lightstyles, out, max_faces);
+}
+
+int engine_audio_set_listener(float x, float y, float z, float fx, float fy, float fz) {
+    if (!g_audio) return 0;
+    aether_audio_set_listener(g_audio, x, y, z, fx, fy, fz);
+    return 1;
+}
+int engine_audio_spatial_atten(float sx, float sy, float sz, float ref_d, float max_d,
+                               float *out_gain_pan_dist3) {
+    if (!g_audio || !out_gain_pan_dist3) return 0;
+    aether_audio_spatial_t sp;
+    aether_audio_spatial_atten(g_audio, sx, sy, sz, ref_d, max_d, &sp);
+    out_gain_pan_dist3[0] = sp.gain;
+    out_gain_pan_dist3[1] = sp.pan;
+    out_gain_pan_dist3[2] = sp.dist;
+    return 1;
+}
+int engine_audio_play_beep_at(float freq, float dur, float vol, float sx, float sy, float sz) {
+    if (!g_audio) return 0;
+    return aether_audio_play_beep_at(g_audio, freq, dur, vol, sx, sy, sz) == AETHER_OK ? 1 : 0;
+}
+
+int engine_hud_layout_classic_pack(float *out24) {
+    ensure_hud_layout();
+    if (!out24) return 0;
+    return (int)aether_hud_layout_pack(&g_hud_layout, out24, 24);
+}
+int engine_hud_layout_apply_classic(void) {
+    ensure_hud_layout();
+    if (!g_hud) return 0;
+    return (int)aether_hud_layout_apply(g_hud, &g_hud_layout);
+}
+
+int engine_net_predict_set_collision_from_bsp(void) {
+    ensure_net_predict();
+    if (!g_collision) return 0;
+    aether_net_predict_set_collision(&g_net_predict, g_collision);
+    return 1;
+}
+int engine_net_predict_apply_cmd_clipped(float forward, float side, float yaw_deg, float dt) {
+    ensure_net_predict();
+    aether_net_predict_cmd_t cmd;
+    memset(&cmd, 0, sizeof cmd);
+    cmd.forward = forward; cmd.side = side; cmd.yaw_deg = yaw_deg;
+    cmd.dt = dt; cmd.seq = g_net_predict.cmd_seq + 1;
+    aether_net_predict_apply_cmd_clipped(&g_net_predict, &cmd, 1);
+    return 1;
+}
+
+int engine_weapon_view_copy_stub(float *out_xyz_uv_rgba, int max_verts) {
+    ensure_weapon_view();
+    if (!out_xyz_uv_rgba || max_verts < 6) return 0;
+    aether_viewmodel_vertex_t verts[6];
+    u32 n = aether_weapon_view_copy_stub(&g_weapon_view, verts, 6);
+    for (u32 i = 0; i < n; ++i) {
+        float *d = out_xyz_uv_rgba + i * 9;
+        d[0]=verts[i].x; d[1]=verts[i].y; d[2]=verts[i].z;
+        d[3]=verts[i].u; d[4]=verts[i].v;
+        d[5]=verts[i].r; d[6]=verts[i].g; d[7]=verts[i].b; d[8]=verts[i].a;
+    }
+    return (int)n;
+}
+
+int engine_monster_ai_tick_frame(float dt) {
+    if (!g_monsters_init) return 0;
+    return (int)aether_monster_ai_tick_registry(&g_monsters, dt);
+}
+
+int engine_postfx_bloom_encode_needed(void) {
+    ensure_postfx();
+    return aether_postfx_bloom_encode_needed(&g_postfx) ? 1 : 0;
+}

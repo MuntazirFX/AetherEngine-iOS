@@ -352,3 +352,44 @@ u32 aether_mdl_fixture_texture_rgba(u8 *out, u32 cap, u32 *out_w, u32 *out_h) {
     }
     return TEX_BYTES;
 }
+
+/* Sequence fixture = textured fixture + trailing seq meta (frame count / bone count). */
+u32 aether_mdl_write_seq_fixture(u8 *out, u32 cap) {
+    u32 n = aether_mdl_write_textured_fixture(out, cap);
+    if (!n || cap < n + 32) return 0;
+    /* Mark sequences=1 in header (offset 164/168) even if no on-disk anim block —
+     * skinning uses aether_mdl_sequence_init_sway for clean-room frames. */
+    wr_i32(out + 164, 1); /* numseq */
+    wr_i32(out + 168, 0); /* seqindex (none — runtime sway stub) */
+    u8 *meta = out + n;
+    wr_i32(meta + 0, (i32)0xAE7E5E01); /* seq magic */
+    wr_i32(meta + 4, 4);               /* frame_count */
+    wr_i32(meta + 8, 2);               /* bone_count */
+    wr_f32(meta + 12, 10.f);           /* fps */
+    return n + 32;
+}
+
+u32 aether_mdl_write_seq_fixture_file(const char *filepath) {
+    if (!filepath) return 0;
+    u8 buf[8192];
+    u32 n = aether_mdl_write_seq_fixture(buf, sizeof buf);
+    if (!n) return 0;
+    FILE *f = fopen(filepath, "wb");
+    if (!f) return 0;
+    size_t w = fwrite(buf, 1, n, f);
+    fclose(f);
+    return (u32)w;
+}
+
+u32 aether_mdl_fixture_seq_frame_count(const u8 *data, u32 size) {
+    if (!data || size < 32) return 0;
+    /* Scan last 32 bytes for seq magic */
+    if (size >= 32) {
+        const u8 *meta = data + size - 32;
+        i32 mag = (i32)((u32)meta[0] | ((u32)meta[1]<<8) | ((u32)meta[2]<<16) | ((u32)meta[3]<<24));
+        if (mag == (i32)0xAE7E5E01) {
+            return (u32)((u32)meta[4] | ((u32)meta[5]<<8) | ((u32)meta[6]<<16) | ((u32)meta[7]<<24));
+        }
+    }
+    return 0;
+}

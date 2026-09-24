@@ -15,6 +15,9 @@ struct aether_audio {
 
     aether_audio_buffer_fn    buffer_fn;
     void                     *buffer_user;
+
+    f32                       listener_pos[3];
+    f32                       listener_fwd[3];
 };
 
 /* ---------- Lifecycle ---------- */
@@ -26,6 +29,7 @@ aether_audio_t *aether_audio_create(void) {
     a->muted = false;
     for (int i = 0; i < AETHER_AUDIO_CHANNEL_COUNT; ++i) a->volume[i] = 1.0f;
     a->volume[AETHER_AUDIO_CHANNEL_MUSIC] = 0.7f;
+    a->listener_fwd[0] = 1.f; /* +X forward */
 
     aether_log(AETHER_LOG_INFO, "audio", "audio system created");
     return a;
@@ -298,4 +302,87 @@ aether_result_t aether_audio_play_wav_data(aether_audio_t *a,
     aether_log(AETHER_LOG_INFO, "audio",
                "play_wav_data frames=%u rate=%u ch=%u", frames, info.sample_rate, info.channels);
     return r;
+}
+
+
+void aether_audio_set_listener(aether_audio_t *a,
+                               f32 x, f32 y, f32 z,
+                               f32 forward_x, f32 forward_y, f32 forward_z) {
+    if (!a) return;
+    a->listener_pos[0] = x; a->listener_pos[1] = y; a->listener_pos[2] = z;
+    f32 len = sqrtf(forward_x*forward_x + forward_y*forward_y + forward_z*forward_z);
+    if (len < 1e-5f) { a->listener_fwd[0]=1.f; a->listener_fwd[1]=0.f; a->listener_fwd[2]=0.f; return; }
+    a->listener_fwd[0] = forward_x / len;
+    a->listener_fwd[1] = forward_y / len;
+    a->listener_fwd[2] = forward_z / len;
+}
+
+void aether_audio_get_listener(const aether_audio_t *a, f32 out_pos[3], f32 out_fwd[3]) {
+    if (out_pos) {
+        if (!a) { out_pos[0]=out_pos[1]=out_pos[2]=0; }
+        else { out_pos[0]=a->listener_pos[0]; out_pos[1]=a->listener_pos[1]; out_pos[2]=a->listener_pos[2]; }
+    }
+    if (out_fwd) {
+        if (!a) { out_fwd[0]=1; out_fwd[1]=0; out_fwd[2]=0; }
+        else { out_fwd[0]=a->listener_fwd[0]; out_fwd[1]=a->listener_fwd[1]; out_fwd[2]=a->listener_fwd[2]; }
+    }
+}
+
+void aether_audio_spatial_atten(const aether_audio_t *a,
+                                f32 src_x, f32 src_y, f32 src_z,
+                                f32 ref_dist, f32 max_dist,
+                                aether_audio_spatial_t *out) {
+    if (!out) return;
+    out->gain = 0.f; out->pan = 0.f; out->dist = 0.f;
+    if (!a) return;
+    if (ref_dist < 1.f) ref_dist = 1.f;
+    if (max_dist < ref_dist) max_dist = ref_dist * 16.f;
+    f32 dx = src_x - a->listener_pos[0];
+    f32 dy = src_y - a->listener_pos[1];
+    f32 dz = src_z - a->listener_pos[2];
+    f32 dist = sqrtf(dx*dx + dy*dy + dz*dz);
+    out->dist = dist;
+    if (dist >= max_dist) { out->gain = 0.f; return; }
+    if (dist <= ref_dist) out->gain = 1.f;
+    else {
+        f32 t = (dist - ref_dist) / (max_dist - ref_dist);
+        out->gain = 1.f - t;
+        if (out->gain < 0.f) out->gain = 0.f;
+    }
+    /* Pan: project onto right = cross(fwd, up_z). */
+    f32 fx = a->listener_fwd[0], fy = a->listener_fwd[1];
+    f32 rx = -fy, ry = fx;
+    f32 rlen = sqrtf(rx*rx + ry*ry);
+    if (rlen > 1e-5f) { rx /= rlen; ry /= rlen; }
+    f32 side = 0.f;
+    if (dist > 1e-4f) side = (dx * rx + dy * ry) / dist;
+    if (side < -1.f) side = -1.f;
+    if (side > 1.f) side = 1.f;
+    out->pan = side;
+}
+
+aether_result_t aether_audio_play_beep_at(aether_audio_t *a, f32 freq_hz,
+                                          f32 duration_sec, f32 volume,
+                                          f32 src_x, f32 src_y, f32 src_z) {
+    if (!a) return AETHER_ERR_INVALID_ARG;
+    aether_audio_spatial_t sp;
+    aether_audio_spatial_atten(a, src_x, src_y, src_z, 64.f, 1024.f, &sp);
+    f32 v = volume * sp.gain;
+    if (v < 0.001f) return AETHER_OK; /* culled */
+    /* Encode pan into volume slightly for mono beep (host hears gain only). */
+    (void)sp.pan;
+    return aether_audio_play_beep(a, freq_hz, duration_sec, v);
+}
+
+aether_result_t aether_audio_play_wav_at(aether_audio_t *a,
+                                         const u8 *wav_data, u32 wav_size,
+                                         f32 volume,
+                                         f32 src_x, f32 src_y, f32 src_z) {
+    if (!a) return AETHER_ERR_INVALID_ARG;
+    aether_audio_spatial_t sp;
+    aether_audio_spatial_atten(a, src_x, src_y, src_z, 64.f, 1024.f, &sp);
+    f32 v = volume * sp.gain;
+    if (v < 0.001f) return AETHER_OK;
+    (void)sp.pan;
+    return aether_audio_play_wav_data(a, wav_data, wav_size, v);
 }

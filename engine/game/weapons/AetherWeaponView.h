@@ -41,6 +41,17 @@ void aether_weapon_view_compute_transform(const aether_weapon_view_t *v,
                                            aether_vec3_t *out_angles);
 void aether_weapon_view_dump(const aether_weapon_view_t *v);
 
+/* Simple viewmodel stub: 2 tris (quad) in view space for Metal draw.
+ * out verts: x,y,z,u,v,r,g,b,a (9 floats). Returns vertex count (6). */
+typedef struct aether_viewmodel_vertex {
+    f32 x, y, z;
+    f32 u, v;
+    f32 r, g, b, a;
+} aether_viewmodel_vertex_t;
+
+u32 aether_weapon_view_copy_stub(const aether_weapon_view_t *v,
+                                 aether_viewmodel_vertex_t *out, u32 max_verts);
+
 #ifdef __cplusplus
 }
 #endif

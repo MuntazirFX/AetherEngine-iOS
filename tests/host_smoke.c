@@ -65,6 +65,11 @@
 #include "AetherNetPredict.h"
 #include "AetherNetCmd.h"
 #include "AetherMDLAnimation.h"
+#include "AetherHUDLayout.h"
+#include "AetherHealth.h"
+#include "AetherWeaponView.h"
+#include "AetherMonsterAI.h"
+#include "AetherMonsterRegistry.h"
 
 #include <unistd.h>
 #include "AetherMath.h"
@@ -100,6 +105,171 @@ static void expect(int cond, const char *msg) {
     }
 }
 
+
+
+static void smoke_batch_seq_pvs_audio_ui(void) {
+    printf("--- batch_seq_pvs_audio_ui ---\n");
+
+    /* 1. Real MDL sequence skinning: frames → bone mats → skinned verts */
+    {
+        aether_mdl_sequence_t seq;
+        aether_mdl_sequence_init_sway(&seq, 2, 4, 10.f);
+        expect(seq.frame_count == 4 && seq.bone_count == 2, "b5_seq_init");
+        aether_mdl_skin_state_t sk;
+        aether_mdl_skin_build_from_sequence(&sk, &seq, 1.0f);
+        expect(sk.bone_count == 2, "b5_seq_skin_bones");
+        f32 ubo[32];
+        expect(aether_mdl_skin_fill_ubo(&sk, ubo, 32) == 32, "b5_seq_ubo");
+        f32 in[9] = { -16.f,-16.f,0.f, 16.f,-16.f,0.f, 0.f,16.f,0.f };
+        f32 out[9];
+        u8 bones[3] = {0,0,1};
+        f32 wts[3] = {1.f,1.f,1.f};
+        expect(aether_mdl_skin_mesh(&sk, bones, wts, in, out, 3) == 3, "b5_seq_mesh");
+        f32 d0 = fabsf(out[0]-in[0]) + fabsf(out[1]-in[1]);
+        expect(d0 > 0.01f || fabsf(out[6]-in[6]) + fabsf(out[7]-in[7]) > 0.01f, "b5_seq_moved");
+        f32 dual[3];
+        aether_mdl_skin_transform_point2(&sk, 0, 0.6f, 1, 0.4f, in, dual);
+        expect(fabsf(dual[0]) + fabsf(dual[1]) + fabsf(dual[2]) > 0.f, "b5_seq_dual");
+        char path[] = "/tmp/aether_seq_fixture.mdl";
+        expect(aether_mdl_write_seq_fixture_file(path) > 400, "b5_seq_fixture_write");
+        u8 buf[8192];
+        FILE *f = fopen(path, "rb");
+        expect(f != NULL, "b5_seq_fixture_open");
+        size_t n = f ? fread(buf, 1, sizeof buf, f) : 0;
+        if (f) fclose(f);
+        expect(aether_mdl_fixture_seq_frame_count(buf, (u32)n) == 4, "b5_seq_fixture_frames");
+        aether_mdl_t *m = aether_mdl_load(path);
+        expect(m && aether_mdl_is_valid(m), "b5_seq_fixture_load");
+        aether_mdl_free(m);
+    }
+
+    /* 2. Per-face lightstyle indices from BSP → mesh + GPU weights */
+    {
+        aether_bsp_t *bsp = aether_bsp_create_synthetic_room();
+        aether_mesh_t *mesh = NULL;
+        expect(bsp && aether_mesh_from_bsp(bsp, NULL, &mesh) == AETHER_OK && mesh, "b5_face_mesh");
+        expect(mesh->face_count >= 2 && mesh->face_ranges, "b5_face_ranges");
+        expect(mesh->face_ranges[0].styles[0] == 0, "b5_face0_style0");
+        expect(mesh->face_ranges[1].styles[0] == 2, "b5_face1_style2");
+        u8 idx[16];
+        u32 ni = aether_lightmap_fill_face_style_indices(mesh, idx, 16);
+        expect(ni >= 2 && idx[0] == 0 && idx[1] == 2, "b5_face_indices");
+        aether_lightstyles_t ls;
+        aether_lightstyles_init(&ls);
+        aether_lightstyles_update(&ls, 1.0f);
+        f32 w[16];
+        u32 nw = aether_lightmap_fill_face_style_weights(mesh, &ls, w, 16);
+        expect(nw >= 2 && w[0] > 0.2f && w[1] >= 0.25f, "b5_face_weights");
+        expect(fabsf(w[0] - w[1]) > 1e-6f || ls.strings[2][0] != 0, "b5_face_weights_differ");
+        aether_mesh_free(mesh);
+        aether_bsp_free(bsp);
+    }
+
+    /* 3. Spatial audio distance/pan atten */
+    {
+        aether_audio_t *a = aether_audio_create();
+        expect(a && aether_audio_init(a) == AETHER_OK, "b5_audio_init");
+        aether_audio_set_buffer_callback(a, batch_audio_buf_cb, NULL);
+        aether_audio_set_listener(a, 0, 0, 40, 1, 0, 0);
+        aether_audio_spatial_t near_sp, far_sp, side_sp;
+        aether_audio_spatial_atten(a, 32, 0, 40, 64, 1024, &near_sp);
+        aether_audio_spatial_atten(a, 900, 0, 40, 64, 1024, &far_sp);
+        aether_audio_spatial_atten(a, 0, 200, 40, 64, 1024, &side_sp);
+        expect(near_sp.gain > far_sp.gain, "b5_spatial_dist");
+        expect(far_sp.gain < 0.3f, "b5_spatial_far");
+        expect(fabsf(side_sp.pan) > 0.2f, "b5_spatial_pan");
+        g_batch_buf_cb = 0;
+        expect(aether_audio_play_beep_at(a, 440.f, 0.05f, 1.f, 32, 0, 40) == AETHER_OK, "b5_beep_near");
+        expect(g_batch_buf_cb >= 1, "b5_beep_near_cb");
+        g_batch_buf_cb = 0;
+        expect(aether_audio_play_beep_at(a, 440.f, 0.05f, 1.f, 2000, 0, 40) == AETHER_OK, "b5_beep_far_cull");
+        expect(g_batch_buf_cb == 0, "b5_beep_far_silent");
+        aether_audio_shutdown(a);
+        aether_audio_destroy(a);
+    }
+
+    /* 4. HUD layout consistency */
+    {
+        aether_hud_layout_t lay;
+        aether_hud_layout_classic(&lay);
+        expect(lay.version == 1 && lay.health.y > lay.air.y, "b5_hud_layout_order");
+        f32 pack[24];
+        expect(aether_hud_layout_pack(&lay, pack, 24) == 24, "b5_hud_pack");
+        expect(pack[0] == lay.health.x && pack[20] == lay.chat.x, "b5_hud_pack_fields");
+        aether_hud_t *hud = aether_hud_create();
+        aether_player_health_t ph;
+        aether_player_health_init(&ph);
+        aether_hud_health_t *hh = aether_hud_health_create(hud, &ph);
+        expect(hh && aether_hud_layout_apply(hud, &lay) >= 1, "b5_hud_apply");
+        aether_hud_destroy(hud);
+    }
+
+    /* 5. Client prediction with clipnode collision */
+    {
+        aether_bsp_t *bsp = aether_bsp_create_synthetic_room();
+        aether_collision_t *col = aether_collision_build(bsp);
+        expect(bsp && col && aether_collision_clipnode_count(col) > 0, "b5_predict_col");
+        aether_net_predict_t pr;
+        aether_net_predict_init(&pr, 1);
+        pr.origin[0] = 0.f; pr.origin[1] = 0.f; pr.origin[2] = 0.f;
+        aether_net_predict_set_collision(&pr, col);
+        aether_net_predict_cmd_t cmd = { .forward = 1.f, .side = 0.f, .yaw_deg = 0.f, .dt = 0.05f, .seq = 1 };
+        /* Free move (no wall yet) */
+        aether_net_predict_apply_cmd_clipped(&pr, &cmd, 1);
+        f32 o1[3]; aether_net_predict_get_origin(&pr, o1);
+        expect(o1[0] > 0.5f, "b5_predict_clip_move");
+        /* Drive into +X wall repeatedly — should clamp inside room */
+        for (int i = 0; i < 40; ++i) {
+            cmd.seq = (u32)(i + 2);
+            aether_net_predict_apply_cmd_clipped(&pr, &cmd, 1);
+        }
+        f32 o2[3]; aether_net_predict_get_origin(&pr, o2);
+        expect(o2[0] < 240.f, "b5_predict_clip_wall"); /* room ~±256 with hull inset */
+        aether_collision_free(col);
+        aether_bsp_free(bsp);
+    }
+
+    /* 6. Bloom encode needed flag */
+    {
+        aether_postfx_t fx;
+        aether_postfx_init(&fx);
+        expect(!aether_postfx_bloom_encode_needed(&fx), "b5_bloom_off");
+        aether_postfx_ensure_offscreen(&fx, 640, 360);
+        aether_postfx_set_bloom_chain(&fx, 0.7f, 1.0f, 2.f);
+        expect(aether_postfx_bloom_encode_needed(&fx), "b5_bloom_on");
+        u32 bw=0,bh=0;
+        aether_postfx_bloom_target_size(&fx, &bw, &bh);
+        expect(bw == 320 && bh == 180, "b5_bloom_half");
+    }
+
+    /* 7. Weapon viewmodel stub draw */
+    {
+        aether_weapon_view_t v;
+        aether_weapon_view_init(&v, AETHER_WPN_GLOCK);
+        aether_weapon_view_play(&v, AETHER_VIEW_ANIM_FIRE);
+        aether_weapon_view_tick(&v, 0.05f, 100.f, true);
+        aether_viewmodel_vertex_t verts[6];
+        expect(aether_weapon_view_copy_stub(&v, verts, 6) == 6, "b5_viewmodel_verts");
+        expect(verts[0].a > 0.5f && verts[2].z < 0.f, "b5_viewmodel_fields");
+    }
+
+    /* 8. Monster AI tick hooked for synthetic ents */
+    {
+        aether_monster_registry_t reg;
+        aether_entity_t player;
+        memset(&player, 0, sizeof player);
+        player.origin = (aether_vec3_t){0,0,0};
+        aether_monster_registry_init(&reg, &player);
+        aether_monster_t *m = aether_monster_registry_spawn(&reg, AETHER_MON_HEADCRAB,
+                                                            (aether_vec3_t){-40.f, 0.f, 0.f});
+        expect(m != NULL, "b5_monster_spawn");
+        if (m && m->entity) m->entity->angles.y = 0.f; /* face +X toward player */
+        u32 ticks = aether_monster_ai_tick_registry(&reg, 0.05f);
+        expect(ticks >= 1, "b5_monster_ai_ticks");
+        aether_monster_registry_tick(&reg, 0.05f);
+        expect(m->enemy == &player, "b5_monster_ai_aware");
+    }
+}
 
 static void smoke_batch_gpu_lightstyles_skin_mp(void) {
     printf("--- batch_gpu_lightstyles_skin_mp ---\n");
@@ -1954,6 +2124,7 @@ int main(void) {
 
 
     smoke_batch_gpu_lightstyles_skin_mp();
+    smoke_batch_seq_pvs_audio_ui();
 
     if (g_failures) {
         fprintf(stderr, "\n%d smoke check(s) failed\n", g_failures);

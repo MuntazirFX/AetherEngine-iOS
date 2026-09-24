@@ -472,6 +472,25 @@ int  engine_net_server_tick_authority(float dt);
 int  engine_net_server_build_snapshot_players(void);
 int  engine_net_lagcomp_cmd_seq(unsigned player_id, float lag_ms);
 
+/* ---------- Batch: seq skin / per-face styles / spatial audio / HUD / predict+clip ---------- */
+int  engine_mdl_skin_build_from_sequence(float frame);
+int  engine_mdl_skin_mesh(const unsigned char *bone_indices, const float *weights,
+                          const float *in_xyz, float *out_xyz, unsigned vert_count);
+int  engine_mdl_write_seq_fixture(const char *filepath);
+int  engine_lightmap_fill_face_style_indices(unsigned char *out, unsigned max_faces);
+int  engine_lightmap_fill_face_style_weights(float *out, unsigned max_faces);
+int  engine_audio_set_listener(float x, float y, float z, float fx, float fy, float fz);
+int  engine_audio_spatial_atten(float sx, float sy, float sz, float ref_d, float max_d,
+                                float *out_gain_pan_dist3);
+int  engine_audio_play_beep_at(float freq, float dur, float vol, float sx, float sy, float sz);
+int  engine_hud_layout_classic_pack(float *out24);
+int  engine_hud_layout_apply_classic(void);
+int  engine_net_predict_set_collision_from_bsp(void);
+int  engine_net_predict_apply_cmd_clipped(float forward, float side, float yaw_deg, float dt);
+int  engine_weapon_view_copy_stub(float *out_xyz_uv_rgba, int max_verts);
+int  engine_monster_ai_tick_frame(float dt);
+int  engine_postfx_bloom_encode_needed(void);
+
 #ifdef __cplusplus
 }
 #endif

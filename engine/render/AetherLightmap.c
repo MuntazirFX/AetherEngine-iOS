@@ -500,3 +500,31 @@ u32 aether_lightstyles_fill_gpu_weights(const aether_lightstyles_t *ls,
     }
     return 4 + AETHER_MAX_LIGHTSTYLES; /* floats conceptually */
 }
+
+
+u32 aether_lightmap_fill_face_style_indices(const struct aether_mesh *mesh,
+                                            u8 *out_indices, u32 max_faces) {
+    if (!mesh || !out_indices || !mesh->face_ranges || mesh->face_count == 0) return 0;
+    u32 n = mesh->face_count;
+    if (n > max_faces) n = max_faces;
+    for (u32 i = 0; i < n; ++i) {
+        u8 s = mesh->face_ranges[i].styles[0];
+        out_indices[i] = (s == 255) ? 0 : s;
+    }
+    return n;
+}
+
+u32 aether_lightmap_fill_face_style_weights(const struct aether_mesh *mesh,
+                                            const aether_lightstyles_t *ls,
+                                            f32 *out_weights, u32 max_faces) {
+    if (!mesh || !ls || !out_weights || !mesh->face_ranges || mesh->face_count == 0) return 0;
+    u32 n = mesh->face_count;
+    if (n > max_faces) n = max_faces;
+    for (u32 i = 0; i < n; ++i) {
+        u8 s = mesh->face_ranges[i].styles[0];
+        if (s == 255) s = 0;
+        f32 v = aether_lightstyles_value(ls, s);
+        out_weights[i] = aether_lightstyles_gpu_scale(v);
+    }
+    return n;
+}
