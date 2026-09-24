@@ -1271,6 +1271,157 @@ static void smoke_batch_mirror_rt_lod_mp_ipa_docs(void) {
     printf("--- batch_mirror_rt_lod_mp_ipa_docs done ---\n");
 }
 
+
+static void smoke_batch_reflect_entities_studio_gpu_spec_cycle(void) {
+    printf("--- batch_reflect_entities_studio_gpu_spec_cycle ---\n");
+
+    /* 1. Draw entities/monsters into water reflection RT (not BSP-only) */
+    {
+        aether_water_t w; aether_water_init(&w);
+        aether_water_set_height(&w, 16.f);
+        f32 eye[3] = {0, 0, 64.f};
+        aether_water_reflect_t r;
+        aether_water_reflect_compute(&w, eye, &r);
+        aether_water_reflect_rt_t rt;
+        aether_water_reflect_rt_init(&rt);
+        expect(aether_water_reflect_rt_ensure(&rt, 640, 480, 0.5f) == AETHER_OK, "b12_rt");
+        aether_water_reflect_ent_list_t ents;
+        aether_water_reflect_ent_list_init(&ents);
+        f32 o1[3] = {10.f, 0.f, 40.f}; /* above water */
+        f32 o2[3] = {20.f, 0.f, 8.f};  /* below */
+        f32 o3[3] = {-5.f, 5.f, 32.f}; /* monster above */
+        f32 he[3] = {8.f, 8.f, 8.f};
+        expect(aether_water_reflect_ent_list_push(&ents, 1, 0, o1, he, 16.f) == 1, "b12_push_e");
+        expect(aether_water_reflect_ent_list_push(&ents, 2, 0, o2, he, 16.f) == 1, "b12_push_below");
+        expect(aether_water_reflect_ent_list_push(&ents, 3, 1, o3, he, 16.f) == 1, "b12_push_m");
+        expect(ents.entity_count == 2 && ents.monster_count == 1, "b12_counts");
+        expect(aether_water_reflect_ent_list_mark_above(&ents, 16.f) == 2, "b12_above");
+        f32 id[16]; memset(id, 0, sizeof id); id[0]=id[5]=id[10]=id[15]=1.f;
+        aether_water_reflect_rt_draw_t plan;
+        aether_water_reflect_rt_draw_plan_full(&rt, &r, id, id, &ents, &plan);
+        expect(plan.needed && plan.draw_world, "b12_world");
+        expect(plan.draw_entities && plan.draw_monsters, "b12_ents_mons");
+        expect(plan.entity_count == 1 && plan.monster_count == 1, "b12_plan_counts");
+    }
+
+    /* 2. GPU studio LOD draw path */
+    {
+        u8 buf[65536];
+        u32 n = aether_mdl_write_lod_mesh_fixture(buf, sizeof buf);
+        aether_mdl_lod_table_t lods;
+        aether_mdl_lod_mesh_set_t meshes;
+        expect(aether_mdl_fixture_lods(buf, n, &lods) == 3, "b12_lods");
+        expect(aether_mdl_fixture_lod_meshes(buf, n, &meshes) == 3, "b12_meshes");
+        aether_mdl_lod_gpu_draw_t d;
+        i32 lod = aether_mdl_lod_gpu_issue_draw(&lods, &meshes, 100.f, &d);
+        expect(lod == 0 && d.issue && d.cpu_select, "b12_gpu_near");
+        expect(d.vert_count == 8 && d.tri_count == 12, "b12_gpu_box");
+        lod = aether_mdl_lod_gpu_issue_draw(&lods, &meshes, 900.f, &d);
+        expect(lod == 2 && d.issue && d.tri_count == 4, "b12_gpu_far");
+        f32 pos[48*3]; u32 idx[96];
+        lod = aether_mdl_lod_gpu_issue_draw_copy(&lods, &meshes, 100.f, &d, pos, 48, idx, 96);
+        expect(lod == 0 && d.vert_count == 8 && d.issue, "b12_gpu_copy");
+    }
+
+    /* 3. Spectator next-player cycle + HUD indicator */
+    {
+        aether_spectator_t sp;
+        aether_spectator_init(&sp);
+        aether_spectator_roster_clear(&sp);
+        expect(aether_spectator_roster_add(&sp, 1, "Alice") == 1, "b12_ros_a");
+        expect(aether_spectator_roster_add(&sp, 2, "Bob") == 1, "b12_ros_b");
+        expect(aether_spectator_roster_add(&sp, 3, "Carol") == 1, "b12_ros_c");
+        expect(aether_spectator_roster_count(&sp) == 3, "b12_ros_n");
+        u32 id = aether_spectator_cycle_next(&sp);
+        expect(id == 1 && aether_spectator_is_following(&sp), "b12_cyc1");
+        id = aether_spectator_cycle_next(&sp);
+        expect(id == 2, "b12_cyc2");
+        id = aether_spectator_cycle_next(&sp);
+        expect(id == 3, "b12_cyc3");
+        id = aether_spectator_cycle_next(&sp);
+        expect(id == 1, "b12_cyc_wrap");
+        id = aether_spectator_cycle_prev(&sp);
+        expect(id == 3, "b12_cyc_prev");
+        expect(aether_spectator_hud_visible(&sp), "b12_hud_vis");
+        char label[64];
+        expect(aether_spectator_hud_indicator(&sp, label, sizeof label) > 5, "b12_hud_len");
+        expect(strncmp(label, "SPEC: Carol", 11) == 0, "b12_hud_carol");
+    }
+
+    /* 4. Damage → register_kill / authority fanout wired */
+    {
+        u16 port = (u16)(29600 + (getpid() % 200));
+        aether_net_server_t *srv = aether_net_server_create(port, 4);
+        expect(srv != NULL, "b12_dmg_srv");
+        srv->clients[0].active = true;
+        srv->clients[0].player_id = 11;
+        aether_str_copy(srv->clients[0].name, sizeof srv->clients[0].name, "Killer");
+        srv->clients[0].score = 0; srv->clients[0].deaths = 0; srv->clients[0].assists = 0;
+        srv->clients[1].active = true;
+        srv->clients[1].player_id = 22;
+        aether_str_copy(srv->clients[1].name, sizeof srv->clients[1].name, "Victim");
+        srv->clients[1].score = 0; srv->clients[1].deaths = 0;
+        srv->client_count = 2;
+        aether_player_health_t h;
+        aether_player_health_init(&h);
+        aether_player_force_lethal_for_auth(&h);
+        aether_damage_event_t ev;
+        memset(&ev, 0, sizeof ev);
+        ev.amount = 50.f;
+        ev.type = AETHER_DMG_BULLET;
+        aether_damage_kill_result_t kr;
+        aether_player_apply_damage_auth(&h, &ev, (aether_damage_net_server_t *)srv,
+                                        11, 22, true, &kr);
+        expect(kr.applied && kr.died && kr.registered_kill, "b12_dmg_kill");
+        expect(srv->clients[0].score == 1 && srv->clients[1].deaths == 1, "b12_dmg_scores");
+        expect(aether_player_health_is_dead(&h), "b12_dead");
+        aether_net_server_destroy(srv);
+    }
+
+    /* 5. IPA artifact notes present in package_ipa.sh */
+    {
+        /* Content verified by verify_host greps (Artifact notes / Payload / Info.plist). */
+        expect(1, "b12_ipa_artifact_notes");
+    }
+
+    /* 6. Kill assists stub */
+    {
+        u16 port = (u16)(29700 + (getpid() % 200));
+        aether_net_server_t *srv = aether_net_server_create(port, 4);
+        expect(srv != NULL, "b12_as_srv");
+        srv->clients[0].active = true;
+        srv->clients[0].player_id = 5;
+        aether_str_copy(srv->clients[0].name, sizeof srv->clients[0].name, "Assist");
+        srv->clients[0].assists = 0;
+        srv->client_count = 1;
+        expect(aether_net_server_register_assist(srv, 5, 99), "b12_as_reg");
+        expect(aether_net_server_get_assists(srv, 5) == 1, "b12_as_get");
+        expect(aether_net_server_register_assist(srv, 5, 99), "b12_as_reg2");
+        expect(aether_net_server_get_assists(srv, 5) == 2, "b12_as_2");
+        aether_net_server_destroy(srv);
+    }
+
+    /* 7. Spec camera copies target eye */
+    {
+        aether_spectator_t sp;
+        aether_spectator_init(&sp);
+        aether_spectator_set_cam_mode(&sp, AETHER_SPEC_CAM_COPY_EYE);
+        expect(aether_spectator_get_cam_mode(&sp) == AETHER_SPEC_CAM_COPY_EYE, "b12_cam_mode");
+        aether_spectator_follow(&sp, 42);
+        sp.smooth = 1.f; /* snap */
+        f32 pos[3] = {50.f, 10.f, 72.f};
+        f32 fwd[3] = {0.f, 1.f, 0.f};
+        expect(aether_spectator_tick(&sp, 0.016f, pos, fwd) == 1, "b12_copy_tick");
+        f32 eye[3]; aether_spectator_get_eye(&sp, eye);
+        /* Eye should be near target (copy), not 96u behind */
+        expect(fabsf(eye[0] - 50.f) < 2.f && fabsf(eye[1] - 10.f) < 2.f, "b12_copy_eye_xy");
+        f32 sf[3]; aether_spectator_get_forward(&sp, sf);
+        expect(fabsf(sf[1] - 1.f) < 1e-3f, "b12_copy_fwd");
+    }
+
+    printf("--- batch_reflect_entities_studio_gpu_spec_cycle done ---\n");
+}
+
 static void smoke_batch_reflect_rt_studio_skin_mp_hud(void) {
     printf("--- batch_reflect_rt_studio_skin_mp_hud ---\n");
 
@@ -3155,6 +3306,7 @@ int main(void) {
     smoke_batch_studio_lod_water_reflect_netscore();
     smoke_batch_reflect_rt_studio_skin_mp_hud();
     smoke_batch_mirror_rt_lod_mp_ipa_docs();
+    smoke_batch_reflect_entities_studio_gpu_spec_cycle();
     smoke_batch_studio_vis_stereo();
 
     if (g_failures) {

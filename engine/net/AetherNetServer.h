@@ -30,6 +30,7 @@ typedef struct aether_net_client_slot {
     i32                 armor;
     i32                 score;
     i32                 deaths;
+    i32                 assists; /* kill assist stub */
     i32                 ping_ms;
     aether_net_cmd_history_t cmd_hist;
     u32                 buttons;
@@ -139,5 +140,9 @@ u32 aether_net_server_tick_authority_kill_score(aether_net_server_t *s, f32 dt,
 
 /* Fan out current scores (scoreboard packet) to all clients. Returns clients reached. */
 u32 aether_net_server_fanout_scores(aether_net_server_t *s);
+
+/* Optional kill-assist stub: +1 assist on assister (no frag). Returns true if slot found. */
+bool aether_net_server_register_assist(aether_net_server_t *s, u32 assister_id, u32 victim_id);
+i32  aether_net_server_get_assists(const aether_net_server_t *s, u32 player_id);
 
 #endif /* AETHER_NET_SERVER_H */

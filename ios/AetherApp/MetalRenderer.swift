@@ -418,6 +418,73 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             }
             _ = pipe; _ = pixelFormat
         }
+        // Entities/monsters into reflection RT (not BSP-only).
+        var de: Int32 = 0, dm: Int32 = 0
+        var ec: UInt32 = 0, mc: UInt32 = 0
+        var rw2: UInt32 = 0, rh2: UInt32 = 0
+        var clr2: Int32 = 0, dw2: Int32 = 0, res2: Int32 = 0
+        _ = engine_water_reflect_rt_draw_plan_full(&mvpArr, &rw2, &rh2, &clr2, &dw2, &de, &dm, &ec, &mc, &res2)
+        if (de != 0 || dm != 0),
+           let pipe = mdlPipeline,
+           let vb = monsterVertexBuf, let ib = monsterIndexBuf, monsterIndexCount > 0 {
+            enc.setRenderPipelineState(pipe)
+            enc.setVertexBuffer(vb, offset: 0, index: 0)
+            let mirrorMvp2 = simd_float4x4(columns: (
+                SIMD4<Float>(mvpArr[0], mvpArr[1], mvpArr[2], mvpArr[3]),
+                SIMD4<Float>(mvpArr[4], mvpArr[5], mvpArr[6], mvpArr[7]),
+                SIMD4<Float>(mvpArr[8], mvpArr[9], mvpArr[10], mvpArr[11]),
+                SIMD4<Float>(mvpArr[12], mvpArr[13], mvpArr[14], mvpArr[15])
+            ))
+            for mpos in monsterPositions {
+                var model = matrix_identity_float4x4
+                model.columns.3 = SIMD4<Float>(mpos.x, mpos.y, mpos.z, 1)
+                var U = Uniforms(model: model, view: mirrorMvp2, proj: matrix_identity_float4x4,
+                                 lightDir: simd_normalize(simd_float3(0.3, 0.8, 0.5)), pad0: 0,
+                                 baseColor: simd_float4(0.85, 0.35, 0.35, 1.0),
+                                 useTexture: 0, useLightmap: 0, pad2: 0, pad3: 0)
+                enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+                enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+                enc.drawIndexedPrimitives(type: .triangle, indexCount: monsterIndexCount,
+                                          indexType: .uint32, indexBuffer: ib, indexBufferOffset: 0)
+            }
+            _ = ec; _ = mc; _ = res2; _ = dw2; _ = clr2; _ = rw2; _ = rh2
+        }
+        // GPU studio LOD draw path: select LOD by camera distance and issue draw.
+        var lod: Int32 = 0, issue: Int32 = 0
+        var lv: UInt32 = 0, lt: UInt32 = 0
+        let camDist: Float = 120.0
+        if engine_mdl_lod_gpu_issue_draw(camDist, &lod, &lv, &lt, &issue) != 0, issue != 0,
+           let pipe = mdlPipeline, let vb = mdlVertexBuf, let ib = mdlIndexBuf, mdlIndexCount > 0 {
+            enc.setRenderPipelineState(pipe)
+            enc.setVertexBuffer(vb, offset: 0, index: 0)
+            var U = Uniforms(model: matrix_identity_float4x4, view: matrix_identity_float4x4,
+                             proj: matrix_identity_float4x4,
+                             lightDir: simd_normalize(simd_float3(0.3, 0.8, 0.5)), pad0: 0,
+                             baseColor: simd_float4(0.6, 0.8, 0.5, 1.0),
+                             useTexture: 0, useLightmap: 0, pad2: 0, pad3: 0)
+            // Prefer selected LOD mesh copy when available; fall back to uploaded MDL.
+            var pos = [Float](repeating: 0, count: 144)
+            var idx = [UInt32](repeating: 0, count: 96)
+            var ov: UInt32 = 0, ot: UInt32 = 0
+            var olod: Int32 = 0
+            if engine_mdl_lod_gpu_issue_draw_copy(camDist, &pos, 48, &idx, 96, &olod, &ov, &ot) != 0,
+               ov > 0, ot > 0 {
+                if let tmpV = device.makeBuffer(bytes: pos, length: Int(ov) * 3 * 4, options: .storageModeShared),
+                   let tmpI = device.makeBuffer(bytes: idx, length: Int(ot) * 3 * 4, options: .storageModeShared) {
+                    enc.setVertexBuffer(tmpV, offset: 0, index: 0)
+                    enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+                    enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+                    enc.drawIndexedPrimitives(type: .triangle, indexCount: Int(ot) * 3,
+                                              indexType: .uint32, indexBuffer: tmpI, indexBufferOffset: 0)
+                }
+            } else {
+                enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+                enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
+                enc.drawIndexedPrimitives(type: .triangle, indexCount: mdlIndexCount,
+                                          indexType: .uint32, indexBuffer: ib, indexBufferOffset: 0)
+            }
+            _ = lod; _ = lv; _ = lt; _ = vb; _ = pipe
+        }
         if res != 0 {
             _ = engine_water_reflect_rt_resolve()
             _ = engine_water_reflect_rt_gen_mips()
@@ -707,6 +774,11 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         monsterVertexBuf = device.makeBuffer(bytes: verts, length: verts.count * 4, options: .storageModeShared)
         monsterIndexBuf  = device.makeBuffer(bytes: idx, length: idx.count * 4, options: .storageModeShared)
         monsterIndexCount = idx.count
+        _ = engine_water_reflect_ent_clear()
+        for (i, mpos) in monsterPositions.enumerated() {
+            _ = engine_water_reflect_ent_push(UInt32(i + 1), 1, mpos.x, mpos.y, mpos.z, 8, 8, 8)
+        }
+        _ = engine_water_reflect_ent_mark_above(0)
     }
 
     // MARK: - MTKViewDelegate

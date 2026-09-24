@@ -53,6 +53,31 @@ void aether_player_tick_drown(aether_player_health_t *h, f32 dt, bool drowning);
 void aether_player_tick_fire(aether_player_health_t *h, f32 dt, bool on_fire);
 void aether_player_tick_radiation(aether_player_health_t *h, f32 dt, bool in_rad);
 
+/* ---------- Damage → kill authority wiring (not stubby) ---------- */
+typedef struct aether_damage_kill_result {
+    bool applied;          /* damage applied */
+    bool died;             /* victim became dead this call */
+    bool registered_kill;  /* register_kill / fanout succeeded */
+    u32  killer_id;
+    u32  victim_id;
+} aether_damage_kill_result_t;
+
+/* Opaque server pointer — pass aether_net_server_t* from net layer. */
+typedef struct aether_net_server aether_damage_net_server_t;
+
+/* Apply damage; if health transitions to dead, call register_kill + optional fanout.
+ * server may be NULL (then died is set but registered_kill stays false).
+ * killer_id / victim_id identify MP slots. Returns via *out. */
+void aether_player_apply_damage_auth(aether_player_health_t *h,
+                                     const aether_damage_event_t *ev,
+                                     aether_damage_net_server_t *server,
+                                     u32 killer_id, u32 victim_id,
+                                     bool fanout_scores,
+                                     aether_damage_kill_result_t *out);
+
+/* Convenience: lethal damage amount that guarantees death for smoke (ignores armor). */
+void aether_player_force_lethal_for_auth(aether_player_health_t *h);
+
 #ifdef __cplusplus
 }
 #endif

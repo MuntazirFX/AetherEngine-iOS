@@ -2,7 +2,9 @@
  * AetherEngine-iOS · Clean-room.
  */
 #include "AetherPlayerDamage.h"
+#include "../net/AetherNetServer.h"
 #include <math.h>
+#include <string.h>
 
 /* Damage scale per type (multiplier on base amount) */
 static f32 damage_scale(aether_damage_type_t t) {
@@ -81,4 +83,36 @@ void aether_player_tick_radiation(aether_player_health_t *h, f32 dt, bool in_rad
     if (!h || !in_rad || h->dead) return;
     /* 5 hp per second */
     aether_player_health_damage(h, 5.0f * dt);
+}
+
+void aether_player_force_lethal_for_auth(aether_player_health_t *h) {
+    if (!h) return;
+    h->health = 1.f;
+    h->armor = 0.f;
+    h->dead = false;
+}
+
+void aether_player_apply_damage_auth(aether_player_health_t *h,
+                                     const aether_damage_event_t *ev,
+                                     aether_damage_net_server_t *server,
+                                     u32 killer_id, u32 victim_id,
+                                     bool fanout_scores,
+                                     aether_damage_kill_result_t *out) {
+    if (out) memset(out, 0, sizeof(*out));
+    if (!h || !ev) return;
+    bool was_dead = h->dead;
+    aether_player_apply_damage(h, ev);
+    if (out) {
+        out->applied = true;
+        out->killer_id = killer_id;
+        out->victim_id = victim_id;
+    }
+    if (was_dead || !h->dead) return;
+    if (out) out->died = true;
+    if (!server || (killer_id == 0 && victim_id == 0)) return;
+    aether_net_server_t *s = (aether_net_server_t *)server;
+    if (aether_net_server_register_kill(s, killer_id, victim_id)) {
+        if (out) out->registered_kill = true;
+        if (fanout_scores) aether_net_server_fanout_scores(s);
+    }
 }

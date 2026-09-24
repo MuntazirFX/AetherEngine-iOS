@@ -691,4 +691,40 @@ int  engine_spectator_get_eye(float *out3);
 int  engine_spectator_get_forward(float *out3);
 int  engine_spectator_is_following(void);
 
+/* ---------- Batch: reflect-ents / studio-gpu-lod / spec-cycle / dmg-kill / IPA notes ---------- */
+int  engine_water_reflect_ent_clear(void);
+int  engine_water_reflect_ent_push(unsigned ent_id, int is_monster,
+                                   float ox, float oy, float oz,
+                                   float hx, float hy, float hz);
+int  engine_water_reflect_ent_mark_above(float water_height);
+int  engine_water_reflect_rt_draw_plan_full(float *out_mvp16, unsigned *out_w, unsigned *out_h,
+                                           int *out_clear, int *out_draw_world,
+                                           int *out_draw_ents, int *out_draw_monsters,
+                                           unsigned *out_ent_count, unsigned *out_mon_count,
+                                           int *out_resolve);
+unsigned engine_water_reflect_ent_drawn(void);
+
+int  engine_mdl_lod_gpu_issue_draw(float distance, int *out_lod, unsigned *out_verts,
+                                   unsigned *out_tris, int *out_issue);
+int  engine_mdl_lod_gpu_issue_draw_copy(float distance,
+                                        float *out_pos, unsigned max_verts,
+                                        unsigned *out_idx, unsigned max_idx,
+                                        int *out_lod, unsigned *out_verts, unsigned *out_tris);
+
+int  engine_spectator_roster_clear(void);
+int  engine_spectator_roster_add(unsigned player_id, const char *name);
+unsigned engine_spectator_cycle_next(void);
+unsigned engine_spectator_cycle_prev(void);
+unsigned engine_spectator_target_id(void);
+int  engine_spectator_set_cam_mode(int mode); /* 0=follow, 1=copy_eye */
+int  engine_spectator_get_cam_mode(void);
+int  engine_spectator_hud_visible(void);
+int  engine_spectator_hud_indicator(char *out, unsigned cap);
+
+int  engine_player_apply_damage_auth(float amount, unsigned dmg_type,
+                                     unsigned killer_id, unsigned victim_id,
+                                     int fanout, int *out_died, int *out_registered);
+int  engine_net_server_register_assist(unsigned assister_id, unsigned victim_id);
+int  engine_net_server_get_assists(unsigned player_id);
+
 #endif /* ENGINE_BRIDGE_H */
