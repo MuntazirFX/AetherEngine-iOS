@@ -26,6 +26,7 @@
 #include "AetherParticle.h"
 #include "AetherSky.h"
 #include "AetherWater.h"
+#include "AetherDepthPrepass.h"
 #include "AetherFog.h"
 #include "AetherLightmap.h"
 #include "AetherBSP.h"
@@ -49,6 +50,7 @@
 #include "AetherSave.h"
 #include "AetherNetClient.h"
 #include "AetherNetServer.h"
+#include "AetherNet.h"
 #include "AetherDecal.h"
 #include "AetherDynLight.h"
 #include "AetherMDLGeometry.h"
@@ -934,6 +936,154 @@ static void smoke_batch_gpu_lightstyles_skin_mp(void) {
         aether_decal_atlas_shutdown(&atlas);
     }
 }
+
+
+static void smoke_batch_studio_lod_water_reflect_netscore(void) {
+    printf("--- batch_studio_lod_water_reflect_netscore ---\n");
+
+    /* 1. Studio LOD / bodygroup select + fixture LODs */
+    {
+        u8 buf[32768];
+        u32 n = aether_mdl_write_lod_fixture(buf, sizeof buf);
+        expect(n > 1000, "b9_lod_fixture");
+        aether_mdl_lod_table_t lods;
+        expect(aether_mdl_fixture_lods(buf, n, &lods) == 3, "b9_lod_count");
+        expect(aether_mdl_lod_select(&lods, 100.f) == 0, "b9_lod_near");
+        expect(aether_mdl_lod_select(&lods, 400.f) == 1, "b9_lod_mid");
+        expect(aether_mdl_lod_select(&lods, 900.f) == 2, "b9_lod_far");
+        expect(aether_mdl_lod_tri_count(&lods, 0) == 12, "b9_lod_tris0");
+        expect(aether_mdl_lod_tri_count(&lods, 2) == 3, "b9_lod_tris2");
+        aether_mdl_bodygroup_state_t bg;
+        expect(aether_mdl_bodygroup_init_from_fixture(&bg, buf, n), "b9_bg_init");
+        expect(bg.part_count == 2, "b9_bg_parts");
+        expect(aether_mdl_bodygroup_set(&bg, 0, 1), "b9_bg_set");
+        expect(aether_mdl_bodygroup_get(&bg, 0) == 1, "b9_bg_get");
+        u32 cyc = aether_mdl_bodygroup_cycle(&bg, 1, +1);
+        expect(cyc == 1, "b9_bg_cycle");
+        i32 lod = aether_mdl_bodygroup_apply_lod(&bg, &lods, 400.f);
+        expect(lod == 1, "b9_bg_apply_lod");
+        u32 tris = aether_mdl_bodygroup_tri_total(&bg, &lods, lod);
+        expect(tris > 0 && tris <= 6, "b9_bg_tris");
+    }
+
+    /* 2. Water planar reflection stub */
+    {
+        aether_water_t w; aether_water_init(&w);
+        aether_water_set_height(&w, 32.f);
+        f32 eye[3] = {0, 0, 80.f};
+        aether_water_reflect_t r;
+        aether_water_reflect_compute(&w, eye, &r);
+        expect(r.enabled, "b9_reflect_en");
+        expect(fabsf(r.eye_reflected[2] - (-16.f)) < 0.1f, "b9_reflect_eye"); /* 2*32-80=-16 */
+        expect(aether_water_reflect_encode_needed(&r), "b9_reflect_needed");
+        aether_water_reflect_uniforms_t u;
+        aether_water_reflect_fill_uniforms(&r, &u);
+        expect(u.enabled > 0.5f && fabsf(u.mirror[10] + 1.f) < 1e-4f, "b9_reflect_ubo");
+        expect(fabsf(u.clip_plane[2] - 1.f) < 1e-5f && fabsf(u.clip_plane[3] + 32.f) < 1e-3f, "b9_reflect_clip");
+        f32 out[3];
+        aether_water_reflect_point(&w, eye, out);
+        expect(fabsf(out[2] + 16.f) < 0.1f, "b9_reflect_pt");
+    }
+
+    /* 3. Net scoreboard live join/leave over UDP */
+    {
+        aether_scoreboard_t sb; aether_scoreboard_events_t ev;
+        aether_scoreboard_init(&sb); aether_scoreboard_events_init(&ev);
+        u16 port = (u16)(29100 + (getpid() % 500));
+        aether_net_server_t *srv = aether_net_server_create(port, 4);
+        expect(srv != NULL, "b9_net_srv");
+        aether_socket_t *cli = aether_socket_create_udp();
+        expect(cli != NULL, "b9_net_cli_sock");
+        aether_socket_set_nonblocking(cli, true);
+        aether_net_addr_t addr;
+        expect(aether_net_addr_from_string("127.0.0.1", port, &addr), "b9_net_addr");
+        /* Encode join locally and also broadcast from server after manual inject path */
+        u8 join[256];
+        u32 jn = aether_scoreboard_encode_join(join, sizeof join, 7, "Alice");
+        expect(jn > 8, "b9_enc_join");
+        aether_scoreboard_handle_packet(&sb, &ev, join, jn, 1.0f);
+        expect(sb.count == 1 && ev.live >= 1, "b9_join_applied");
+        aether_net_server_broadcast_join(srv, 8, "Bob");
+        /* Client receives whatever is on wire (may be empty if no clients); local leave path: */
+        u8 leave[64];
+        u32 ln = aether_scoreboard_encode_leave(leave, sizeof leave, 7);
+        expect(ln > 4, "b9_enc_leave");
+        /* Send leave packet to self via UDP loopback smoke */
+        aether_socket_t *bound = aether_socket_create_udp_bound((u16)(port + 1));
+        expect(bound != NULL, "b9_net_bound");
+        aether_socket_set_nonblocking(bound, true);
+        aether_net_addr_t self;
+        expect(aether_net_addr_from_string("127.0.0.1", (u16)(port + 1), &self), "b9_self_addr");
+        expect(aether_socket_send(cli, &self, leave, ln) > 0, "b9_udp_send_leave");
+        u8 rbuf[256]; aether_net_addr_t from;
+        i32 got = -1;
+        for (int tries = 0; tries < 20 && got < 0; ++tries) {
+            got = aether_socket_recv(bound, &from, rbuf, sizeof rbuf);
+        }
+        expect(got > 0, "b9_udp_recv_leave");
+        aether_scoreboard_handle_packet(&sb, &ev, rbuf, (u32)got, 2.0f);
+        expect(sb.count == 0, "b9_leave_applied");
+        aether_scoreboard_event_t e;
+        expect(aether_scoreboard_events_get(&ev, 0, &e) == 1, "b9_ev_get");
+        expect(e.kind == AETHER_SB_EVENT_JOIN || e.kind == AETHER_SB_EVENT_LEAVE, "b9_ev_kind");
+        aether_socket_destroy(bound);
+        aether_socket_destroy(cli);
+        aether_net_server_destroy(srv);
+    }
+
+    /* 4. Client prediction smooth error decay */
+    {
+        aether_net_predict_t pr;
+        aether_net_predict_init(&pr, 1);
+        aether_net_predict_set_error_decay(&pr, 20.f);
+        pr.origin[0] = 0; pr.origin[1] = 0; pr.origin[2] = 0;
+        aether_net_snapshot_t snap; memset(&snap, 0, sizeof snap);
+        snap.tick = 10; snap.player_count = 1;
+        snap.players[0].player_id = 1;
+        snap.players[0].origin[0] = 100.f;
+        snap.players[0].origin[1] = 0;
+        snap.players[0].origin[2] = 0;
+        aether_net_predict_reconcile_smooth(&pr, &snap, 0.25f, 0.016f);
+        f32 e1 = aether_net_predict_error_length(&pr);
+        expect(e1 > 1.f && e1 < 90.f, "b9_smooth_err");
+        f32 o0 = pr.origin[0];
+        for (int i = 0; i < 30; ++i)
+            aether_net_predict_smooth_tick(&pr, 0.05f);
+        f32 e2 = aether_net_predict_error_length(&pr);
+        expect(e2 < e1, "b9_smooth_decay");
+        expect(pr.origin[0] > o0, "b9_smooth_move");
+        expect(e2 < 5.f, "b9_smooth_near");
+    }
+
+    /* 5. Metal depth prepass encode plan + record stub */
+    {
+        aether_depth_prepass_t dp;
+        aether_depth_prepass_init(&dp);
+        expect(aether_depth_prepass_ensure(&dp, 1280, 720) == AETHER_OK, "b9_depth_ensure");
+        aether_depth_prepass_plan_t plan;
+        aether_depth_prepass_encode_plan(&dp, &plan);
+        expect(plan.needed && plan.pass_count == 1 && plan.write_depth, "b9_depth_plan");
+        f32 pos[9] = {0,0,-10, 0,0,-50, 0,0,-200};
+        f32 depths[3];
+        u32 n = aether_depth_prepass_record_stub(&dp, pos, 3, 1.f, 500.f, depths, 3);
+        expect(n == 3 && dp.recorded, "b9_depth_record");
+        expect(depths[0] < depths[2], "b9_depth_order");
+        expect(aether_depth_prepass_encode_needed(&dp), "b9_depth_needed");
+    }
+
+    /* 6. Bodygroup swap via cycle API (console/input path) */
+    {
+        aether_mdl_bodygroup_state_t bg;
+        aether_mdl_bodygroup_init_from_fixture(&bg, NULL, 0);
+        u32 a = aether_mdl_bodygroup_get(&bg, 0);
+        u32 b = aether_mdl_bodygroup_cycle(&bg, 0, +1);
+        expect(b != a, "b9_body_swap");
+        expect(aether_mdl_bodygroup_set(&bg, 0, 0), "b9_body_reset");
+    }
+
+    printf("--- batch_studio_lod_water_reflect_netscore done ---\n");
+}
+
 
 int main(void) {
 
@@ -2613,6 +2763,7 @@ int main(void) {
     smoke_batch_seq_pvs_audio_ui();
     smoke_batch_metal_blend_studio_attach();
     smoke_batch_faceid_bone_portal_attach();
+    smoke_batch_studio_lod_water_reflect_netscore();
     smoke_batch_studio_vis_stereo();
 
     if (g_failures) {

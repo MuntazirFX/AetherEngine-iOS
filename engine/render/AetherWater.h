@@ -40,4 +40,37 @@ u32 aether_water_copy_render(const aether_water_t *w,
 /* How many vertices the default water grid needs. */
 u32 aether_water_render_vertex_count(void);
 
+
+/* Planar reflection stub: mirror matrix + clip plane for Metal encode. */
+typedef struct aether_water_reflect {
+    f32 mirror[16];      /* column-major 4x4: reflect about water plane */
+    f32 clip_plane[4];   /* ax + by + cz + d = 0 (world space) */
+    f32 plane_origin[3];
+    f32 plane_normal[3]; /* typically 0,0,1 (Z-up) */
+    f32 eye_reflected[3];
+    bool enabled;
+} aether_water_reflect_t;
+
+/* Uniforms Metal/host can upload (mirror 16 + clip 4 + flags). */
+typedef struct aether_water_reflect_uniforms {
+    f32 mirror[16];
+    f32 clip_plane[4];
+    f32 enabled;     /* 1 when reflection pass should run */
+    f32 pad[3];
+} aether_water_reflect_uniforms_t;
+
+/* Build reflection about water height plane (normal +Z). eye = camera world pos. */
+void aether_water_reflect_compute(const aether_water_t *w, const f32 eye[3],
+                                  aether_water_reflect_t *out);
+
+/* Fill GPU/host uniform block. */
+void aether_water_reflect_fill_uniforms(const aether_water_reflect_t *r,
+                                        aether_water_reflect_uniforms_t *out);
+
+/* Reflect a point across the water plane (CPU helper / smoke). */
+void aether_water_reflect_point(const aether_water_t *w, const f32 in[3], f32 out[3]);
+
+/* True when reflection hooks are ready for Metal encode. */
+bool aether_water_reflect_encode_needed(const aether_water_reflect_t *r);
+
 #endif

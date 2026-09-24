@@ -30,6 +30,7 @@
 #include "../../engine/render/AetherParticle.h"
 #include "../../engine/render/AetherSky.h"
 #include "../../engine/render/AetherWater.h"
+#include "../../engine/render/AetherDepthPrepass.h"
 #include "../../engine/render/AetherFog.h"
 #include "../../engine/render/AetherLightmap.h"
 #include "../../engine/bsp/AetherBSP.h"
@@ -143,6 +144,8 @@ static aether_input_action_t map_action_name(const char *n) {
     if (strcmp(n, "weapon_prev") == 0) return AETHER_ACTION_WEAPON_PREV;
     if (strcmp(n, "pause")       == 0) return AETHER_ACTION_PAUSE;
     if (strcmp(n, "scoreboard")  == 0) return AETHER_ACTION_SCOREBOARD;
+    if (strcmp(n, "bodygroup_next") == 0 || strcmp(n, "bodygroup") == 0)
+        return AETHER_ACTION_BODYGROUP_NEXT;
     return AETHER_ACTION_NONE;
 }
 
@@ -3196,4 +3199,275 @@ int engine_inv_apply_weapon_input(void) {
 
 int engine_inv_current_weapon(void) {
     return (int)aether_player_inv_current(&g_player_inventory);
+}
+
+/* ---------- Batch: LOD / water reflect / netscore / predict smooth / depth ---------- */
+static aether_mdl_lod_table_t       g_lod_table;
+static aether_mdl_bodygroup_state_t g_bodygroup;
+static int                          g_bodygroup_ready = 0;
+static aether_water_reflect_t       g_water_reflect;
+static int                          g_water_reflect_ready = 0;
+static aether_scoreboard_events_t   g_sb_events;
+static int                          g_sb_events_init = 0;
+static aether_depth_prepass_t       g_depth_prepass;
+static int                          g_depth_prepass_init = 0;
+
+static void ensure_sb_events(void) {
+    if (!g_sb_events_init) {
+        aether_scoreboard_events_init(&g_sb_events);
+        g_sb_events_init = 1;
+    }
+    if (!g_scoreboard_init) engine_scoreboard_init();
+}
+
+static void ensure_bodygroup_fixture(void) {
+    if (g_bodygroup_ready) return;
+    u8 buf[32768];
+    u32 n = aether_mdl_write_lod_fixture(buf, sizeof buf);
+    aether_mdl_fixture_lods(buf, n, &g_lod_table);
+    aether_mdl_bodygroup_init_from_fixture(&g_bodygroup, buf, n);
+    g_bodygroup_ready = 1;
+}
+
+int engine_mdl_write_lod_fixture(const char *filepath) {
+    if (!filepath) return 0;
+    return (int)aether_mdl_write_lod_fixture_file(filepath);
+}
+
+int engine_mdl_lod_select(float distance) {
+    ensure_bodygroup_fixture();
+    return aether_mdl_lod_select(&g_lod_table, distance);
+}
+
+int engine_mdl_lod_tri_count(int lod) {
+    ensure_bodygroup_fixture();
+    return (int)aether_mdl_lod_tri_count(&g_lod_table, lod);
+}
+
+int engine_bodygroup_init_fixture(void) {
+    ensure_bodygroup_fixture();
+    return (int)g_bodygroup.part_count;
+}
+
+int engine_bodygroup_set(unsigned part, unsigned sub) {
+    ensure_bodygroup_fixture();
+    return aether_mdl_bodygroup_set(&g_bodygroup, part, sub) ? 1 : 0;
+}
+
+int engine_bodygroup_get(unsigned part) {
+    ensure_bodygroup_fixture();
+    return (int)aether_mdl_bodygroup_get(&g_bodygroup, part);
+}
+
+int engine_bodygroup_cycle(unsigned part, int dir) {
+    ensure_bodygroup_fixture();
+    return (int)aether_mdl_bodygroup_cycle(&g_bodygroup, part, dir);
+}
+
+int engine_bodygroup_tri_total(void) {
+    ensure_bodygroup_fixture();
+    return (int)aether_mdl_bodygroup_tri_total(&g_bodygroup, &g_lod_table, g_bodygroup.active_lod);
+}
+
+int engine_bodygroup_apply_lod(float distance) {
+    ensure_bodygroup_fixture();
+    return aether_mdl_bodygroup_apply_lod(&g_bodygroup, &g_lod_table, distance);
+}
+
+int engine_bodygroup_apply_input(void) {
+    if (!g_input) return 0;
+    ensure_bodygroup_fixture();
+    if (aether_input_just_pressed(g_input, AETHER_ACTION_BODYGROUP_NEXT)) {
+        return (int)aether_mdl_bodygroup_cycle(&g_bodygroup, 0, +1) + 1;
+    }
+    return 0;
+}
+
+int engine_console_exec_bodygroup(const char *line) {
+    ensure_bodygroup_fixture();
+    if (!line) return 0;
+    /* Accept: "bodygroup", "bodygroup next", "bodygroup 0 1", "bodygroup 1 prev" */
+    char buf[128];
+    size_t L = strlen(line);
+    if (L >= sizeof buf) L = sizeof buf - 1;
+    memcpy(buf, line, L); buf[L] = 0;
+    char *tok = buf;
+    while (*tok == ' ') tok++;
+    char *cmd = tok;
+    while (*tok && *tok != ' ') tok++;
+    if (*tok) { *tok = 0; tok++; }
+    while (*tok == ' ') tok++;
+    if (strcmp(cmd, "bodygroup") != 0 && strcmp(cmd, "body") != 0) return 0;
+    if (!*tok || strcmp(tok, "next") == 0) {
+        return (int)aether_mdl_bodygroup_cycle(&g_bodygroup, 0, +1) + 1;
+    }
+    if (strcmp(tok, "prev") == 0) {
+        return (int)aether_mdl_bodygroup_cycle(&g_bodygroup, 0, -1) + 1;
+    }
+    /* part [sub|next|prev] */
+    unsigned part = (unsigned)atoi(tok);
+    while (*tok && *tok != ' ') tok++;
+    while (*tok == ' ') tok++;
+    if (!*tok || strcmp(tok, "next") == 0)
+        return (int)aether_mdl_bodygroup_cycle(&g_bodygroup, part, +1) + 1;
+    if (strcmp(tok, "prev") == 0)
+        return (int)aether_mdl_bodygroup_cycle(&g_bodygroup, part, -1) + 1;
+    unsigned sub = (unsigned)atoi(tok);
+    return aether_mdl_bodygroup_set(&g_bodygroup, part, sub) ? 1 : 0;
+}
+
+int engine_water_reflect_compute(float eye_x, float eye_y, float eye_z) {
+    aether_water_t *w = bridge_water();
+    if (!w) return 0;
+    f32 eye[3] = { eye_x, eye_y, eye_z };
+    aether_water_reflect_compute(w, eye, &g_water_reflect);
+    g_water_reflect_ready = 1;
+    return g_water_reflect.enabled ? 1 : 0;
+}
+
+int engine_water_reflect_fill_uniforms(float *out20) {
+    if (!out20) return 0;
+    if (!g_water_reflect_ready) {
+        aether_water_t *w = bridge_water();
+        f32 eye[3] = {0, 0, 64};
+        aether_water_reflect_compute(w, eye, &g_water_reflect);
+        g_water_reflect_ready = 1;
+    }
+    aether_water_reflect_uniforms_t u;
+    aether_water_reflect_fill_uniforms(&g_water_reflect, &u);
+    memcpy(out20, u.mirror, 16 * sizeof(float));
+    memcpy(out20 + 16, u.clip_plane, 4 * sizeof(float));
+    return u.enabled > 0.5f ? 20 : 20;
+}
+
+int engine_water_reflect_encode_needed(void) {
+    if (!g_water_reflect_ready) return 0;
+    return aether_water_reflect_encode_needed(&g_water_reflect) ? 1 : 0;
+}
+
+int engine_water_reflect_point(float ix, float iy, float iz, float *out3) {
+    if (!out3) return 0;
+    aether_water_t *w = bridge_water();
+    f32 in[3] = { ix, iy, iz };
+    aether_water_reflect_point(w, in, out3);
+    return 1;
+}
+
+int engine_scoreboard_apply_join(unsigned player_id, const char *name) {
+    ensure_sb_events();
+    aether_scoreboard_apply_join(&g_scoreboard, &g_sb_events, player_id, name, (f32)aether_net_time());
+    return (int)g_scoreboard.count;
+}
+
+int engine_scoreboard_apply_leave(unsigned player_id) {
+    ensure_sb_events();
+    aether_scoreboard_apply_leave(&g_scoreboard, &g_sb_events, player_id, (f32)aether_net_time());
+    return (int)g_scoreboard.count;
+}
+
+int engine_scoreboard_event_count(void) {
+    ensure_sb_events();
+    return (int)aether_scoreboard_events_live(&g_sb_events);
+}
+
+int engine_scoreboard_get_event(int index, int *out_kind, unsigned *out_id,
+                                char *name, int name_cap, float *out_time) {
+    ensure_sb_events();
+    aether_scoreboard_event_t e;
+    if (!aether_scoreboard_events_get(&g_sb_events, (u32)index, &e)) return 0;
+    if (out_kind) *out_kind = (int)e.kind;
+    if (out_id) *out_id = e.player_id;
+    if (out_time) *out_time = e.time;
+    if (name && name_cap > 0) {
+        size_t n = strlen(e.name);
+        if ((int)n >= name_cap) n = (size_t)name_cap - 1;
+        memcpy(name, e.name, n);
+        name[n] = 0;
+    }
+    return 1;
+}
+
+int engine_scoreboard_handle_packet(const unsigned char *data, unsigned size, float time) {
+    ensure_sb_events();
+    aether_scoreboard_handle_packet(&g_scoreboard, &g_sb_events, data, size, time);
+    return (int)g_scoreboard.count;
+}
+
+int engine_net_broadcast_join_demo(unsigned player_id, const char *name) {
+    /* Local encode → handle (no live server required). */
+    u8 pkt[256];
+    u32 n = aether_scoreboard_encode_join(pkt, sizeof pkt, player_id, name);
+    if (!n) return 0;
+    return engine_scoreboard_handle_packet(pkt, n, (float)aether_net_time());
+}
+
+int engine_net_broadcast_leave_demo(unsigned player_id) {
+    u8 pkt[64];
+    u32 n = aether_scoreboard_encode_leave(pkt, sizeof pkt, player_id);
+    if (!n) return 0;
+    return engine_scoreboard_handle_packet(pkt, n, (float)aether_net_time());
+}
+
+int engine_net_predict_set_error_decay(float rate) {
+    aether_net_predict_set_error_decay(&g_net_predict, rate);
+    return 1;
+}
+
+float engine_net_predict_smooth_tick(float dt) {
+    return aether_net_predict_smooth_tick(&g_net_predict, dt);
+}
+
+float engine_net_predict_error_length(void) {
+    return aether_net_predict_error_length(&g_net_predict);
+}
+
+int engine_net_predict_reconcile_smooth(float snap_ox, float snap_oy, float snap_oz,
+                                        float snap_blend, float dt) {
+    aether_net_snapshot_t snap;
+    memset(&snap, 0, sizeof snap);
+    snap.tick = g_net_predict.last_ack_tick + 1;
+    snap.player_count = 1;
+    snap.players[0].player_id = g_net_predict.local_id ? g_net_predict.local_id : 1;
+    if (g_net_predict.local_id == 0) {
+        aether_net_predict_init(&g_net_predict, 1);
+    }
+    snap.players[0].player_id = g_net_predict.local_id;
+    snap.players[0].origin[0] = snap_ox;
+    snap.players[0].origin[1] = snap_oy;
+    snap.players[0].origin[2] = snap_oz;
+    aether_net_predict_reconcile_smooth(&g_net_predict, &snap, snap_blend, dt);
+    return 1;
+}
+
+int engine_depth_prepass_ensure(unsigned w, unsigned h) {
+    if (!g_depth_prepass_init) {
+        aether_depth_prepass_init(&g_depth_prepass);
+        g_depth_prepass_init = 1;
+    }
+    return aether_depth_prepass_ensure(&g_depth_prepass, w, h) == AETHER_OK ? 1 : 0;
+}
+
+int engine_depth_prepass_encode_plan(unsigned *out_passes, unsigned *out_w, unsigned *out_h,
+                                     int *out_write_depth) {
+    if (!g_depth_prepass_init) engine_depth_prepass_ensure(1280, 720);
+    aether_depth_prepass_plan_t plan;
+    aether_depth_prepass_encode_plan(&g_depth_prepass, &plan);
+    if (out_passes) *out_passes = plan.pass_count;
+    if (out_w) *out_w = plan.width;
+    if (out_h) *out_h = plan.height;
+    if (out_write_depth) *out_write_depth = plan.write_depth ? 1 : 0;
+    return plan.needed ? 1 : 0;
+}
+
+int engine_depth_prepass_record_stub(const float *positions_xyz, unsigned count,
+                                     float near_z, float far_z,
+                                     float *out_depths, unsigned max_out) {
+    if (!g_depth_prepass_init) engine_depth_prepass_ensure(1280, 720);
+    return (int)aether_depth_prepass_record_stub(&g_depth_prepass, positions_xyz, count,
+                                                 near_z, far_z, out_depths, max_out);
+}
+
+int engine_depth_prepass_encode_needed(void) {
+    if (!g_depth_prepass_init) return 0;
+    return aether_depth_prepass_encode_needed(&g_depth_prepass) ? 1 : 0;
 }

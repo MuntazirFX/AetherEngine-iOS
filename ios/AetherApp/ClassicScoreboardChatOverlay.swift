@@ -6,6 +6,7 @@ struct ClassicScoreboardChatOverlay: View {
     @Binding var scoreboardShown: Bool
     @Binding var chatShown: Bool
     @State private var rows: [ScoreRow] = []
+    @State private var events: [JoinLeaveRow] = []
     @State private var chat: [ChatRow] = []
     @State private var chatText = ""
     private let poll = Timer.publish(every: 0.15, on: .main, in: .common).autoconnect()
@@ -37,6 +38,14 @@ struct ClassicScoreboardChatOverlay: View {
                     Text("\(r.deaths)").frame(width: 65)
                     Text("\(r.ping)").frame(width: 55)
                 }.font(.system(size: 13, weight: .semibold, design: .serif)).foregroundColor(.white).padding(.horizontal, 8).padding(.vertical, 6)
+            }
+            if !events.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(events.suffix(6)) { e in
+                        Text(e.text).font(.system(size: 11, design: .serif))
+                            .foregroundColor(e.kind == 0 ? Color.green.opacity(0.9) : Color.orange.opacity(0.9))
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8).padding(.bottom, 4)
             }
             Text("Tap SCOREBOARD to close").font(.system(size: 10)).foregroundColor(.white.opacity(0.45)).padding(8)
         }
@@ -81,6 +90,18 @@ struct ClassicScoreboardChatOverlay: View {
             }
         }
         rows = newRows
+        var newEvents: [JoinLeaveRow] = []
+        let ec = Int(engine_scoreboard_event_count())
+        for i in 0..<ec {
+            var kind: Int32 = 0; var pid: UInt32 = 0; var tsec: Float = 0
+            var name = [CChar](repeating: 0, count: 64)
+            if engine_scoreboard_get_event(Int32(i), &kind, &pid, &name, Int32(name.count), &tsec) != 0 {
+                let label = kind == 0 ? "joined" : "left"
+                newEvents.append(JoinLeaveRow(id: i, kind: Int(kind),
+                    text: "* \(String(cString: name)) \(label)"))
+            }
+        }
+        events = newEvents
         var newChat: [ChatRow] = []
         let cc = Int(engine_chat_count())
         if cc > 0 {
@@ -96,4 +117,5 @@ struct ClassicScoreboardChatOverlay: View {
 }
 
 private struct ScoreRow: Identifiable { let id: Int; let name: String; let score: Int; let deaths: Int; let ping: Int }
+private struct JoinLeaveRow: Identifiable { let id: Int; let kind: Int; let text: String }
 private struct ChatRow: Identifiable { let id: Int; let text: String }

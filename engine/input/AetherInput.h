@@ -25,6 +25,7 @@ typedef enum aether_input_action {
     AETHER_ACTION_WEAPON_PREV,
     AETHER_ACTION_SCOREBOARD,
     AETHER_ACTION_PAUSE,
+    AETHER_ACTION_BODYGROUP_NEXT,
     AETHER_ACTION_COUNT
 } aether_input_action_t;
 

@@ -140,4 +140,69 @@ void aether_mdl_mat4_mul(const f32 A[16], const f32 B[16], f32 out[16]);
 /* Translate matrix from origin. */
 void aether_mdl_mat4_translate(const f32 origin[3], f32 out[16]);
 
+
+
+
+/* ---------- Studio LOD / bodygroup select (clean-room) ---------- */
+#define AETHER_MDL_LOD_MAGIC       ((i32)0xAE7E10D0)
+#define AETHER_MDL_BODYGROUP_MAGIC ((i32)0xAE7E8006)
+#define AETHER_MDL_MAX_LODS        4
+#define AETHER_MDL_MAX_BODYPARTS   4
+#define AETHER_MDL_MAX_SUBMODELS  4
+
+typedef struct aether_mdl_lod_level {
+    i32  level;          /* 0 = highest detail */
+    u32  tri_count;      /* synthetic triangle budget for this LOD */
+    f32  max_distance;   /* select this LOD when dist <= max_distance */
+} aether_mdl_lod_level_t;
+
+typedef struct aether_mdl_lod_table {
+    u32 count;
+    aether_mdl_lod_level_t levels[AETHER_MDL_MAX_LODS];
+} aether_mdl_lod_table_t;
+
+typedef struct aether_mdl_bodygroup_part {
+    char name[32];
+    u32  submodel_count;
+    u32  selected;       /* 0 .. submodel_count-1 */
+    u32  tri_per_sub[AETHER_MDL_MAX_SUBMODELS];
+} aether_mdl_bodygroup_part_t;
+
+typedef struct aether_mdl_bodygroup_state {
+    u32 part_count;
+    aether_mdl_bodygroup_part_t parts[AETHER_MDL_MAX_BODYPARTS];
+    i32 active_lod;      /* currently selected LOD index */
+} aether_mdl_bodygroup_state_t;
+
+/* Write studio fixture + LOD table (3 levels) + 2 bodyparts × 2 submodels. */
+u32 aether_mdl_write_lod_fixture(u8 *out, u32 cap);
+u32 aether_mdl_write_lod_fixture_file(const char *filepath);
+
+/* Parse LOD table from fixture bytes. Returns level count. */
+u32 aether_mdl_fixture_lods(const u8 *data, u32 size,
+                            aether_mdl_lod_table_t *out);
+
+/* Select LOD index by camera distance (0 = highest). Returns -1 on fail. */
+i32 aether_mdl_lod_select(const aether_mdl_lod_table_t *table, f32 distance);
+
+/* Triangle budget for a LOD level (0 if OOB). */
+u32 aether_mdl_lod_tri_count(const aether_mdl_lod_table_t *table, i32 lod);
+
+/* Init bodygroup state from fixture (or defaults if no trailer). */
+bool aether_mdl_bodygroup_init_from_fixture(aether_mdl_bodygroup_state_t *st,
+                                            const u8 *data, u32 size);
+
+/* Set / get / cycle submodel on a bodypart. */
+bool aether_mdl_bodygroup_set(aether_mdl_bodygroup_state_t *st, u32 part, u32 sub);
+u32  aether_mdl_bodygroup_get(const aether_mdl_bodygroup_state_t *st, u32 part);
+u32  aether_mdl_bodygroup_cycle(aether_mdl_bodygroup_state_t *st, u32 part, int dir);
+
+/* Total tris for current bodygroup selection at given LOD (min of both budgets). */
+u32 aether_mdl_bodygroup_tri_total(const aether_mdl_bodygroup_state_t *st,
+                                   const aether_mdl_lod_table_t *lods, i32 lod);
+
+/* Apply LOD selection into bodygroup state.active_lod. */
+i32 aether_mdl_bodygroup_apply_lod(aether_mdl_bodygroup_state_t *st,
+                                   const aether_mdl_lod_table_t *lods, f32 distance);
+
 #endif /* AETHER_MODEL_FIXTURE_H */

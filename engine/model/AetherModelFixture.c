@@ -861,3 +861,201 @@ bool aether_mdl_attachment_chain_world(const aether_mdl_attachment_t *hand_att,
     }
     return true;
 }
+
+
+/* ---- LOD / bodygroup trailer (clean-room) ---- */
+#define AETHER_LOD_MAGIC_C       ((i32)0xAE7E10D0)
+#define AETHER_BODYGROUP_MAGIC_C ((i32)0xAE7E8006)
+
+u32 aether_mdl_write_lod_fixture(u8 *out, u32 cap) {
+    u32 n = aether_mdl_write_studio_fixture_ex(out, cap);
+    if (!n || !out) return 0;
+    /* LOD table: 3 levels — 12 / 6 / 3 tris at 256 / 512 / 1e9 dist */
+    const u32 lod_hdr = 16;
+    const u32 lod_lvl = 3 * 16; /* level, tri_count, max_distance(+pad) as i32,i32,f32,i32 */
+    const u32 bg_hdr = 16;
+    const u32 bg_part = 2 * (32 + 4 + 4 + 4 * 4); /* name + sub_count + selected + 4 tris */
+    u32 need = n + lod_hdr + lod_lvl + bg_hdr + bg_part + 16;
+    if (cap < need) return 0;
+
+    u8 *lod = out + n;
+    wr_i32(lod + 0, AETHER_LOD_MAGIC_C);
+    wr_i32(lod + 4, 3); /* count */
+    wr_i32(lod + 8, 0);
+    wr_i32(lod + 12, 0);
+    /* level 0 */
+    wr_i32(lod + 16 + 0, 0);
+    wr_i32(lod + 16 + 4, 12);
+    wr_f32(lod + 16 + 8, 256.f);
+    wr_i32(lod + 16 + 12, 0);
+    /* level 1 */
+    wr_i32(lod + 32 + 0, 1);
+    wr_i32(lod + 32 + 4, 6);
+    wr_f32(lod + 32 + 8, 512.f);
+    wr_i32(lod + 32 + 12, 0);
+    /* level 2 */
+    wr_i32(lod + 48 + 0, 2);
+    wr_i32(lod + 48 + 4, 3);
+    wr_f32(lod + 48 + 8, 1.0e9f);
+    wr_i32(lod + 48 + 12, 0);
+    u32 lod_total = lod_hdr + lod_lvl;
+
+    u8 *bg = out + n + lod_total;
+    wr_i32(bg + 0, AETHER_BODYGROUP_MAGIC_C);
+    wr_i32(bg + 4, 2); /* parts */
+    wr_i32(bg + 8, 0);
+    wr_i32(bg + 12, 0);
+    /* part 0: body — subs 8 / 4 tris */
+    wr_name(bg + 16, 32, "body");
+    wr_i32(bg + 16 + 32, 2); /* submodel_count */
+    wr_i32(bg + 16 + 36, 0); /* selected */
+    wr_i32(bg + 16 + 40, 8);
+    wr_i32(bg + 16 + 44, 4);
+    wr_i32(bg + 16 + 48, 0);
+    wr_i32(bg + 16 + 52, 0);
+    /* part 1: head — subs 4 / 2 tris */
+    wr_name(bg + 16 + 56, 32, "head");
+    wr_i32(bg + 16 + 56 + 32, 2);
+    wr_i32(bg + 16 + 56 + 36, 0);
+    wr_i32(bg + 16 + 56 + 40, 4);
+    wr_i32(bg + 16 + 56 + 44, 2);
+    wr_i32(bg + 16 + 56 + 48, 0);
+    wr_i32(bg + 16 + 56 + 52, 0);
+
+    return n + lod_total + bg_hdr + bg_part;
+}
+
+u32 aether_mdl_write_lod_fixture_file(const char *filepath) {
+    if (!filepath) return 0;
+    u8 buf[32768];
+    u32 n = aether_mdl_write_lod_fixture(buf, sizeof buf);
+    if (!n) return 0;
+    FILE *f = fopen(filepath, "wb");
+    if (!f) return 0;
+    size_t w = fwrite(buf, 1, n, f);
+    fclose(f);
+    return (u32)w;
+}
+
+u32 aether_mdl_fixture_lods(const u8 *data, u32 size, aether_mdl_lod_table_t *out) {
+    if (!data || !out || size < 32) return 0;
+    memset(out, 0, sizeof(*out));
+    for (u32 off = 0; off + 16 < size; ++off) {
+        if (rd_i32_le(data + off) != AETHER_LOD_MAGIC_C) continue;
+        i32 count = rd_i32_le(data + off + 4);
+        if (count <= 0 || count > (i32)AETHER_MDL_MAX_LODS) return 0;
+        if (off + 16 + (u32)count * 16u > size) return 0;
+        out->count = (u32)count;
+        for (u32 i = 0; i < out->count; ++i) {
+            const u8 *L = data + off + 16 + i * 16u;
+            out->levels[i].level = rd_i32_le(L + 0);
+            out->levels[i].tri_count = (u32)rd_i32_le(L + 4);
+            out->levels[i].max_distance = rd_f32_le(L + 8);
+        }
+        return out->count;
+    }
+    return 0;
+}
+
+i32 aether_mdl_lod_select(const aether_mdl_lod_table_t *table, f32 distance) {
+    if (!table || table->count == 0) return -1;
+    if (distance < 0.f) distance = 0.f;
+    for (u32 i = 0; i < table->count; ++i) {
+        if (distance <= table->levels[i].max_distance)
+            return (i32)i;
+    }
+    return (i32)(table->count - 1);
+}
+
+u32 aether_mdl_lod_tri_count(const aether_mdl_lod_table_t *table, i32 lod) {
+    if (!table || lod < 0 || (u32)lod >= table->count) return 0;
+    return table->levels[lod].tri_count;
+}
+
+bool aether_mdl_bodygroup_init_from_fixture(aether_mdl_bodygroup_state_t *st,
+                                            const u8 *data, u32 size) {
+    if (!st) return false;
+    memset(st, 0, sizeof(*st));
+    st->active_lod = 0;
+    if (!data || size < 32) {
+        /* defaults */
+        st->part_count = 2;
+        wr_name((u8*)st->parts[0].name, 32, "body");
+        st->parts[0].submodel_count = 2;
+        st->parts[0].tri_per_sub[0] = 8;
+        st->parts[0].tri_per_sub[1] = 4;
+        wr_name((u8*)st->parts[1].name, 32, "head");
+        st->parts[1].submodel_count = 2;
+        st->parts[1].tri_per_sub[0] = 4;
+        st->parts[1].tri_per_sub[1] = 2;
+        return true;
+    }
+    for (u32 off = 0; off + 16 < size; ++off) {
+        if (rd_i32_le(data + off) != AETHER_BODYGROUP_MAGIC_C) continue;
+        i32 parts = rd_i32_le(data + off + 4);
+        if (parts <= 0 || parts > (i32)AETHER_MDL_MAX_BODYPARTS) return false;
+        const u32 psz = 32 + 4 + 4 + 16;
+        if (off + 16 + (u32)parts * psz > size) return false;
+        st->part_count = (u32)parts;
+        for (u32 i = 0; i < st->part_count; ++i) {
+            const u8 *p = data + off + 16 + i * psz;
+            memcpy(st->parts[i].name, p, 32);
+            st->parts[i].name[31] = 0;
+            st->parts[i].submodel_count = (u32)rd_i32_le(p + 32);
+            st->parts[i].selected = (u32)rd_i32_le(p + 36);
+            if (st->parts[i].submodel_count > AETHER_MDL_MAX_SUBMODELS)
+                st->parts[i].submodel_count = AETHER_MDL_MAX_SUBMODELS;
+            for (u32 s = 0; s < AETHER_MDL_MAX_SUBMODELS; ++s)
+                st->parts[i].tri_per_sub[s] = (u32)rd_i32_le(p + 40 + s * 4);
+            if (st->parts[i].selected >= st->parts[i].submodel_count)
+                st->parts[i].selected = 0;
+        }
+        return true;
+    }
+    /* fallback defaults */
+    return aether_mdl_bodygroup_init_from_fixture(st, NULL, 0);
+}
+
+bool aether_mdl_bodygroup_set(aether_mdl_bodygroup_state_t *st, u32 part, u32 sub) {
+    if (!st || part >= st->part_count) return false;
+    if (sub >= st->parts[part].submodel_count) return false;
+    st->parts[part].selected = sub;
+    return true;
+}
+
+u32 aether_mdl_bodygroup_get(const aether_mdl_bodygroup_state_t *st, u32 part) {
+    if (!st || part >= st->part_count) return 0;
+    return st->parts[part].selected;
+}
+
+u32 aether_mdl_bodygroup_cycle(aether_mdl_bodygroup_state_t *st, u32 part, int dir) {
+    if (!st || part >= st->part_count || st->parts[part].submodel_count == 0) return 0;
+    u32 n = st->parts[part].submodel_count;
+    i32 cur = (i32)st->parts[part].selected;
+    if (dir >= 0) cur = (cur + 1) % (i32)n;
+    else cur = (cur - 1 + (i32)n) % (i32)n;
+    st->parts[part].selected = (u32)cur;
+    return st->parts[part].selected;
+}
+
+u32 aether_mdl_bodygroup_tri_total(const aether_mdl_bodygroup_state_t *st,
+                                   const aether_mdl_lod_table_t *lods, i32 lod) {
+    if (!st) return 0;
+    u32 sum = 0;
+    for (u32 i = 0; i < st->part_count; ++i) {
+        u32 s = st->parts[i].selected;
+        if (s >= st->parts[i].submodel_count) s = 0;
+        sum += st->parts[i].tri_per_sub[s];
+    }
+    u32 budget = aether_mdl_lod_tri_count(lods, lod);
+    if (budget > 0 && sum > budget) sum = budget;
+    return sum;
+}
+
+i32 aether_mdl_bodygroup_apply_lod(aether_mdl_bodygroup_state_t *st,
+                                   const aether_mdl_lod_table_t *lods, f32 distance) {
+    if (!st) return -1;
+    i32 lod = aether_mdl_lod_select(lods, distance);
+    st->active_lod = lod;
+    return lod;
+}

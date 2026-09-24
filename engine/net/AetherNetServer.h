@@ -105,6 +105,11 @@ u32 aether_net_server_tick_authority(aether_net_server_t *s, f32 dt);
 const aether_net_cmd_t *aether_net_server_lagcomp_cmd(const aether_net_server_t *s,
                                                      u32 player_id, f32 lag_ms);
 
+/* Broadcast PLAYER_JOIN / PLAYER_LEAVE to all active clients. */
+void aether_net_server_broadcast_join(aether_net_server_t *s, u32 player_id, const char *name);
+void aether_net_server_broadcast_leave(aether_net_server_t *s, u32 player_id);
+
+
 
 #ifdef __cplusplus
 }

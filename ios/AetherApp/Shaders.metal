@@ -737,3 +737,41 @@ fragment float4 aether_bloom_blur_v_fragment(PostFXOut in [[stage_in]],
     }
     return float4(acc / max(wsum, 1e-4), 1.0);
 }
+
+/* ============ Depth prepass (depth-only encode stub) ============ */
+struct DepthPrepassUniforms {
+    float4x4 mvp;
+    float4   clip_plane; /* unused in basic prepass; shared with water reflect hooks */
+    float    enabled;
+    float3   pad;
+};
+struct DepthPrepassIn {
+    float3 position [[attribute(0)]];
+};
+struct DepthPrepassOut {
+    float4 position [[position]];
+};
+vertex DepthPrepassOut aether_depth_prepass_vertex(DepthPrepassIn in [[stage_in]],
+                                                   constant DepthPrepassUniforms &U [[buffer(1)]]) {
+    DepthPrepassOut o;
+    float4 wp = float4(in.position, 1.0);
+    o.position = U.mvp * wp;
+    return o;
+}
+/* Color attachment unused / masked off; fragment kept for pipeline validity on some targets. */
+fragment float4 aether_depth_prepass_fragment(DepthPrepassOut in [[stage_in]]) {
+    return float4(0.0, 0.0, 0.0, 0.0);
+}
+
+/* ============ Water planar reflection clip hook ============ */
+struct WaterReflectUniforms {
+    float4x4 mirror;
+    float4   clip_plane;
+    float    enabled;
+    float3   pad;
+};
+/* Transform eye/world position by mirror matrix (CPU also fills uniforms). */
+float3 aether_water_reflect_transform(float3 p, constant WaterReflectUniforms &R) {
+    float4 h = R.mirror * float4(p, 1.0);
+    return h.xyz;
+}
