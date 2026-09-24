@@ -20,6 +20,8 @@
 #include "AetherNetChat.h"
 #include "AetherVGUIRuntime.h"
 #include "AetherRender.h"
+#include "AetherRenderFeatures.h"
+#include "AetherParticle.h"
 #include "AetherMath.h"
 
 /* Host stubs for Metal backend entry points (Swift provides these on iOS). */
@@ -117,6 +119,26 @@ int main(void) {
     expect(aether_vgui_runtime_console_visible(), "vgui_console_visible");
     aether_vgui_runtime_shutdown();
 
+
+    /* Particle pool: spawn → tick → copy_render (feeds Metal). */
+    {
+        aether_particles_t parts;
+        expect(aether_particles_init(&parts) == AETHER_OK, "particles_init");
+        f32 origin[3] = { 10.f, 20.f, 30.f };
+        u32 spawned = aether_particles_spawn_burst(&parts, origin, 32);
+        expect(spawned == 32, "particles_spawn_burst");
+        expect(aether_particles_active_count(&parts) == 32, "particles_active_after_spawn");
+        aether_particles_update(&parts, 0.5f);
+        expect(aether_particles_active_count(&parts) > 0, "particles_active_after_tick");
+        aether_particle_vertex_t verts[64];
+        u32 copied = aether_particles_copy_render(&parts, verts, 64);
+        expect(copied > 0 && copied <= 32, "particles_copy_render");
+        expect(verts[0].size > 0.f, "particles_vertex_size");
+        aether_particles_clear(&parts);
+        expect(aether_particles_active_count(&parts) == 0, "particles_clear");
+    }
+
+    /* Renderer feature particles via begin_frame_dt path. */
     /* Renderer camera + feature tick plumbing (NULL backend — no GPU). */
     aether_renderer_t *rend = aether_renderer_create(AETHER_RENDER_NULL, NULL);
     expect(rend != NULL, "renderer_create_null");
@@ -136,6 +158,17 @@ int main(void) {
            "renderer_begin_frame_dt");
     aether_renderer_tick_features(rend, 1.f / 30.f);
     expect(aether_renderer_features(rend) != NULL, "renderer_features");
+    {
+        aether_render_features_t *feat = aether_renderer_features(rend);
+        f32 origin[3] = { 0.f, 0.f, 40.f };
+        u32 n = aether_particles_spawn_burst(&feat->particles, origin, 16);
+        expect(n == 16, "renderer_particles_burst");
+        aether_renderer_tick_features(rend, 1.f / 60.f);
+        expect(aether_particles_active_count(&feat->particles) > 0,
+               "renderer_particles_still_active");
+        expect(aether_renderer_draw_feature(rend, AETHER_CMD_DRAW_PARTICLES) == AETHER_OK,
+               "renderer_draw_particles");
+    }
     expect(aether_renderer_draw_world(rend) == AETHER_OK, "renderer_draw_world");
     expect(aether_renderer_draw_hud(rend) == AETHER_OK, "renderer_draw_hud");
     expect(aether_renderer_end_frame(rend) == AETHER_OK, "renderer_end_frame");

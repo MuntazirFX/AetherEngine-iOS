@@ -77,6 +77,16 @@ void engine_renderer_draw_feature(int feature_cmd);
 void engine_renderer_tick_features(float dt);
 void engine_renderer_end_frame(void);
 
+/* ---------- Particles (render-feature pool) ---------- */
+/* Seed a burst around world origin (x,y,z). Returns spawned count. */
+int   engine_particles_spawn_burst(float x, float y, float z, int count);
+int   engine_particles_active_count(void);
+/* Copy active particles as flat floats: [x,y,z,size,r,g,b,a] * N. Returns N. */
+int   engine_particles_copy_render(float *out_xyz_size_rgba, int max_particles);
+void  engine_particles_clear(void);
+/* AETHER_CMD_DRAW_PARTICLES = 10 — submit feature draw through backend. */
+#define ENGINE_CMD_DRAW_PARTICLES 10
+
 /* ---------- BSP ---------- */
 int  engine_bsp_inspect(const char *bsp_path);
 int  engine_bsp_inspect_vfs(const char *vpath);

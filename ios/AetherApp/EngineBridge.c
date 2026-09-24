@@ -16,6 +16,8 @@
 #include "../../engine/fs/AetherFS.h"
 #include "../../engine/audio/AetherAudio.h"
 #include "../../engine/render/AetherRender.h"
+#include "../../engine/render/AetherRenderFeatures.h"
+#include "../../engine/render/AetherParticle.h"
 #include "../../engine/bsp/AetherBSP.h"
 #include "../../engine/bsp/AetherBSPGeometry.h"
 #include "../../engine/player/AetherPlayer.h"
@@ -372,6 +374,41 @@ void engine_renderer_tick_features(float dt) {
 void engine_renderer_end_frame(void) {
     if (g_renderer) (void)aether_renderer_end_frame(g_renderer);
 }
+
+/* ---------- Particles ---------- */
+static aether_particles_t *bridge_particles(void) {
+    if (!g_renderer) return NULL;
+    aether_render_features_t *f = aether_renderer_features(g_renderer);
+    return f ? &f->particles : NULL;
+}
+
+int engine_particles_spawn_burst(float x, float y, float z, int count) {
+    aether_particles_t *p = bridge_particles();
+    if (!p || count <= 0) return 0;
+    f32 origin[3] = { x, y, z };
+    return (int)aether_particles_spawn_burst(p, origin, (u32)count);
+}
+
+int engine_particles_active_count(void) {
+    aether_particles_t *p = bridge_particles();
+    return p ? (int)aether_particles_active_count(p) : 0;
+}
+
+int engine_particles_copy_render(float *out_xyz_size_rgba, int max_particles) {
+    aether_particles_t *p = bridge_particles();
+    if (!p || !out_xyz_size_rgba || max_particles <= 0) return 0;
+    /* Layout matches aether_particle_vertex_t (8 floats). */
+    return (int)aether_particles_copy_render(
+        p,
+        (aether_particle_vertex_t *)out_xyz_size_rgba,
+        (u32)max_particles);
+}
+
+void engine_particles_clear(void) {
+    aether_particles_t *p = bridge_particles();
+    if (p) aether_particles_clear(p);
+}
+
 
 /* ---------- BSP inspect ---------- */
 int engine_bsp_inspect(const char *p) {

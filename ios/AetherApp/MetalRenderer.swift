@@ -1,5 +1,5 @@
 // MetalRenderer.swift
-// Renders BSP mesh + MDL model + entities. STEP 18B.
+// Renders BSP mesh + MDL model + entities + particles. STEP 18B / metal-particles.
 // Pushes view/proj + frame dt into EngineBridge each draw.
 // AetherEngine-iOS · Clean-room.
 
@@ -47,6 +47,15 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     var monsterIndexCount: Int = 0
     var monsterPositions: [simd_float3] = []
 
+    // Particles (driven by AetherParticle via EngineBridge)
+    var particlePipeline: MTLRenderPipelineState?
+    var particleDepthState: MTLDepthStencilState?
+    var particleBuffer:   MTLBuffer?
+    var particleCount:    Int = 0
+    private let maxParticleUpload = 512
+    private var particleSeedOrigin = simd_float3(0, 0, 64)
+    private var particleRespawnAccum: Float = 0
+
     private var lastTime: CFTimeInterval = CACurrentMediaTime()
 
     init?(mtkView: MTKView) {
@@ -65,6 +74,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
         buildBspPipeline(mtkView: mtkView)
         buildMdlPipeline(mtkView: mtkView)
+        buildParticlePipeline(mtkView: mtkView)
         buildDepthState()
         buildSampler()
 
@@ -107,10 +117,38 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         catch { print("[MetalRenderer] MDL pipeline error: \(error)") }
     }
 
+    private func buildParticlePipeline(mtkView: MTKView) {
+        guard let lib = device.makeDefaultLibrary(),
+              let vfn = lib.makeFunction(name: "aether_particle_vertex"),
+              let ffn = lib.makeFunction(name: "aether_particle_fragment") else { return }
+        let vd = MTLVertexDescriptor()
+        vd.attributes[0].format = .float3; vd.attributes[0].offset = 0;  vd.attributes[0].bufferIndex = 0
+        vd.attributes[1].format = .float;  vd.attributes[1].offset = 12; vd.attributes[1].bufferIndex = 0
+        vd.attributes[2].format = .float4; vd.attributes[2].offset = 16; vd.attributes[2].bufferIndex = 0
+        vd.layouts[0].stride = 32
+        vd.layouts[0].stepFunction = .perVertex
+        let d = MTLRenderPipelineDescriptor()
+        d.vertexFunction = vfn; d.fragmentFunction = ffn; d.vertexDescriptor = vd
+        d.colorAttachments[0].pixelFormat = mtkView.colorPixelFormat
+        d.colorAttachments[0].isBlendingEnabled = true
+        d.colorAttachments[0].rgbBlendOperation = .add
+        d.colorAttachments[0].alphaBlendOperation = .add
+        d.colorAttachments[0].sourceRGBBlendFactor = .sourceAlpha
+        d.colorAttachments[0].destinationRGBBlendFactor = .oneMinusSourceAlpha
+        d.colorAttachments[0].sourceAlphaBlendFactor = .one
+        d.colorAttachments[0].destinationAlphaBlendFactor = .oneMinusSourceAlpha
+        d.depthAttachmentPixelFormat = mtkView.depthStencilPixelFormat
+        do { particlePipeline = try device.makeRenderPipelineState(descriptor: d) }
+        catch { print("[MetalRenderer] particle pipeline error: \(error)") }
+    }
+
     private func buildDepthState() {
         let d = MTLDepthStencilDescriptor()
         d.depthCompareFunction = .less; d.isDepthWriteEnabled = true
         depthState = device.makeDepthStencilState(descriptor: d)
+        let soft = MTLDepthStencilDescriptor()
+        soft.depthCompareFunction = .less; soft.isDepthWriteEnabled = false
+        particleDepthState = device.makeDepthStencilState(descriptor: soft)
     }
 
     private func buildSampler() {
@@ -136,7 +174,13 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             print("[MetalRenderer] Player spawned at mesh center (no info_player_start)")
         }
 
-        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0), MDL=\(hasMdl), Monsters=\(monsterPositions.count))")
+        // Seed a particle burst near the player eye / mesh center so Metal draws live C state.
+        var eye = [Float](repeating: 0, count: 3)
+        engine_player_get_eye(&eye)
+        particleSeedOrigin = simd_float3(eye[0], eye[1], eye[2] + 24)
+        engine_particles_clear()
+        let seeded = engine_particles_spawn_burst(eye[0], eye[1], eye[2] + 24, 96)
+        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0), MDL=\(hasMdl), Monsters=\(monsterPositions.count), Particles=\(seeded))")
     }
 
     private func uploadBspMesh() {
@@ -360,11 +404,69 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             }
         }
 
+        // ---- Particles (AetherParticle pool) ----
+        syncAndDrawParticles(encoder: enc, viewMat: viewMat, projMat: projMat, dt: dt)
+
         enc.endEncoding()
         engine_renderer_draw_hud()
         engine_renderer_end_frame()
         cmd.present(drawable)
         cmd.commit()
+    }
+
+
+    private func syncAndDrawParticles(encoder enc: MTLRenderCommandEncoder,
+                                      viewMat: simd_float4x4,
+                                      projMat: simd_float4x4,
+                                      dt: Float) {
+        // Replenish when the pool runs dry so the feature stays visible in demos.
+        particleRespawnAccum += dt
+        if engine_particles_active_count() < 8 && particleRespawnAccum > 0.35 {
+            particleRespawnAccum = 0
+            var eye = [Float](repeating: 0, count: 3)
+            engine_player_get_eye(&eye)
+            _ = engine_particles_spawn_burst(eye[0], eye[1], eye[2] + 16, 48)
+        }
+
+        var packed = [Float](repeating: 0, count: maxParticleUpload * 8)
+        let n = packed.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_particles_copy_render(buf.baseAddress, Int32(maxParticleUpload)))
+        }
+        particleCount = Int(n)
+        guard particleCount > 0, let pipeline = particlePipeline else { return }
+
+        let bytes = particleCount * 32
+        if particleBuffer == nil || particleBuffer!.length < bytes {
+            particleBuffer = device.makeBuffer(length: max(bytes, maxParticleUpload * 32),
+                                               options: .storageModeShared)
+        }
+        if let buf = particleBuffer {
+            packed.withUnsafeBytes { raw in
+                if let base = raw.baseAddress {
+                    buf.contents().copyMemory(from: base, byteCount: bytes)
+                }
+            }
+        }
+
+        // Notify C backend that particles are being drawn this frame.
+        engine_renderer_draw_feature(Int32(ENGINE_CMD_DRAW_PARTICLES))
+
+        struct ParticleUniforms {
+            var view: simd_float4x4
+            var proj: simd_float4x4
+        }
+        var PU = ParticleUniforms(view: viewMat, proj: projMat)
+        enc.setRenderPipelineState(pipeline)
+        if let softDepth = particleDepthState {
+            enc.setDepthStencilState(softDepth)
+        }
+        if let vb = particleBuffer {
+            enc.setVertexBuffer(vb, offset: 0, index: 0)
+        }
+        enc.setVertexBytes(&PU, length: MemoryLayout<ParticleUniforms>.stride, index: 1)
+        enc.drawPrimitives(type: .point, vertexStart: 0, vertexCount: particleCount)
+        // Restore default depth write for any later passes
+        if let ds = depthState { enc.setDepthStencilState(ds) }
     }
 
     /// Column-major float[16] matching aether_mat4_t / Metal simd layout.
