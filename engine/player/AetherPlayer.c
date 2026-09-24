@@ -1,8 +1,9 @@
-/* AetherPlayer.c — Player movement with gravity + collision + swim + waterlevel.
- * Air drain/recover sets drowning; host/bridge applies aether_player_tick_drown.
+/* AetherPlayer.c — Player movement with gravity + collision + swim + fall impact.
+ * Air drain/recover sets drowning; host/bridge applies tick_drown + fall damage.
  * AetherEngine-iOS · Clean-room.
  */
 #include "AetherPlayer.h"
+#include "AetherPlayerDamage.h"
 #include <math.h>
 #include <string.h>
 
@@ -24,6 +25,8 @@
 #define WATER_BUOYANCY      220.0f    /* upward accel while submerged */
 #define SWIM_VERT_SPEED     180.0f
 #define AIR_RECOVER_SCALE   2.0f      /* air refill rate vs drain */
+#define VIEW_PUNCH_DECAY    8.0f      /* punch pitch → 0 per second */
+#define FALL_PUNCH_SCALE    0.0025f   /* radians per damage point */
 
 static bool point_in_water(const aether_collision_t *collision,
                            aether_vec3_t point,
@@ -104,6 +107,9 @@ void aether_player_init(aether_player_t *p) {
     p->air         = AETHER_PLAYER_AIR_MAX;
     p->drowning    = false;
     p->splash_event = AETHER_SPLASH_NONE;
+    p->fall_velocity_z = 0.0f;
+    p->pending_fall_damage = 0.0f;
+    p->view_punch_pitch = 0.0f;
     p->hull_index  = 1;
     p->step_height = AETHER_DEFAULT_STEP_HEIGHT;
 }
@@ -113,8 +119,10 @@ void aether_player_set_position(aether_player_t *p, aether_vec3_t pos) {
     p->position = pos;
     p->velocity = (aether_vec3_t){ 0, 0, 0 };
     p->on_ground = false;
-    /* Position teleports clear pending splash; waterlevel re-sampled on update. */
+    /* Position teleports clear pending splash / fall; waterlevel re-sampled on update. */
     p->splash_event = AETHER_SPLASH_NONE;
+    p->fall_velocity_z = 0.0f;
+    p->pending_fall_damage = 0.0f;
 }
 
 aether_vec3_t aether_player_eye_position(const aether_player_t *p) {
@@ -159,6 +167,21 @@ void aether_player_trigger_splash(aether_player_t *p, i32 splash_kind) {
     if (!p) return;
     if (splash_kind == AETHER_SPLASH_ENTER || splash_kind == AETHER_SPLASH_EXIT)
         p->splash_event = splash_kind;
+}
+
+f32 aether_player_take_fall_damage(aether_player_t *p) {
+    if (!p) return 0.0f;
+    f32 dmg = p->pending_fall_damage;
+    p->pending_fall_damage = 0.0f;
+    return dmg;
+}
+
+f32 aether_player_fall_velocity(const aether_player_t *p) {
+    return p ? p->fall_velocity_z : 0.0f;
+}
+
+f32 aether_player_view_punch_pitch(const aether_player_t *p) {
+    return p ? p->view_punch_pitch : 0.0f;
 }
 
 void aether_player_update(aether_player_t *p,
@@ -285,6 +308,11 @@ void aether_player_update(aether_player_t *p,
     if (p->velocity.z < -2000.0f) p->velocity.z = -2000.0f;
 
     /* 7. Integrate + collision --- */
+    bool was_ground = p->on_ground;
+    /* Track peak downward speed while airborne (before ground clamps velocity). */
+    if (!was_ground && p->velocity.z < p->fall_velocity_z)
+        p->fall_velocity_z = p->velocity.z;
+
     aether_vec3_t target;
     target.x = p->position.x + p->velocity.x * dt;
     target.y = p->position.y + p->velocity.y * dt;
@@ -304,6 +332,39 @@ void aether_player_update(aether_player_t *p,
     player_refresh_water(p, collision);
     player_tick_air(p, dt);
 
+    /* 7b. Fall impact on land / soft water entry --- */
+    {
+        f32 impact_vz = p->fall_velocity_z;
+        if (p->velocity.z < impact_vz)
+            impact_vz = p->velocity.z;
+
+        bool landed = !was_ground && on_ground;
+        bool water_soft = (p->waterlevel >= AETHER_WATERLEVEL_FEET);
+
+        if (landed) {
+            if (water_soft) {
+                /* Wade/swim/under landings: no fall damage. */
+                p->pending_fall_damage = 0.0f;
+            } else {
+                f32 dmg = aether_player_calc_fall_damage(impact_vz);
+                p->pending_fall_damage = dmg;
+                if (dmg > 0.0f) {
+                    /* Optional view punch (look down on hard land). */
+                    f32 punch = dmg * FALL_PUNCH_SCALE;
+                    if (punch > 0.35f) punch = 0.35f;
+                    p->view_punch_pitch -= punch;
+                }
+            }
+            p->fall_velocity_z = 0.0f;
+        } else if (!was_ground && water_soft && impact_vz < -1.0f) {
+            /* Entered water while falling: soft — clear tracked speed, no HP hit. */
+            p->pending_fall_damage = 0.0f;
+            p->fall_velocity_z = 0.0f;
+        } else if (on_ground) {
+            p->fall_velocity_z = 0.0f;
+        }
+    }
+
     /* If blocked along an axis, kill velocity along it (basic) */
     if (fabsf(final.x - target.x) > 1e-3f) p->velocity.x = 0.0f;
     if (fabsf(final.y - target.y) > 1e-3f) p->velocity.y = 0.0f;
@@ -311,4 +372,13 @@ void aether_player_update(aether_player_t *p,
     /* Ceiling clamp: upward move stopped by hull headroom. */
     if (p->velocity.z > 0.0f && (final.z + 1e-3f) < target.z)
         p->velocity.z = 0.0f;
+
+    /* View punch decay (GoldSrc-style punchangle stub). */
+    if (p->view_punch_pitch != 0.0f && dt > 0.0f) {
+        f32 k = VIEW_PUNCH_DECAY * dt;
+        if (k > 1.0f) k = 1.0f;
+        p->view_punch_pitch *= (1.0f - k);
+        if (fabsf(p->view_punch_pitch) < 1e-4f)
+            p->view_punch_pitch = 0.0f;
+    }
 }

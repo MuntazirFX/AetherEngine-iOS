@@ -805,6 +805,94 @@ int main(void) {
                 expect(!aether_player_is_drowning(&ply), "hud_drowning_false_surface");
             }
 
+            /* Fall damage on land impact (STEP 2p). Room is short so inject impact speed. */
+            {
+                aether_player_health_t hp;
+                aether_player_health_init(&hp);
+
+                /* Formula contract: below 580 u/s → 0; high speed → HP loss. */
+                expect(aether_player_calc_fall_damage(-200.0f) == 0.0f,
+                       "fall_calc_short_drop_zero");
+                expect(aether_player_calc_fall_damage(-580.0f) == 0.0f,
+                       "fall_calc_threshold_zero");
+                f32 big = aether_player_calc_fall_damage(-900.0f);
+                expect(big > 20.0f && big < 50.0f, "fall_calc_high_speed_damage");
+
+                /* High fall → land dry → pending damage → HP drop + punch.
+                 * Synthetic room is short; inject impact speed and soak until ground. */
+                aether_player_init(&ply);
+                aether_player_set_position(&ply, (aether_vec3_t){0, 0, 40});
+                ply.on_ground = false;
+                ply.velocity = (aether_vec3_t){0, 0, -900.0f};
+                ply.fall_velocity_z = -900.0f;
+                for (int i = 0; i < 30 && !ply.on_ground; ++i) {
+                    ply.velocity.z = -900.0f;
+                    ply.fall_velocity_z = -900.0f;
+                    aether_input_begin_frame(in);
+                    aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                    aether_input_end_frame(in);
+                }
+                expect(ply.on_ground, "fall_high_lands_ground");
+                f32 pending = aether_player_take_fall_damage(&ply);
+                expect(pending > 20.0f, "fall_high_pending_damage");
+                expect(aether_player_view_punch_pitch(&ply) < 0.0f,
+                       "fall_high_view_punch");
+                {
+                    aether_damage_event_t ev = {0};
+                    ev.amount = pending;
+                    ev.type = AETHER_DMG_FALL;
+                    f32 hp0 = aether_player_health_get(&hp);
+                    aether_player_apply_damage(&hp, &ev);
+                    expect(aether_player_health_get(&hp) < hp0 - 20.0f,
+                           "fall_high_hp_loss");
+                }
+                expect(aether_player_take_fall_damage(&ply) == 0.0f,
+                       "fall_pending_cleared");
+
+                /* Small step / short drop from z=8 → impact << 580 → no damage. */
+                aether_player_init(&ply);
+                aether_player_set_position(&ply, (aether_vec3_t){0, 0, 8});
+                for (int i = 0; i < 60 && !ply.on_ground; ++i) {
+                    aether_input_begin_frame(in);
+                    aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                    aether_input_end_frame(in);
+                }
+                expect(ply.on_ground, "fall_short_lands");
+                expect(aether_player_take_fall_damage(&ply) == 0.0f,
+                       "fall_short_no_damage");
+
+                /* Water soft: dive from just above surface (stand headroom ~56) into pool. */
+                aether_player_init(&ply);
+                aether_player_set_position(&ply, (aether_vec3_t){0, 170, 52});
+                ply.on_ground = false;
+                f32 water_fall_dmg = 0.0f;
+                for (int i = 0; i < 60; ++i) {
+                    ply.velocity.z = -900.0f;
+                    ply.fall_velocity_z = -900.0f;
+                    aether_input_begin_frame(in);
+                    aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                    aether_input_end_frame(in);
+                    water_fall_dmg += aether_player_take_fall_damage(&ply);
+                }
+                expect(water_fall_dmg == 0.0f, "fall_water_soft_or_wet");
+
+                /* Wet land impact: airborne→ground while feet in water. */
+                aether_player_init(&ply);
+                aether_player_set_position(&ply, (aether_vec3_t){0, 170, 24});
+                ply.on_ground = false;
+                f32 wet_land_dmg = 0.0f;
+                for (int i = 0; i < 45; ++i) {
+                    ply.velocity.z = -900.0f;
+                    ply.fall_velocity_z = -900.0f;
+                    aether_input_begin_frame(in);
+                    aether_player_update(&ply, aether_input_state(in), col, 1.f / 60.f);
+                    aether_input_end_frame(in);
+                    wet_land_dmg += aether_player_take_fall_damage(&ply);
+                    if (ply.on_ground) break;
+                }
+                expect(wet_land_dmg == 0.0f, "fall_water_land_soft");
+            }
+
             /* Manual splash trigger API. */
             aether_player_trigger_splash(&ply, AETHER_SPLASH_ENTER);
             expect(aether_player_take_splash_event(&ply) == AETHER_SPLASH_ENTER,
@@ -813,7 +901,7 @@ int main(void) {
             aether_input_destroy(in);
             aether_collision_free(col);
             printf("  collision: floor z=%.3f, ledge climb x=%.1f z=%.1f, jump ceil~%.1f, "
-                   "water swim peak~%.1f, waterlevel/splash/air/drown-hp ok\n",
+                   "water swim peak~%.1f, waterlevel/splash/air/drown-hp/fall ok\n",
                    landed.z, climbed.x, climbed.z, jumped.z, swim_peak);
         }
 

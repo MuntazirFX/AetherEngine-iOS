@@ -264,6 +264,20 @@ void engine_player_tick(float dt) {
         }
     }
 
+    /* Fall damage on land impact (pending set by player update; water soft = 0). */
+    {
+        f32 fall_dmg = aether_player_take_fall_damage(&g_player);
+        if (fall_dmg > 0.0f) {
+            aether_damage_event_t ev;
+            memset(&ev, 0, sizeof ev);
+            ev.amount = fall_dmg;
+            ev.type = AETHER_DMG_FALL;
+            aether_player_apply_damage(&g_player_health, &ev);
+            if (g_hud_health)
+                aether_hud_health_trigger_damage_flash(g_hud_health, fall_dmg);
+        }
+    }
+
     /* Enter/exit water splash → particle burst at mid-body. */
     {
         int splash = aether_player_take_splash_event(&g_player);
@@ -298,7 +312,15 @@ void engine_player_set_position(float x, float y, float z) {
 }
 void  engine_player_set_angles(float y, float p) { g_player.yaw = y; g_player.pitch = p; }
 float engine_player_get_yaw(void)   { return g_player.yaw; }
-float engine_player_get_pitch(void) { return g_player.pitch; }
+float engine_player_get_pitch(void) {
+    return g_player.pitch + aether_player_view_punch_pitch(&g_player);
+}
+float engine_player_view_punch_pitch(void) {
+    return aether_player_view_punch_pitch(&g_player);
+}
+float engine_player_fall_velocity(void) {
+    return aether_player_fall_velocity(&g_player);
+}
 int engine_player_on_ground(void)   { return g_player.on_ground ? 1 : 0; }
 float engine_player_get_step_height(void) { return g_player.step_height; }
 void engine_player_set_step_height(float height) {

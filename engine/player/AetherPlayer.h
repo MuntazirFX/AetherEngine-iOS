@@ -1,4 +1,4 @@
-/* AetherPlayer.h — First-person player with gravity + collision (STEP 14).
+/* AetherPlayer.h — First-person player with gravity + collision + fall impact.
  * AetherEngine-iOS · Clean-room.
  */
 #ifndef AETHER_PLAYER_H
@@ -44,6 +44,9 @@ typedef struct aether_player {
     f32           air_max;
     bool          drowning;      /* air depleted while eye underwater → feed tick_drown */
     i32           splash_event;  /* pending ENTER/EXIT; consume via take_splash */
+    f32           fall_velocity_z;   /* most-negative Z vel while airborne (impact speed) */
+    f32           pending_fall_damage; /* set on dry land impact; consume via take_fall */
+    f32           view_punch_pitch;  /* additive pitch punch (radians); decays toward 0 */
     i32           hull_index;    /* 1 or 2 */
     f32           step_height;   /* max auto-step (Quake 18); 0 disables */
 } aether_player_t;
@@ -73,6 +76,13 @@ bool aether_player_is_drowning(const aether_player_t *p);
 i32  aether_player_take_splash_event(aether_player_t *p);
 /* Manually queue a splash event (bridge / host tests). */
 void aether_player_trigger_splash(aether_player_t *p, i32 splash_kind);
+
+/* Consume pending fall damage from last land impact (0 if none / soft). */
+f32  aether_player_take_fall_damage(aether_player_t *p);
+/* Peak downward speed tracked while last airborne (negative Z). */
+f32  aether_player_fall_velocity(const aether_player_t *p);
+/* Additive view punch pitch (radians); decays in update. */
+f32  aether_player_view_punch_pitch(const aether_player_t *p);
 
 #ifdef __cplusplus
 }
