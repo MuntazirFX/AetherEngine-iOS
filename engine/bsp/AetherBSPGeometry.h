@@ -15,6 +15,7 @@ typedef struct aether_mesh_vertex {
     f32 x, y, z;      /* position */
     f32 nx, ny, nz;   /* normal */
     f32 u, v;         /* atlas UV (0..1) */
+    f32 lu, lv;       /* lightmap UV (0..1) — procedural stub or BSP lightmap */
 } aether_mesh_vertex_t;
 
 typedef struct aether_mesh {

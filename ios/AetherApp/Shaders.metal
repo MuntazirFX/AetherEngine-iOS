@@ -9,12 +9,14 @@ struct BSPVertexIn {
     float3 position [[attribute(0)]];
     float3 normal   [[attribute(1)]];
     float2 uv       [[attribute(2)]];
+    float2 luv      [[attribute(3)]]; /* lightmap UV */
 };
 
 struct BSPVertexOut {
     float4 position [[position]];
     float3 normal;
     float2 uv;
+    float2 luv;
 };
 
 struct Uniforms {
@@ -25,7 +27,8 @@ struct Uniforms {
     float    pad0;
     float4   base_color;
     float    use_texture;
-    float    pad1, pad2, pad3;
+    float    use_lightmap;
+    float    pad2, pad3;
 };
 
 vertex BSPVertexOut aether_vertex_main(BSPVertexIn in [[stage_in]],
@@ -35,12 +38,14 @@ vertex BSPVertexOut aether_vertex_main(BSPVertexIn in [[stage_in]],
     out.position = U.proj * U.view * world;
     out.normal = normalize((U.model * float4(in.normal, 0.0)).xyz);
     out.uv = in.uv;
+    out.luv = in.luv;
     return out;
 }
 
 fragment float4 aether_fragment_main(BSPVertexOut in [[stage_in]],
                                       constant Uniforms &U [[buffer(1)]],
                                       texture2d<float> atlas [[texture(0)]],
+                                      texture2d<float> lightmap [[texture(1)]],
                                       sampler samp [[sampler(0)]]) {
     // Brighter lighting — changed ambient 0.30 → 0.55, diffuse 0.70 → 0.60
     float3 N = normalize(in.normal);
@@ -60,6 +65,14 @@ fragment float4 aether_fragment_main(BSPVertexOut in [[stage_in]],
     } else {
         float3 tint = float3(0.5 + 0.5*N.x, 0.5 + 0.5*N.y, 0.5 + 0.5*N.z);
         base_color = U.base_color.rgb * tint;
+    }
+
+    // Procedural / BSP lightmap stub: modulate vertex/base color (not flat).
+    if (U.use_lightmap > 0.5) {
+        float3 lm = lightmap.sample(samp, in.luv).rgb;
+        base_color *= lm;
+        // Soften directional term when lightmap carries the shading.
+        diff = mix(diff, 1.0, 0.65);
     }
 
     float3 color = base_color * diff;

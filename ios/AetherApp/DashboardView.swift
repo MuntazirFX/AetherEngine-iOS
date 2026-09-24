@@ -232,7 +232,12 @@ struct DashboardView: View {
         if ok == 1 {
             let synth = engine_bsp_mesh_is_synthetic() != 0
             alertTitle = synth ? "Synthetic Demo Room" : "Map Loaded"
-            alertMessage = "Vertices: \(engine_bsp_mesh_vertex_count())\nTriangles: \(engine_bsp_mesh_triangle_count())\nEntities: \(engine_entity_count())\nMonsters: \(engine_entity_monster_count())\nSource: \(synth ? "synthetic:demo_room" : "maps/c0a0.bsp")"
+            let lmW = engine_lightmap_width()
+            let lmH = engine_lightmap_height()
+            let lmInfo = (lmW > 0 && lmH > 0)
+                ? "\(lmW)x\(lmH) stub=\(engine_lightmap_is_stub() != 0)"
+                : "pending (Metal bake)"
+            alertMessage = "Vertices: \(engine_bsp_mesh_vertex_count())\nTriangles: \(engine_bsp_mesh_triangle_count())\nEntities: \(engine_entity_count())\nMonsters: \(engine_entity_monster_count())\nLightmap: \(lmInfo)\nSource: \(synth ? "synthetic:demo_room" : "maps/c0a0.bsp")"
         } else {
             alertTitle = "Failed"; alertMessage = "Could not build world mesh"
         }

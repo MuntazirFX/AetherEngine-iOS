@@ -157,6 +157,16 @@ int  engine_bsp_mesh_build_or_synthetic(const char *vpath);
 int  engine_bsp_mesh_is_synthetic(void);
 #define ENGINE_CMD_DRAW_WORLD 4
 
+/* ---------- Lightmap (procedural stub atlas) ---------- */
+int  engine_lightmap_enabled(void);
+void engine_lightmap_set_enabled(bool enabled);
+int  engine_lightmap_width(void);
+int  engine_lightmap_height(void);
+int  engine_lightmap_is_stub(void);
+int  engine_lightmap_copy_rgba(unsigned char *out, int max_bytes);
+/* Rebuild procedural stub + assign mesh lightmap UVs for the active BSP mesh. */
+int  engine_lightmap_bake_active_mesh(void);
+
 /* ---------- Texture atlas ---------- */
 int  engine_texture_dump_wad(const char *wad_vpath);
 int  engine_texture_dump_bsp_miptex(void);

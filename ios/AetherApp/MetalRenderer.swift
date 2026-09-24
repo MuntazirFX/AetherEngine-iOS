@@ -1,5 +1,5 @@
 // MetalRenderer.swift
-// Renders BSP/world mesh + entities + particles + sky + water + fog. STEP 2g / bsp-metal.
+// Renders BSP/world mesh + entities + particles + sky + water + fog + lightmap stub. STEP 2h / bsp-lightmap.
 // Pushes view/proj + frame dt into EngineBridge each draw.
 // AetherEngine-iOS · Clean-room.
 
@@ -8,16 +8,16 @@ import SwiftUI
 import simd
 
 struct Uniforms {
-    var model:      simd_float4x4
-    var view:       simd_float4x4
-    var proj:       simd_float4x4
-    var lightDir:   simd_float3
-    var pad0:       Float = 0
-    var baseColor:  simd_float4
-    var useTexture: Float = 0
-    var pad1:       Float = 0
-    var pad2:       Float = 0
-    var pad3:       Float = 0
+    var model:       simd_float4x4
+    var view:        simd_float4x4
+    var proj:        simd_float4x4
+    var lightDir:    simd_float3
+    var pad0:        Float = 0
+    var baseColor:   simd_float4
+    var useTexture:  Float = 0
+    var useLightmap: Float = 0
+    var pad2:        Float = 0
+    var pad3:        Float = 0
 }
 
 final class MetalRenderer: NSObject, MTKViewDelegate {
@@ -35,6 +35,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
     var atlasTexture: MTLTexture?
     var hasTexture:   Bool = false
+    var lightmapTexture: MTLTexture?
+    var hasLightmap:     Bool = false
 
     var mdlVertexBuf:  MTLBuffer?
     var mdlIndexBuf:   MTLBuffer?
@@ -111,7 +113,8 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         vd.attributes[0].format = .float3; vd.attributes[0].offset = 0;  vd.attributes[0].bufferIndex = 0
         vd.attributes[1].format = .float3; vd.attributes[1].offset = 12; vd.attributes[1].bufferIndex = 0
         vd.attributes[2].format = .float2; vd.attributes[2].offset = 24; vd.attributes[2].bufferIndex = 0
-        vd.layouts[0].stride = 32
+        vd.attributes[3].format = .float2; vd.attributes[3].offset = 32; vd.attributes[3].bufferIndex = 0
+        vd.layouts[0].stride = 40
         vd.layouts[0].stepFunction = .perVertex
         let d = MTLRenderPipelineDescriptor()
         d.vertexFunction = vfn; d.fragmentFunction = ffn; d.vertexDescriptor = vd
@@ -259,6 +262,13 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     func uploadMeshFromEngine() {
         uploadBspMesh()
         uploadAtlas()
+        // Ensure procedural lightmap stub exists (mesh may have been built before Metal init).
+        if engine_lightmap_width() <= 0 || engine_lightmap_is_stub() == 0 {
+            _ = engine_lightmap_bake_active_mesh()
+            // Re-copy verts so lu/lv from bake are in the GPU buffer.
+            uploadBspMesh()
+        }
+        uploadLightmap()
         uploadMdlMesh()
         buildMonsterBoxes()
         uploadSkyDome()
@@ -279,18 +289,19 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         engine_particles_clear()
         let seeded = engine_particles_spawn_burst(eye[0], eye[1], eye[2] + 24, 96)
         let synth = engine_bsp_mesh_is_synthetic() != 0
-        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0) synthetic=\(synth) tris=\(engine_bsp_mesh_triangle_count()), MDL=\(hasMdl), Monsters=\(monsterPositions.count), Particles=\(seeded), Sky=\(skyVertexCount), Water=\(waterVertexCount))")
+        print("[MetalRenderer] Upload complete (BSP=\(indexCount > 0) synthetic=\(synth) tris=\(engine_bsp_mesh_triangle_count()), lightmap=\(hasLightmap) \(engine_lightmap_width())x\(engine_lightmap_height()) stub=\(engine_lightmap_is_stub() != 0), MDL=\(hasMdl), Monsters=\(monsterPositions.count), Particles=\(seeded), Sky=\(skyVertexCount), Water=\(waterVertexCount))")
     }
 
     private func uploadBspMesh() {
         let vCount = Int(engine_bsp_mesh_vertex_count())
         let iCount = Int(engine_bsp_mesh_index_count())
         guard vCount > 0, iCount > 0 else { return }
-        var vData = [Float](repeating: 0, count: vCount * 8)
+        // aether_mesh_vertex_t: pos3+n3+uv2+luv2 = 10 floats (40 bytes)
+        var vData = [Float](repeating: 0, count: vCount * 10)
         _ = vData.withUnsafeMutableBufferPointer { buf -> Int32 in
             Int32(engine_bsp_mesh_copy_vertices(buf.baseAddress, Int32(vCount)))
         }
-        vertexBuffer = device.makeBuffer(bytes: vData, length: vCount * 32, options: .storageModeShared)
+        vertexBuffer = device.makeBuffer(bytes: vData, length: vCount * 40, options: .storageModeShared)
         var iData = [UInt32](repeating: 0, count: iCount)
         _ = iData.withUnsafeMutableBufferPointer { buf -> Int32 in
             Int32(engine_bsp_mesh_copy_indices(buf.baseAddress, Int32(iCount)))
@@ -318,6 +329,31 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                     withBytes: rgba, bytesPerRow: w * 4)
         atlasTexture = tex
         hasTexture = true
+    }
+
+    private func uploadLightmap() {
+        let w = Int(engine_lightmap_width())
+        let h = Int(engine_lightmap_height())
+        guard w > 0, h > 0, engine_lightmap_enabled() != 0 else {
+            hasLightmap = false
+            return
+        }
+        let byteCount = w * h * 4
+        var rgba = [UInt8](repeating: 0, count: byteCount)
+        let copied = rgba.withUnsafeMutableBufferPointer { buf -> Int32 in
+            Int32(engine_lightmap_copy_rgba(buf.baseAddress, Int32(byteCount)))
+        }
+        guard copied == byteCount else { hasLightmap = false; return }
+        let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm,
+                                                          width: w, height: h, mipmapped: false)
+        td.usage = .shaderRead
+        td.storageMode = .shared
+        guard let tex = device.makeTexture(descriptor: td) else { hasLightmap = false; return }
+        tex.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0,
+                    withBytes: rgba, bytesPerRow: w * 4)
+        lightmapTexture = tex
+        hasLightmap = true
+        print("[MetalRenderer] Lightmap uploaded \(w)x\(h) stub=\(engine_lightmap_is_stub() != 0)")
     }
 
     private func uploadMdlMesh() {
@@ -506,13 +542,19 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                              pad0: 0,
                              baseColor: simd_float4(0.85, 0.9, 1.0, 1.0),
                              useTexture: hasTexture ? 1.0 : 0.0,
-                             pad1: 0, pad2: 0, pad3: 0)
+                             useLightmap: hasLightmap ? 1.0 : 0.0,
+                             pad2: 0, pad3: 0)
             enc.setVertexBuffer(vb, offset: 0, index: 0)
             enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
             enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
-            if let tex = atlasTexture, let ss = samplerState {
-                enc.setFragmentTexture(tex, index: 0)
+            if let ss = samplerState {
                 enc.setFragmentSamplerState(ss, index: 0)
+            }
+            if let tex = atlasTexture {
+                enc.setFragmentTexture(tex, index: 0)
+            }
+            if let lm = lightmapTexture {
+                enc.setFragmentTexture(lm, index: 1)
             }
             enc.drawIndexedPrimitives(type: .triangle, indexCount: indexCount,
                                       indexType: .uint32, indexBuffer: ib, indexBufferOffset: 0)
@@ -529,7 +571,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                              lightDir: simd_normalize(simd_float3(0.3, 0.8, 0.5)),
                              pad0: 0,
                              baseColor: simd_float4(0.85, 0.75, 0.55, 1.0),
-                             useTexture: 0.0, pad1: 0, pad2: 0, pad3: 0)
+                             useTexture: 0.0, useLightmap: 0.0, pad2: 0, pad3: 0)
             enc.setVertexBuffer(vb, offset: 0, index: 0)
             enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
             enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
@@ -547,7 +589,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                                  lightDir: simd_normalize(simd_float3(0.3, 0.8, 0.5)),
                                  pad0: 0,
                                  baseColor: simd_float4(0.9, 0.3, 0.3, 1.0),   // red = monster
-                                 useTexture: 0.0, pad1: 0, pad2: 0, pad3: 0)
+                                 useTexture: 0.0, useLightmap: 0.0, pad2: 0, pad3: 0)
                 enc.setVertexBuffer(vb, offset: 0, index: 0)
                 enc.setVertexBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
                 enc.setFragmentBytes(&U, length: MemoryLayout<Uniforms>.stride, index: 1)
