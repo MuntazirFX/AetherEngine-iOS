@@ -19,6 +19,22 @@
 #include "AetherNetScoreboard.h"
 #include "AetherNetChat.h"
 #include "AetherVGUIRuntime.h"
+#include "AetherRender.h"
+#include "AetherMath.h"
+
+/* Host stubs for Metal backend entry points (Swift provides these on iOS). */
+aether_result_t aether_metal_init(void *user, u32 w, u32 h) {
+    (void)user; (void)w; (void)h; return AETHER_OK;
+}
+aether_result_t aether_metal_resize(void *user, u32 w, u32 h) {
+    (void)user; (void)w; (void)h; return AETHER_OK;
+}
+aether_result_t aether_metal_submit(void *user, const aether_render_cmd_t *cmd) {
+    (void)user; (void)cmd; return AETHER_OK;
+}
+aether_result_t aether_metal_shutdown(void *user) {
+    (void)user; return AETHER_OK;
+}
 
 static int g_failures = 0;
 
@@ -100,6 +116,32 @@ int main(void) {
     aether_vgui_runtime_toggle_console();
     expect(aether_vgui_runtime_console_visible(), "vgui_console_visible");
     aether_vgui_runtime_shutdown();
+
+    /* Renderer camera + feature tick plumbing (NULL backend — no GPU). */
+    aether_renderer_t *rend = aether_renderer_create(AETHER_RENDER_NULL, NULL);
+    expect(rend != NULL, "renderer_create_null");
+    expect(aether_renderer_init(rend, 640, 360) == AETHER_OK, "renderer_init");
+    aether_mat4_t view = aether_mat4_look_at(
+        (aether_vec3_t){0, 0, 0},
+        (aether_vec3_t){1, 0, 0},
+        (aether_vec3_t){0, 0, 1});
+    aether_mat4_t proj = aether_mat4_perspective(1.2f, 16.f / 9.f, 1.f, 1000.f);
+    expect(aether_renderer_set_camera(rend, view, proj) == AETHER_OK, "renderer_set_camera");
+    aether_mat4_t got_view, got_proj;
+    aether_renderer_get_view(rend, &got_view);
+    aether_renderer_get_proj(rend, &got_proj);
+    expect(memcmp(got_view.m, view.m, sizeof view.m) == 0, "renderer_get_view");
+    expect(memcmp(got_proj.m, proj.m, sizeof proj.m) == 0, "renderer_get_proj");
+    expect(aether_renderer_begin_frame_dt(rend, 0.1f, 0.1f, 0.1f, 1.f, 1.f / 30.f) == AETHER_OK,
+           "renderer_begin_frame_dt");
+    aether_renderer_tick_features(rend, 1.f / 30.f);
+    expect(aether_renderer_features(rend) != NULL, "renderer_features");
+    expect(aether_renderer_draw_world(rend) == AETHER_OK, "renderer_draw_world");
+    expect(aether_renderer_draw_hud(rend) == AETHER_OK, "renderer_draw_hud");
+    expect(aether_renderer_end_frame(rend) == AETHER_OK, "renderer_end_frame");
+    expect(aether_renderer_width(rend) == 640 && aether_renderer_height(rend) == 360,
+           "renderer_size");
+    aether_renderer_destroy(rend);
 
     if (g_failures) {
         fprintf(stderr, "\n%d smoke check(s) failed\n", g_failures);

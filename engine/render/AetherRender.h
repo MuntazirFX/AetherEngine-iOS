@@ -78,12 +78,21 @@ aether_result_t aether_renderer_shutdown(aether_renderer_t *r);
 
 aether_result_t aether_renderer_begin_frame(aether_renderer_t *r,
                                              f32 r_, f32 g, f32 b, f32 a);
+/* Same as begin_frame, but advances render-feature timers with the real frame dt. */
+aether_result_t aether_renderer_begin_frame_dt(aether_renderer_t *r,
+                                               f32 r_, f32 g, f32 b, f32 a,
+                                               f32 dt);
 aether_result_t aether_renderer_set_camera(aether_renderer_t *r,
                                            aether_mat4_t view,
                                            aether_mat4_t proj);
+/* Cached camera matrices (column-major) last pushed via set_camera. */
+void aether_renderer_get_view(const aether_renderer_t *r, aether_mat4_t *out_view);
+void aether_renderer_get_proj(const aether_renderer_t *r, aether_mat4_t *out_proj);
 aether_result_t aether_renderer_draw_world(aether_renderer_t *r);
 aether_result_t aether_renderer_draw_hud  (aether_renderer_t *r);
 aether_result_t aether_renderer_draw_feature(aether_renderer_t *r, aether_render_cmd_type_t feature);
+/* Tick water/particles/decals/MDL anim without submitting a draw command. */
+void aether_renderer_tick_features(aether_renderer_t *r, f32 dt);
 
 /* Xash3D-class feature state exposed through the Aether renderer. */
 typedef struct aether_render_features aether_render_features_t;

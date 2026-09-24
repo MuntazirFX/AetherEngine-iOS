@@ -21,6 +21,9 @@ struct aether_renderer {
     u32                                w, h;
     bool                               initialized;
     aether_render_features_t          features;
+    aether_mat4_t                      view;
+    aether_mat4_t                      proj;
+    f32                                frame_dt;
 };
 
 static aether_result_t null_init    (void *user, u32 w, u32 h) { (void)user; (void)w; (void)h; return AETHER_OK; }
@@ -46,6 +49,9 @@ aether_renderer_t *aether_renderer_create(aether_render_backend_t backend,
         case AETHER_RENDER_SOFTWARE: r->vt = aether_render_soft_backend(); break;
         default: free(r); return NULL;
     }
+    r->view = aether_mat4_identity();
+    r->proj = aether_mat4_identity();
+    r->frame_dt = 1.0f / 60.0f;
     aether_log(AETHER_LOG_INFO, "render", "renderer created (backend=%d)", (int)backend);
     return r;
 }
@@ -109,14 +115,26 @@ static aether_result_t submit(aether_renderer_t *r, const aether_render_cmd_t *c
 
 aether_result_t aether_renderer_begin_frame(aether_renderer_t *r,
                                              f32 cr, f32 cg, f32 cb, f32 ca) {
+    f32 dt = r ? r->frame_dt : (1.0f / 60.0f);
+    return aether_renderer_begin_frame_dt(r, cr, cg, cb, ca, dt);
+}
+
+aether_result_t aether_renderer_begin_frame_dt(aether_renderer_t *r,
+                                               f32 cr, f32 cg, f32 cb, f32 ca,
+                                               f32 dt) {
     if (!r) return AETHER_ERR_INVALID_ARG;
+    if (dt < 0.0f) dt = 0.0f;
+    if (dt > 0.25f) dt = 1.0f / 60.0f;
+    r->frame_dt = dt;
     aether_render_cmd_t c = {0};
     c.type = AETHER_CMD_BEGIN_FRAME;
     c.viewport_w = r->w; c.viewport_h = r->h;
     c.clear_rgba[0] = cr; c.clear_rgba[1] = cg;
     c.clear_rgba[2] = cb; c.clear_rgba[3] = ca;
+    c.view = r->view;
+    c.projection = r->proj;
     aether_result_t res = submit(r, &c);
-    if (res == AETHER_OK) aether_render_features_update(&r->features, 1.0f / 60.0f);
+    if (res == AETHER_OK) aether_render_features_update(&r->features, dt);
     return res;
 }
 
@@ -124,11 +142,23 @@ aether_result_t aether_renderer_set_camera(aether_renderer_t *r,
                                            aether_mat4_t view,
                                            aether_mat4_t proj) {
     if (!r) return AETHER_ERR_INVALID_ARG;
+    r->view = view;
+    r->proj = proj;
     aether_render_cmd_t c = {0};
     c.type = AETHER_CMD_SET_VIEWPORT;
     c.view = view; c.projection = proj;
     c.viewport_w = r->w; c.viewport_h = r->h;
     return submit(r, &c);
+}
+
+void aether_renderer_get_view(const aether_renderer_t *r, aether_mat4_t *out_view) {
+    if (!out_view) return;
+    *out_view = r ? r->view : aether_mat4_identity();
+}
+
+void aether_renderer_get_proj(const aether_renderer_t *r, aether_mat4_t *out_proj) {
+    if (!out_proj) return;
+    *out_proj = r ? r->proj : aether_mat4_identity();
 }
 
 aether_result_t aether_renderer_draw_world(aether_renderer_t *r) {
@@ -162,6 +192,14 @@ aether_result_t aether_renderer_draw_feature(aether_renderer_t *r, aether_render
     aether_render_cmd_t c = {0};
     c.type = feature;
     return submit(r, &c);
+}
+
+void aether_renderer_tick_features(aether_renderer_t *r, f32 dt) {
+    if (!r) return;
+    if (dt < 0.0f) dt = 0.0f;
+    if (dt > 0.25f) dt = 1.0f / 60.0f;
+    r->frame_dt = dt;
+    aether_render_features_update(&r->features, dt);
 }
 
 aether_render_features_t *aether_renderer_features(aether_renderer_t *r) {

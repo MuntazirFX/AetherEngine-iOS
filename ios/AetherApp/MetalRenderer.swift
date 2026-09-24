@@ -1,5 +1,6 @@
 // MetalRenderer.swift
 // Renders BSP mesh + MDL model + entities. STEP 18B.
+// Pushes view/proj + frame dt into EngineBridge each draw.
 // AetherEngine-iOS · Clean-room.
 
 import MetalKit
@@ -270,7 +271,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.25, green: 0.30, blue: 0.45, alpha: 1.0)
         rpd.colorAttachments[0].loadAction = .clear
 
-        engine_renderer_begin_frame()
+        engine_renderer_begin_frame_dt(dt)
 
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { cmd.commit(); return }
         if let ds = depthState { enc.setDepthStencilState(ds) }
@@ -285,9 +286,20 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let target = eyeV + fwdV
 
         let viewMat = lookAtZUp(eye: eyeV, center: target, up: simd_float3(0, 0, 1))
+        let aspect = Float(max(view.drawableSize.width, 1) / max(view.drawableSize.height, 1))
         let projMat = perspective(fovY: 75 * .pi / 180,
-                                   aspect: Float(view.drawableSize.width / view.drawableSize.height),
+                                   aspect: aspect,
                                    near: 1.0, far: 50000.0)
+
+        // Keep C-side renderer camera + feature state in sync with Metal.
+        var viewFlat = flattenMatrix(viewMat)
+        var projFlat = flattenMatrix(projMat)
+        viewFlat.withUnsafeMutableBufferPointer { vb in
+            projFlat.withUnsafeMutableBufferPointer { pb in
+                engine_renderer_set_camera(vb.baseAddress, pb.baseAddress)
+            }
+        }
+        engine_renderer_draw_world()
 
         // ---- BSP ----
         if let pipeline = bspPipeline, let vb = vertexBuffer, let ib = indexBuffer, indexCount > 0 {
@@ -349,9 +361,20 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         }
 
         enc.endEncoding()
+        engine_renderer_draw_hud()
         engine_renderer_end_frame()
         cmd.present(drawable)
         cmd.commit()
+    }
+
+    /// Column-major float[16] matching aether_mat4_t / Metal simd layout.
+    private func flattenMatrix(_ m: simd_float4x4) -> [Float] {
+        return [
+            m.columns.0.x, m.columns.0.y, m.columns.0.z, m.columns.0.w,
+            m.columns.1.x, m.columns.1.y, m.columns.1.z, m.columns.1.w,
+            m.columns.2.x, m.columns.2.y, m.columns.2.z, m.columns.2.w,
+            m.columns.3.x, m.columns.3.y, m.columns.3.z, m.columns.3.w
+        ]
     }
 
     private func lookAtZUp(eye: simd_float3, center: simd_float3, up: simd_float3) -> simd_float4x4 {
