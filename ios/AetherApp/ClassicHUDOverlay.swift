@@ -12,6 +12,7 @@ struct ClassicHUDOverlay: View {
     @State private var reserve: Int = 0
     @State private var weapon: Int = 0
     @State private var alive: Bool = true
+    @State private var crosshairSpread: CGFloat = 0
 
     private let poll = Timer.publish(every: 1.0 / 15.0, on: .main, in: .common).autoconnect()
 
@@ -19,7 +20,7 @@ struct ClassicHUDOverlay: View {
         GeometryReader { geo in
             ZStack {
                 // Classic center crosshair. Kept deliberately simple like GoldSrc.
-                CrosshairView()
+                CrosshairView(spread: crosshairSpread)
                     .frame(width: min(geo.size.width, geo.size.height) * 0.12,
                            height: min(geo.size.width, geo.size.height) * 0.12)
                     .allowsHitTesting(false)
@@ -135,17 +136,22 @@ struct ClassicHUDOverlay: View {
         reserve = Int(engine_hud_reserve_ammo())
         weapon = Int(engine_hud_active_weapon())
         alive = engine_hud_alive()
+        crosshairSpread = CGFloat(engine_hud_crosshair_spread())
         _ = clipMax
     }
 }
 
 private struct CrosshairView: View {
+    /// 0..1 engine spread; widens the classic crosshair gap when moving/firing.
+    var spread: CGFloat = 0
+
     var body: some View {
         GeometryReader { g in
             let cx = g.size.width / 2
             let cy = g.size.height / 2
             let length = min(g.size.width, g.size.height) * 0.18
-            let gap = length * 0.70
+            let baseGap = length * 0.70
+            let gap = baseGap + length * min(max(spread, 0), 1) * 0.55
             ZStack {
                 Rectangle().frame(width: 1.5, height: length)
                     .position(x: cx, y: cy - gap / 2 - length / 2)

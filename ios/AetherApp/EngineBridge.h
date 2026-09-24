@@ -63,6 +63,18 @@ void engine_audio_stop_all(void);
 void engine_renderer_attach_metal(void *mtkView);
 void engine_renderer_resize(unsigned int width, unsigned int height);
 void engine_renderer_begin_frame(void);
+/* Begin frame and tick render features with the real frame delta (seconds). */
+void engine_renderer_begin_frame_dt(float dt);
+/* Push column-major 4x4 view/proj from Metal/Swift into the C renderer. */
+void engine_renderer_set_camera(const float view16[16], const float proj16[16]);
+/* Read back the last camera matrices (column-major). out may be NULL. */
+void engine_renderer_get_view(float out16[16]);
+void engine_renderer_get_proj(float out16[16]);
+/* Submit world/HUD/feature draw commands through the active backend vtable. */
+void engine_renderer_draw_world(void);
+void engine_renderer_draw_hud(void);
+void engine_renderer_draw_feature(int feature_cmd);
+void engine_renderer_tick_features(float dt);
 void engine_renderer_end_frame(void);
 
 /* ---------- BSP ---------- */

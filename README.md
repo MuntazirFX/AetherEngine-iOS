@@ -31,6 +31,7 @@ GitHub Actions workflow `.github/workflows/verify.yml` runs the same script on e
 ## Build Status
 - [x] STEP 1: Core modules
 - [x] STEP 2: Verification (host compile + smoke via `build/scripts/verify_host.sh` / `.github/workflows/verify.yml`)
+- [x] STEP 2b: Metal/EngineBridge frame path — camera matrices, begin_frame_dt, feature ticks, HUD crosshair spread (see `continue/metal-bridge`)
 - [ ] STEP 3: Engine foundation
 - [ ] STEP 4: iOS application
 - [ ] STEP 5: 5-game configuration

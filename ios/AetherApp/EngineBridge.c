@@ -298,9 +298,7 @@ void engine_hud_set_crosshair_spread(float spread) {
     if (g_hud_crosshair) aether_hud_crosshair_set_spread(g_hud_crosshair, spread);
 }
 float engine_hud_crosshair_spread(void) {
-    /* Crosshair spread is intentionally exposed as a visual state value.
-       The clean-room runtime keeps the authoritative value internally. */
-    return 0.0f;
+    return g_hud_crosshair ? g_hud_crosshair->spread : 0.0f;
 }
 
 void engine_hud_give_demo_loadout(void) {
@@ -329,9 +327,51 @@ void engine_renderer_attach_metal(void *v) {
     (void)aether_renderer_install_metal(g_renderer, v);
     (void)aether_renderer_init(g_renderer, 1080, 1920);
 }
-void engine_renderer_resize(unsigned int w, unsigned int h) { if (g_renderer) (void)aether_renderer_resize(g_renderer, w, h); }
-void engine_renderer_begin_frame(void) { if (g_renderer) (void)aether_renderer_begin_frame(g_renderer, 0.05f, 0.05f, 0.08f, 1.0f); }
-void engine_renderer_end_frame(void)   { if (g_renderer) (void)aether_renderer_end_frame(g_renderer); }
+void engine_renderer_resize(unsigned int w, unsigned int h) {
+    if (g_renderer) (void)aether_renderer_resize(g_renderer, w, h);
+}
+void engine_renderer_begin_frame(void) {
+    engine_renderer_begin_frame_dt(1.0f / 60.0f);
+}
+void engine_renderer_begin_frame_dt(float dt) {
+    if (g_renderer)
+        (void)aether_renderer_begin_frame_dt(g_renderer, 0.05f, 0.05f, 0.08f, 1.0f, dt);
+}
+void engine_renderer_set_camera(const float view16[16], const float proj16[16]) {
+    if (!g_renderer || !view16 || !proj16) return;
+    aether_mat4_t view, proj;
+    memcpy(view.m, view16, sizeof view.m);
+    memcpy(proj.m, proj16, sizeof proj.m);
+    (void)aether_renderer_set_camera(g_renderer, view, proj);
+}
+void engine_renderer_get_view(float out16[16]) {
+    if (!out16) return;
+    aether_mat4_t view;
+    aether_renderer_get_view(g_renderer, &view);
+    memcpy(out16, view.m, sizeof view.m);
+}
+void engine_renderer_get_proj(float out16[16]) {
+    if (!out16) return;
+    aether_mat4_t proj;
+    aether_renderer_get_proj(g_renderer, &proj);
+    memcpy(out16, proj.m, sizeof proj.m);
+}
+void engine_renderer_draw_world(void) {
+    if (g_renderer) (void)aether_renderer_draw_world(g_renderer);
+}
+void engine_renderer_draw_hud(void) {
+    if (g_renderer) (void)aether_renderer_draw_hud(g_renderer);
+}
+void engine_renderer_draw_feature(int feature_cmd) {
+    if (g_renderer)
+        (void)aether_renderer_draw_feature(g_renderer, (aether_render_cmd_type_t)feature_cmd);
+}
+void engine_renderer_tick_features(float dt) {
+    if (g_renderer) aether_renderer_tick_features(g_renderer, dt);
+}
+void engine_renderer_end_frame(void) {
+    if (g_renderer) (void)aether_renderer_end_frame(g_renderer);
+}
 
 /* ---------- BSP inspect ---------- */
 int engine_bsp_inspect(const char *p) {
