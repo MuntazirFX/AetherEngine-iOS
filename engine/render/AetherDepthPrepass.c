@@ -77,3 +77,33 @@ u32 aether_depth_prepass_record_stub(aether_depth_prepass_t *d,
     d->sample_count = n;
     return n;
 }
+
+void aether_depth_prepass_frame_init(aether_depth_prepass_frame_t *f) {
+    if (!f) return;
+    memset(f, 0, sizeof(*f));
+    f->bind_before_main = true;
+    f->main_pass_index = 1;
+    f->prepass_index = 0;
+}
+
+int aether_depth_prepass_bind_before_main(const aether_depth_prepass_t *d,
+                                          aether_depth_prepass_frame_t *f) {
+    if (!f) return 0;
+    aether_depth_prepass_frame_init(f);
+    if (!aether_depth_prepass_encode_needed(d)) {
+        f->bind_before_main = false;
+        return 0;
+    }
+    f->bind_before_main = true;
+    f->prepass_index = 0;
+    f->main_pass_index = 1;
+    return 1;
+}
+
+void aether_depth_prepass_mark_bound(aether_depth_prepass_frame_t *f) {
+    if (f) f->bound = true;
+}
+
+bool aether_depth_prepass_was_bound_before_main(const aether_depth_prepass_frame_t *f) {
+    return f && f->bind_before_main && f->bound && f->prepass_index < f->main_pass_index;
+}

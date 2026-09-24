@@ -1085,6 +1085,210 @@ static void smoke_batch_studio_lod_water_reflect_netscore(void) {
 }
 
 
+
+static void smoke_batch_reflect_rt_studio_skin_mp_hud(void) {
+    printf("--- batch_reflect_rt_studio_skin_mp_hud ---\n");
+
+    /* 1. Water reflection RT encode plan (allocates + samples — not uniforms-only) */
+    {
+        aether_water_t w; aether_water_init(&w);
+        aether_water_set_height(&w, 16.f);
+        f32 eye[3] = {0, 0, 64.f};
+        aether_water_reflect_t r;
+        aether_water_reflect_compute(&w, eye, &r);
+        aether_water_reflect_rt_t rt;
+        aether_water_reflect_rt_init(&rt);
+        expect(aether_water_reflect_rt_ensure(&rt, 1280, 720, 0.5f) == AETHER_OK, "b10_rt_ensure");
+        expect(rt.allocated && rt.width == 640 && rt.height == 360, "b10_rt_size");
+        expect(rt.tex_stub_id != 0, "b10_rt_tex");
+        aether_water_reflect_rt_plan_t plan;
+        aether_water_reflect_rt_encode_plan(&rt, &r, &plan);
+        expect(plan.needed && plan.pass_count == 1 && plan.allocate && plan.sample, "b10_rt_plan");
+        expect(aether_water_reflect_rt_sample_needed(&rt), "b10_rt_sample");
+    }
+
+    /* 2. Fuller studio LOD mesh extract by distance (multi tri budgets) */
+    {
+        u8 buf[32768];
+        u32 n = aether_mdl_write_skin_lod_fixture(buf, sizeof buf);
+        expect(n > 1000, "b10_skin_lod_fix");
+        aether_mdl_lod_table_t lods;
+        expect(aether_mdl_fixture_lods(buf, n, &lods) == 3, "b10_lods");
+        f32 pos[AETHER_MDL_LOD_EXTRACT_MAX_VERTS * 3];
+        u32 idx[AETHER_MDL_LOD_EXTRACT_MAX_TRIS * 3];
+        u32 vc = 0, tc = 0;
+        i32 lod_near = aether_mdl_lod_extract_by_distance(&lods, 100.f, pos, AETHER_MDL_LOD_EXTRACT_MAX_VERTS,
+                                                          idx, AETHER_MDL_LOD_EXTRACT_MAX_TRIS * 3, &vc, &tc);
+        expect(lod_near == 0 && tc == 12 && vc > 0, "b10_extract_near");
+        vc = tc = 0;
+        i32 lod_far = aether_mdl_lod_extract_by_distance(&lods, 900.f, pos, AETHER_MDL_LOD_EXTRACT_MAX_VERTS,
+                                                         idx, AETHER_MDL_LOD_EXTRACT_MAX_TRIS * 3, &vc, &tc);
+        expect(lod_far == 2 && tc == 3, "b10_extract_far");
+        expect(tc < 12, "b10_extract_budget");
+    }
+
+    /* 3. MP score sync over UDP (frags/deaths in snapshot) */
+    {
+        u16 port = (u16)(29200 + (getpid() % 400));
+        aether_net_server_t *srv = aether_net_server_create(port, 4);
+        expect(srv != NULL, "b10_srv");
+        /* Manually activate two client slots for score sync smoke */
+        srv->clients[0].active = true;
+        srv->clients[0].player_id = 1;
+        aether_str_copy(srv->clients[0].name, sizeof srv->clients[0].name, "Alice");
+        srv->clients[1].active = true;
+        srv->clients[1].player_id = 2;
+        aether_str_copy(srv->clients[1].name, sizeof srv->clients[1].name, "Bob");
+        srv->client_count = 2;
+        expect(aether_net_server_set_score(srv, 1, 5, 1), "b10_set_score");
+        expect(aether_net_server_set_score(srv, 2, 3, 2), "b10_set_score2");
+        aether_net_snapshot_t snap;
+        expect(aether_net_server_build_snapshot(srv, &snap) == 2, "b10_snap_build");
+        expect(snap.players[0].score == 5 && snap.players[0].deaths == 1, "b10_snap_alice");
+        expect(snap.players[1].score == 3 && snap.players[1].deaths == 2, "b10_snap_bob");
+        u8 pkt[1400];
+        u32 psz = aether_net_snapshot_encode(&snap, pkt, sizeof pkt);
+        expect(psz > 16, "b10_snap_enc");
+        aether_socket_t *cli = aether_socket_create_udp();
+        aether_socket_t *bound = aether_socket_create_udp_bound((u16)(port + 1));
+        expect(cli && bound, "b10_socks");
+        aether_socket_set_nonblocking(cli, true);
+        aether_socket_set_nonblocking(bound, true);
+        aether_net_addr_t self;
+        expect(aether_net_addr_from_string("127.0.0.1", (u16)(port + 1), &self), "b10_addr");
+        expect(aether_socket_send(cli, &self, pkt, psz) > 0, "b10_udp_send_snap");
+        u8 rbuf[1400]; aether_net_addr_t from;
+        i32 got = -1;
+        for (int tries = 0; tries < 30 && got < 0; ++tries)
+            got = aether_socket_recv(bound, &from, rbuf, sizeof rbuf);
+        expect(got > 0, "b10_udp_recv_snap");
+        aether_net_snapshot_t dec;
+        expect(aether_net_snapshot_decode(rbuf, (u32)got, &dec) == AETHER_OK, "b10_snap_dec");
+        aether_scoreboard_t sb; aether_chat_log_t chat;
+        aether_scoreboard_init(&sb); aether_chat_init(&chat);
+        aether_net_snapshot_apply_hud(&dec, &sb, &chat, 1.f);
+        expect(sb.count == 2, "b10_hud_count");
+        int found = 0;
+        for (u32 i = 0; i < sb.count; ++i) {
+            if (sb.entries[i].player_id == 1 && sb.entries[i].score == 5 && sb.entries[i].deaths == 1) found++;
+            if (sb.entries[i].player_id == 2 && sb.entries[i].score == 3 && sb.entries[i].deaths == 2) found++;
+        }
+        expect(found == 2, "b10_hud_scores");
+        aether_socket_destroy(bound); aether_socket_destroy(cli);
+        aether_net_server_destroy(srv);
+    }
+
+    /* 4. Voice/chat cue sync stub (chat over net → HUD) */
+    {
+        aether_chat_log_t cl; aether_chat_init(&cl);
+        u8 pkt[512];
+        u32 n = aether_chat_encode(pkt, sizeof pkt, 3, "hello HUD");
+        expect(n > 8, "b10_chat_enc");
+        expect(aether_chat_apply_net(&cl, pkt, n, 1.f) == 1, "b10_chat_apply");
+        expect(cl.count >= 1, "b10_chat_line");
+        expect(aether_chat_last_cue_kind(&cl) == AETHER_CHAT_CUE_TEXT, "b10_chat_kind");
+        u8 vpkt[512];
+        u32 vn = aether_chat_encode_voice_cue(vpkt, sizeof vpkt, 4, "roger");
+        expect(vn > 8, "b10_voice_enc");
+        aether_socket_t *cli = aether_socket_create_udp();
+        u16 port = (u16)(29300 + (getpid() % 300));
+        aether_socket_t *bound = aether_socket_create_udp_bound(port);
+        expect(cli && bound, "b10_voice_socks");
+        aether_socket_set_nonblocking(cli, true);
+        aether_socket_set_nonblocking(bound, true);
+        aether_net_addr_t self;
+        expect(aether_net_addr_from_string("127.0.0.1", port, &self), "b10_voice_addr");
+        expect(aether_socket_send(cli, &self, vpkt, vn) > 0, "b10_voice_send");
+        u8 rbuf[512]; aether_net_addr_t from;
+        i32 got = -1;
+        for (int tries = 0; tries < 30 && got < 0; ++tries)
+            got = aether_socket_recv(bound, &from, rbuf, sizeof rbuf);
+        expect(got > 0, "b10_voice_recv");
+        aether_chat_handle_packet(&cl, rbuf, (u32)got, 2.f);
+        expect(aether_chat_last_cue_kind(&cl) == AETHER_CHAT_CUE_VOICE, "b10_voice_kind");
+        expect(cl.count >= 2, "b10_voice_hud");
+        aether_socket_destroy(bound); aether_socket_destroy(cli);
+    }
+
+    /* 5. Classic HUD net events — kill feed stub */
+    {
+        aether_scoreboard_t sb; aether_scoreboard_events_t ev;
+        aether_scoreboard_init(&sb); aether_scoreboard_events_init(&ev);
+        aether_scoreboard_set_score(&sb, 1, "Alice", 0, 0);
+        aether_scoreboard_set_score(&sb, 2, "Bob", 0, 0);
+        u8 pkt[256];
+        u32 n = aether_scoreboard_encode_kill(pkt, sizeof pkt, 1, "Alice", 2, "Bob");
+        expect(n > 16, "b10_kill_enc");
+        aether_scoreboard_handle_packet(&sb, &ev, pkt, n, 3.f);
+        expect(ev.live >= 1, "b10_kill_ev");
+        aether_scoreboard_event_t e;
+        expect(aether_scoreboard_events_get(&ev, ev.live - 1, &e) == 1, "b10_kill_get");
+        expect(e.kind == AETHER_SB_EVENT_KILL, "b10_kill_kind");
+        expect(e.player_id == 1 && e.victim_id == 2, "b10_kill_ids");
+        /* Alice +1 frag, Bob +1 death */
+        int alice_ok = 0, bob_ok = 0;
+        for (u32 i = 0; i < sb.count; ++i) {
+            if (sb.entries[i].player_id == 1 && sb.entries[i].score == 1) alice_ok = 1;
+            if (sb.entries[i].player_id == 2 && sb.entries[i].deaths == 1) bob_ok = 1;
+        }
+        expect(alice_ok && bob_ok, "b10_kill_scores");
+    }
+
+    /* 6. Studio skin / texture group select stub */
+    {
+        u8 buf[32768];
+        u32 n = aether_mdl_write_skin_lod_fixture(buf, sizeof buf);
+        aether_mdl_texgroup_state_t sk;
+        expect(aether_mdl_texgroup_init_from_fixture(&sk, buf, n), "b10_skin_init");
+        expect(sk.group_count == 2, "b10_skin_groups");
+        expect(aether_mdl_texgroup_set(&sk, 0, 2), "b10_skin_set");
+        expect(aether_mdl_texgroup_get(&sk, 0) == 2, "b10_skin_get");
+        u32 c = aether_mdl_texgroup_cycle(&sk, 0, +1);
+        expect(c == 0, "b10_skin_cycle_wrap"); /* 3 textures: 2→0 */
+        expect(aether_mdl_texgroup_select(&sk, 1) == 1, "b10_skin_sel");
+        expect(aether_mdl_texgroup_cycle(&sk, 1, +1) == 1, "b10_skin_chrome");
+    }
+
+    /* 7. Prediction correction teleport snap threshold */
+    {
+        aether_net_predict_t pr;
+        aether_net_predict_init(&pr, 1);
+        aether_net_predict_set_teleport_threshold(&pr, 64.f);
+        expect(fabsf(aether_net_predict_get_teleport_threshold(&pr) - 64.f) < 0.1f, "b10_tp_thresh");
+        pr.origin[0] = 0; pr.origin[1] = 0; pr.origin[2] = 0;
+        aether_net_snapshot_t snap; memset(&snap, 0, sizeof snap);
+        snap.tick = 1; snap.player_count = 1;
+        snap.players[0].player_id = 1;
+        snap.players[0].origin[0] = 200.f; /* >> 64 → teleport */
+        int tp = aether_net_predict_reconcile_teleport(&pr, &snap, 0.25f);
+        expect(tp == 1 && pr.teleported, "b10_tp_hard");
+        expect(fabsf(pr.origin[0] - 200.f) < 0.1f, "b10_tp_origin");
+        expect(aether_net_predict_error_length(&pr) < 0.1f, "b10_tp_clear");
+        /* Small error → soft correct, no teleport */
+        pr.origin[0] = 0; pr.teleported = false;
+        snap.players[0].origin[0] = 10.f;
+        snap.tick = 2;
+        tp = aether_net_predict_reconcile_teleport(&pr, &snap, 0.5f);
+        expect(tp == 0 && !pr.teleported, "b10_tp_soft");
+        expect(fabsf(pr.origin[0] - 5.f) < 0.1f, "b10_tp_blend"); /* 0 + 10*0.5 */
+    }
+
+    /* 8. Depth prepass bound before main pass */
+    {
+        aether_depth_prepass_t dp;
+        aether_depth_prepass_init(&dp);
+        expect(aether_depth_prepass_ensure(&dp, 800, 600) == AETHER_OK, "b10_dp_ensure");
+        aether_depth_prepass_frame_t fr;
+        expect(aether_depth_prepass_bind_before_main(&dp, &fr) == 1, "b10_dp_bind");
+        expect(fr.bind_before_main && fr.prepass_index < fr.main_pass_index, "b10_dp_order");
+        aether_depth_prepass_mark_bound(&fr);
+        expect(aether_depth_prepass_was_bound_before_main(&fr), "b10_dp_was_bound");
+    }
+
+    printf("--- batch_reflect_rt_studio_skin_mp_hud done ---\n");
+}
+
+
 int main(void) {
 
     printf("AetherEngine host smoke (%s)\n", AETHER_VERSION_STRING);
@@ -2764,6 +2968,7 @@ int main(void) {
     smoke_batch_metal_blend_studio_attach();
     smoke_batch_faceid_bone_portal_attach();
     smoke_batch_studio_lod_water_reflect_netscore();
+    smoke_batch_reflect_rt_studio_skin_mp_hud();
     smoke_batch_studio_vis_stereo();
 
     if (g_failures) {

@@ -86,6 +86,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
     /* Offscreen color + depth for PostFX (scene → texture → brightness/gamma). */
     private var sceneColorTexture: MTLTexture?
     private var sceneDepthTexture: MTLTexture?
+    private var waterReflectTexture: MTLTexture?
+    private var waterReflectSize: (Int, Int) = (0, 0)
+    private var depthPrepassBoundThisFrame = false
     private var postfxSampler: MTLSamplerState?
     private var postfxOffscreenSize: (Int, Int) = (0, 0)
 
@@ -317,7 +320,7 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         v.attributes[0].format = .float3
         v.attributes[0].offset = 0
         v.attributes[0].bufferIndex = 0
-        v.layouts[0].stride = 12
+        v.layouts[0].stride = 44 /* match BSP mesh: pos@0 */
         d.vertexDescriptor = v
         do { depthPrepassPipeline = try device.makeRenderPipelineState(descriptor: d) }
         catch { print("[MetalRenderer] depth prepass pipeline error: \(error)") }
@@ -325,14 +328,49 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
     /// Host/bridge-driven depth prepass encode plan: records that Metal should write depth first.
     func encodeDepthPrepassIfNeeded(_ encoder: MTLRenderCommandEncoder) {
+        _ = engine_depth_prepass_bind_before_main()
         var passes: UInt32 = 0, w: UInt32 = 0, h: UInt32 = 0
         var writeDepth: Int32 = 0
         let needed = engine_depth_prepass_encode_plan(&passes, &w, &h, &writeDepth)
         guard needed != 0, passes > 0, let pipe = depthPrepassPipeline else { return }
         encoder.setRenderPipelineState(pipe)
         if let ds = depthPrepassDepthState { encoder.setDepthStencilState(ds) }
-        // Geometry bind left to world mesh path; plan + pipeline stub proves encode hooks.
+        // Bind depth prepass BEFORE main color pass (early-Z plan).
+        if let vb = vertexBuffer, indexCount > 0 {
+            encoder.setVertexBuffer(vb, offset: 0, index: 0)
+            struct DepthU { var mvp: simd_float4x4; var clip: simd_float4; var enabled: Float; var pad: simd_float3 }
+            var DU = DepthU(mvp: matrix_identity_float4x4, clip: simd_float4(0,0,1,0),
+                            enabled: 1, pad: simd_float3(0,0,0))
+            encoder.setVertexBytes(&DU, length: MemoryLayout<DepthU>.stride, index: 1)
+            // Depth-only: draw indexed world mesh into depth attachment before main.
+            if let ib = culledIndexBuffer ?? indexBuffer {
+                let ic = culledIndexCount > 0 ? culledIndexCount : indexCount
+                if ic > 0 {
+                    encoder.drawIndexedPrimitives(type: .triangle, indexCount: ic,
+                                                  indexType: .uint32, indexBuffer: ib, indexBufferOffset: 0)
+                }
+            }
+        }
+        _ = engine_depth_prepass_mark_bound()
+        depthPrepassBoundThisFrame = true
         _ = w; _ = h; _ = writeDepth
+    }
+
+    private func ensureWaterReflectRT(fbW: Int, fbH: Int, pixelFormat: MTLPixelFormat) {
+        _ = engine_water_reflect_rt_ensure(UInt32(fbW), UInt32(fbH), 0.5)
+        var passes: UInt32 = 0, w: UInt32 = 0, h: UInt32 = 0
+        var alloc: Int32 = 0, sample: Int32 = 0
+        _ = engine_water_reflect_rt_encode_plan(&passes, &w, &h, &alloc, &sample)
+        var iw = Int(w), ih = Int(h)
+        if iw <= 0 || ih <= 0 { iw = max(fbW / 2, 1); ih = max(fbH / 2, 1) }
+        if waterReflectSize == (iw, ih), waterReflectTexture != nil { return }
+        let desc = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: pixelFormat, width: iw, height: ih, mipmapped: false)
+        desc.usage = [.renderTarget, .shaderRead]
+        desc.storageMode = .private
+        waterReflectTexture = device.makeTexture(descriptor: desc)
+        waterReflectSize = (iw, ih)
+        _ = passes; _ = alloc; _ = sample
     }
 
     private func buildSampler() {
@@ -725,7 +763,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let dw = max(Int(view.drawableSize.width), 1)
         let dh = max(Int(view.drawableSize.height), 1)
         ensureOffscreenTargets(width: dw, height: dh, pixelFormat: view.colorPixelFormat)
+        ensureWaterReflectRT(fbW: dw, fbH: dh, pixelFormat: view.colorPixelFormat)
         _ = engine_postfx_ensure_offscreen(Int32(dw), Int32(dh))
+        _ = engine_depth_prepass_ensure(UInt32(dw), UInt32(dh))
 
         guard let sceneColor = sceneColorTexture, let sceneDepth = sceneDepthTexture else { return }
         let rpd = MTLRenderPassDescriptor()
@@ -735,12 +775,15 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         rpd.colorAttachments[0].clearColor = MTLClearColor(red: 0.45, green: 0.65, blue: 0.95, alpha: 1.0)
         rpd.depthAttachment.texture = sceneDepth
         rpd.depthAttachment.loadAction = .clear
-        rpd.depthAttachment.storeAction = .dontCare
+        rpd.depthAttachment.storeAction = .store
         rpd.depthAttachment.clearDepth = 1.0
 
         engine_renderer_begin_frame_dt(dt)
 
         guard let enc = cmd.makeRenderCommandEncoder(descriptor: rpd) else { cmd.commit(); return }
+        depthPrepassBoundThisFrame = false
+        // Depth prepass bound BEFORE main color/world pass.
+        encodeDepthPrepassIfNeeded(enc)
         if let ds = depthState { enc.setDepthStencilState(ds) }
 
         var eye = [Float](repeating: 0, count: 3)
@@ -924,6 +967,10 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
                                   viewMat: simd_float4x4,
                                   projMat: simd_float4x4) {
         guard engine_water_enabled() != 0, let pipeline = waterPipeline else { return }
+        var eyeR = [Float](repeating: 0, count: 3)
+        engine_player_get_eye(&eyeR)
+        _ = engine_water_reflect_compute(eyeR[0], eyeR[1], eyeR[2])
+        _ = engine_water_reflect_rt_encode_plan(nil, nil, nil, nil, nil)
 
         let cap = Int(engine_water_render_vertex_capacity())
         guard cap > 0 else { return }
@@ -958,6 +1005,14 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         }
         var WU = WaterUniforms(view: viewMat, proj: projMat, time: engine_water_wave_time())
         enc.setRenderPipelineState(pipeline)
+        if let rtex = waterReflectTexture {
+            enc.setFragmentTexture(rtex, index: 1)
+        }
+        if let ss = samplerState {
+            enc.setFragmentSamplerState(ss, index: 0)
+        }
+        var reflectOn: Float = engine_water_reflect_rt_sample_needed() != 0 ? 1.0 : 0.0
+        enc.setFragmentBytes(&reflectOn, length: 4, index: 2)
         if let wd = waterDepthState { enc.setDepthStencilState(wd) }
         enc.setCullMode(.none)
         if let vb = waterBuffer {

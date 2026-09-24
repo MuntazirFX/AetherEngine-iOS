@@ -261,6 +261,7 @@ void aether_net_server_broadcast_chat(aether_net_server_t *s,
     aether_netbuf_write_u16(&b, AETHER_NET_PROTOCOL_VER);
     aether_netbuf_write_u8 (&b, AETHER_MSG_CHAT);
     aether_netbuf_write_u32(&b, from_player);
+    aether_netbuf_write_u8 (&b, 0); /* AETHER_CHAT_CUE_TEXT */
     aether_netbuf_write_string(&b, text, AETHER_NET_MAX_CHAT);
 
     for (u32 i = 0; i < AETHER_NET_MAX_PLAYERS; ++i) {
@@ -430,4 +431,53 @@ void aether_net_server_broadcast_leave(aether_net_server_t *s, u32 player_id) {
         if (!s->clients[i].active) continue;
         aether_socket_send(s->sock, &s->clients[i].addr, pkt, n);
     }
+}
+
+bool aether_net_server_set_score(aether_net_server_t *s, u32 player_id,
+                                 i32 score, i32 deaths) {
+    if (!s) return false;
+    for (u32 i = 0; i < AETHER_NET_MAX_PLAYERS; ++i) {
+        if (!s->clients[i].active || s->clients[i].player_id != player_id) continue;
+        s->clients[i].score = score;
+        s->clients[i].deaths = deaths;
+        return true;
+    }
+    return false;
+}
+
+void aether_net_server_broadcast_kill(aether_net_server_t *s,
+                                      u32 killer_id, const char *killer_name,
+                                      u32 victim_id, const char *victim_name) {
+    if (!s) return;
+    u8 pkt[256];
+    u32 n = aether_scoreboard_encode_kill(pkt, sizeof pkt, killer_id, killer_name,
+                                          victim_id, victim_name);
+    if (!n) return;
+    for (u32 i = 0; i < AETHER_NET_MAX_PLAYERS; ++i) {
+        if (!s->clients[i].active) continue;
+        aether_socket_send(s->sock, &s->clients[i].addr, pkt, n);
+    }
+}
+
+bool aether_net_server_register_kill(aether_net_server_t *s,
+                                     u32 killer_id, u32 victim_id) {
+    if (!s) return false;
+    const char *kn = "";
+    const char *vn = "";
+    bool ok = false;
+    for (u32 i = 0; i < AETHER_NET_MAX_PLAYERS; ++i) {
+        if (!s->clients[i].active) continue;
+        if (s->clients[i].player_id == killer_id) {
+            s->clients[i].score += 1;
+            kn = s->clients[i].name;
+            ok = true;
+        }
+        if (s->clients[i].player_id == victim_id) {
+            s->clients[i].deaths += 1;
+            vn = s->clients[i].name;
+            ok = true;
+        }
+    }
+    if (ok) aether_net_server_broadcast_kill(s, killer_id, kn, victim_id, vn);
+    return ok;
 }

@@ -109,7 +109,15 @@ const aether_net_cmd_t *aether_net_server_lagcomp_cmd(const aether_net_server_t 
 void aether_net_server_broadcast_join(aether_net_server_t *s, u32 player_id, const char *name);
 void aether_net_server_broadcast_leave(aether_net_server_t *s, u32 player_id);
 
-
+/* Set frags/deaths on a slot (creates inactive→active score fields). */
+bool aether_net_server_set_score(aether_net_server_t *s, u32 player_id,
+                                 i32 score, i32 deaths);
+/* Killer +1 frag, victim +1 death; broadcasts kill feed packet. */
+bool aether_net_server_register_kill(aether_net_server_t *s,
+                                     u32 killer_id, u32 victim_id);
+void aether_net_server_broadcast_kill(aether_net_server_t *s,
+                                      u32 killer_id, const char *killer_name,
+                                      u32 victim_id, const char *victim_name);
 
 #ifdef __cplusplus
 }

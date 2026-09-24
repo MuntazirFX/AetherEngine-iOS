@@ -608,4 +608,46 @@ int  engine_depth_prepass_record_stub(const float *positions_xyz, unsigned count
 int  engine_depth_prepass_encode_needed(void);
 int  engine_console_exec_bodygroup(const char *line); /* "bodygroup <part> [sub|next|prev]" */
 
+/* ---------- Batch: reflect RT / studio skin / MP score / chat cue / kill / teleport / depth bind ---------- */
+int  engine_water_reflect_rt_ensure(unsigned fb_w, unsigned fb_h, float scale);
+int  engine_water_reflect_rt_encode_plan(unsigned *out_passes, unsigned *out_w, unsigned *out_h,
+                                         int *out_allocate, int *out_sample);
+int  engine_water_reflect_rt_sample_needed(void);
+unsigned engine_water_reflect_rt_tex_stub(void);
+
+int  engine_mdl_lod_extract_by_distance(float distance,
+                                        float *out_pos, unsigned max_verts,
+                                        unsigned *out_idx, unsigned max_idx,
+                                        unsigned *out_vert_count, unsigned *out_tri_count);
+int  engine_mdl_lod_extract_mesh(int lod,
+                                 float *out_pos, unsigned max_verts,
+                                 unsigned *out_idx, unsigned max_idx,
+                                 unsigned *out_vert_count, unsigned *out_tri_count);
+
+int  engine_texgroup_init_fixture(void);
+int  engine_texgroup_set(unsigned group, unsigned tex);
+int  engine_texgroup_get(unsigned group);
+int  engine_texgroup_cycle(unsigned group, int dir);
+int  engine_texgroup_select_group(unsigned group);
+int  engine_console_exec_skin(const char *line);
+
+int  engine_net_score_sync_demo(unsigned player_id, int score, int deaths);
+int  engine_chat_encode_send_demo(unsigned player_id, const char *text);
+int  engine_chat_encode_voice_demo(unsigned player_id, const char *cue);
+int  engine_chat_last_cue_kind(void);
+int  engine_scoreboard_apply_kill(unsigned killer_id, const char *killer_name,
+                                  unsigned victim_id, const char *victim_name);
+int  engine_net_broadcast_kill_demo(unsigned killer_id, const char *killer_name,
+                                    unsigned victim_id, const char *victim_name);
+
+int  engine_net_predict_set_teleport_threshold(float units);
+float engine_net_predict_get_teleport_threshold(void);
+int  engine_net_predict_reconcile_teleport(float snap_ox, float snap_oy, float snap_oz,
+                                           float soft_blend);
+int  engine_net_predict_did_teleport(void);
+
+int  engine_depth_prepass_bind_before_main(void);
+int  engine_depth_prepass_mark_bound(void);
+int  engine_depth_prepass_was_bound_before_main(void);
+
 #endif /* ENGINE_BRIDGE_H */

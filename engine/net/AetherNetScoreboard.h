@@ -36,13 +36,16 @@ void aether_scoreboard_dump(const aether_scoreboard_t *sb);
 
 typedef enum aether_scoreboard_event_kind {
     AETHER_SB_EVENT_JOIN  = 0,
-    AETHER_SB_EVENT_LEAVE = 1
+    AETHER_SB_EVENT_LEAVE = 1,
+    AETHER_SB_EVENT_KILL  = 2
 } aether_scoreboard_event_kind_t;
 
 typedef struct aether_scoreboard_event {
     u8   kind;       /* aether_scoreboard_event_kind_t */
-    u32  player_id;
-    char name[AETHER_NET_MAX_NAME];
+    u32  player_id;  /* joiner/leaver, or killer for KILL */
+    u32  victim_id;  /* kill feed victim (0 otherwise) */
+    char name[AETHER_NET_MAX_NAME];       /* primary name (killer/joiner) */
+    char victim_name[AETHER_NET_MAX_NAME]; /* kill feed victim name */
     f32  time;
 } aether_scoreboard_event_t;
 
@@ -81,6 +84,19 @@ u32 aether_scoreboard_encode_leave(u8 *out, u32 cap, u32 player_id);
 void aether_scoreboard_handle_packet(aether_scoreboard_t *sb,
                                      aether_scoreboard_events_t *ev,
                                      const u8 *data, u32 size, f32 time);
+
+/* Kill feed stub: encode / apply / push HUD event. */
+u32  aether_scoreboard_encode_kill(u8 *out, u32 cap,
+                                   u32 killer_id, const char *killer_name,
+                                   u32 victim_id, const char *victim_name);
+void aether_scoreboard_apply_kill(aether_scoreboard_t *sb,
+                                  aether_scoreboard_events_t *ev,
+                                  u32 killer_id, const char *killer_name,
+                                  u32 victim_id, const char *victim_name, f32 time);
+
+/* Update frags/deaths on an entry (creates entry if missing). */
+void aether_scoreboard_set_score(aether_scoreboard_t *sb, u32 player_id,
+                                 const char *name, i32 score, i32 deaths);
 
 #ifdef __cplusplus
 }

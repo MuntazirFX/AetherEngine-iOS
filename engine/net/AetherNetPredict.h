@@ -27,6 +27,8 @@ typedef struct aether_net_predict {
     u32 cmd_seq;
     f32 error[3];       /* last reconcile delta (remaining soft-correct) */
     f32 error_decay;    /* 1/sec exponential decay rate for residual error (default 12) */
+    f32 teleport_threshold; /* hard-snap when |error| >= this (default 64) */
+    bool teleported;    /* set when last reconcile_teleport hard-snapped */
     bool active;
     struct aether_collision *collision; /* optional clipnodes for predict move */
     bool on_ground;
@@ -70,7 +72,19 @@ void aether_net_predict_reconcile_smooth(aether_net_predict_t *pr,
 /* Remaining soft-correct error length. */
 f32 aether_net_predict_error_length(const aether_net_predict_t *pr);
 
+/* Teleport snap: when auth-predict error exceeds threshold, hard-snap (no soft blend). */
+#define AETHER_NET_PREDICT_TELEPORT_DEFAULT  64.f
+
+void aether_net_predict_set_teleport_threshold(aether_net_predict_t *pr, f32 units);
+f32  aether_net_predict_get_teleport_threshold(const aether_net_predict_t *pr);
+
+/* Reconcile with teleport edge case: |error| >= threshold → hard snap + clear residual.
+ * Returns 1 if teleported, 0 if soft-corrected. */
+int aether_net_predict_reconcile_teleport(aether_net_predict_t *pr,
+                                          const aether_net_snapshot_t *snap,
+                                          f32 soft_blend);
+
 #ifdef __cplusplus
 }
 #endif
-#endif
+#endif /* AETHER_NET_PREDICT_H */

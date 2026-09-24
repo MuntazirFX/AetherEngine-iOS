@@ -205,4 +205,49 @@ u32 aether_mdl_bodygroup_tri_total(const aether_mdl_bodygroup_state_t *st,
 i32 aether_mdl_bodygroup_apply_lod(aether_mdl_bodygroup_state_t *st,
                                    const aether_mdl_lod_table_t *lods, f32 distance);
 
+/* ---------- Fuller LOD mesh extract (multi tri-budget → mesh by distance) ---------- */
+#define AETHER_MDL_LOD_EXTRACT_MAX_TRIS  64
+#define AETHER_MDL_LOD_EXTRACT_MAX_VERTS (AETHER_MDL_LOD_EXTRACT_MAX_TRIS * 3)
+
+/* Fill out_pos[3*verts] + out_idx[3*tris] for a LOD's triangle budget.
+ * Procedural clean-room fan mesh (not HL geometry). Returns tri count. */
+u32 aether_mdl_lod_extract_mesh(const aether_mdl_lod_table_t *table, i32 lod,
+                                f32 *out_pos, u32 max_verts,
+                                u32 *out_idx, u32 max_idx,
+                                u32 *out_vert_count, u32 *out_tri_count);
+
+/* Select LOD by camera distance then extract that mesh. Returns lod index or -1. */
+i32 aether_mdl_lod_extract_by_distance(const aether_mdl_lod_table_t *table, f32 distance,
+                                       f32 *out_pos, u32 max_verts,
+                                       u32 *out_idx, u32 max_idx,
+                                       u32 *out_vert_count, u32 *out_tri_count);
+
+/* ---------- Studio skin / texture group select stub ---------- */
+#define AETHER_MDL_TEXGROUP_MAGIC      ((i32)0xAE7E5C10)
+#define AETHER_MDL_MAX_TEXGROUPS 4
+#define AETHER_MDL_MAX_TEXGROUP_SKINS       4
+
+typedef struct aether_mdl_texgroup {
+    char name[32];
+    u32  texture_count;
+    u32  selected; /* 0 .. texture_count-1 */
+} aether_mdl_texgroup_t;
+
+typedef struct aether_mdl_texgroup_state {
+    u32 group_count;
+    aether_mdl_texgroup_t groups[AETHER_MDL_MAX_TEXGROUPS];
+    i32 active_group;
+} aether_mdl_texgroup_state_t;
+
+/* Write LOD fixture that also embeds skin/texture groups. */
+u32 aether_mdl_write_skin_lod_fixture(u8 *out, u32 cap);
+u32 aether_mdl_write_skin_lod_fixture_file(const char *filepath);
+
+bool aether_mdl_texgroup_init_from_fixture(aether_mdl_texgroup_state_t *st,
+                                       const u8 *data, u32 size);
+bool aether_mdl_texgroup_set(aether_mdl_texgroup_state_t *st, u32 group, u32 tex);
+u32  aether_mdl_texgroup_get(const aether_mdl_texgroup_state_t *st, u32 group);
+u32  aether_mdl_texgroup_cycle(aether_mdl_texgroup_state_t *st, u32 group, int dir);
+i32  aether_mdl_texgroup_select(aether_mdl_texgroup_state_t *st, u32 group);
+
 #endif /* AETHER_MODEL_FIXTURE_H */

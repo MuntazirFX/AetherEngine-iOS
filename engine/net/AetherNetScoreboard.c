@@ -205,4 +205,109 @@ void aether_scoreboard_handle_packet(aether_scoreboard_t *sb,
         aether_scoreboard_apply_leave(sb, ev, id, time);
         return;
     }
+    if (msg == AETHER_MSG_KILL) {
+        u32 kid = aether_netbuf_read_u32(&b);
+        char kn[AETHER_NET_MAX_NAME]; aether_netbuf_read_string(&b, kn, sizeof kn);
+        u32 vid = aether_netbuf_read_u32(&b);
+        char vn[AETHER_NET_MAX_NAME]; aether_netbuf_read_string(&b, vn, sizeof vn);
+        aether_scoreboard_apply_kill(sb, ev, kid, kn, vid, vn, time);
+        return;
+    }
+}
+
+void aether_scoreboard_set_score(aether_scoreboard_t *sb, u32 player_id,
+                                 const char *name, i32 score, i32 deaths) {
+    if (!sb) return;
+    for (u32 i = 0; i < sb->count; ++i) {
+        if (sb->entries[i].player_id == player_id) {
+            sb->entries[i].score = score;
+            sb->entries[i].deaths = deaths;
+            sb->entries[i].active = true;
+            if (name && name[0]) {
+                memset(sb->entries[i].name, 0, sizeof sb->entries[i].name);
+                size_t n = strlen(name);
+                if (n >= AETHER_NET_MAX_NAME) n = AETHER_NET_MAX_NAME - 1;
+                memcpy(sb->entries[i].name, name, n);
+            }
+            return;
+        }
+    }
+    if (sb->count >= AETHER_NET_MAX_PLAYERS) return;
+    aether_scoreboard_entry_t *e = &sb->entries[sb->count++];
+    memset(e, 0, sizeof(*e));
+    e->player_id = player_id;
+    e->score = score;
+    e->deaths = deaths;
+    e->active = true;
+    if (name) {
+        size_t n = strlen(name);
+        if (n >= AETHER_NET_MAX_NAME) n = AETHER_NET_MAX_NAME - 1;
+        memcpy(e->name, name, n);
+    }
+}
+
+void aether_scoreboard_apply_kill(aether_scoreboard_t *sb,
+                                  aether_scoreboard_events_t *ev,
+                                  u32 killer_id, const char *killer_name,
+                                  u32 victim_id, const char *victim_name, f32 time) {
+    if (sb) {
+        /* +1 frag killer, +1 death victim */
+        i32 ks = 0, kd = 0, vs = 0, vd = 0;
+        const char *kn = killer_name ? killer_name : "";
+        const char *vn = victim_name ? victim_name : "";
+        for (u32 i = 0; i < sb->count; ++i) {
+            if (sb->entries[i].player_id == killer_id) {
+                ks = sb->entries[i].score; kd = sb->entries[i].deaths;
+                if (sb->entries[i].name[0]) kn = sb->entries[i].name;
+            }
+            if (sb->entries[i].player_id == victim_id) {
+                vs = sb->entries[i].score; vd = sb->entries[i].deaths;
+                if (sb->entries[i].name[0]) vn = sb->entries[i].name;
+            }
+        }
+        if (killer_id) aether_scoreboard_set_score(sb, killer_id, kn, ks + 1, kd);
+        if (victim_id) aether_scoreboard_set_score(sb, victim_id, vn, vs, vd + 1);
+    }
+    if (ev) {
+        /* Push kill event with victim fields via specialized push */
+        aether_scoreboard_event_t *slot;
+        if (ev->live < AETHER_SCOREBOARD_MAX_EVENTS) ev->live++;
+        slot = &ev->items[ev->head];
+        memset(slot, 0, sizeof(*slot));
+        slot->kind = (u8)AETHER_SB_EVENT_KILL;
+        slot->player_id = killer_id;
+        slot->victim_id = victim_id;
+        slot->time = time;
+        if (killer_name) {
+            size_t n = strlen(killer_name);
+            if (n >= AETHER_NET_MAX_NAME) n = AETHER_NET_MAX_NAME - 1;
+            memcpy(slot->name, killer_name, n);
+        }
+        if (victim_name) {
+            size_t n = strlen(victim_name);
+            if (n >= AETHER_NET_MAX_NAME) n = AETHER_NET_MAX_NAME - 1;
+            memcpy(slot->victim_name, victim_name, n);
+        }
+        ev->head = (ev->head + 1) % AETHER_SCOREBOARD_MAX_EVENTS;
+        ev->count++;
+    }
+}
+
+u32 aether_scoreboard_encode_kill(u8 *out, u32 cap,
+                                  u32 killer_id, const char *killer_name,
+                                  u32 victim_id, const char *victim_name) {
+    if (!out || cap < 24) return 0;
+    aether_netbuf_t b;
+    aether_netbuf_init_write(&b);
+    aether_netbuf_write_u32(&b, AETHER_NET_PROTOCOL_ID);
+    aether_netbuf_write_u16(&b, AETHER_NET_PROTOCOL_VER);
+    aether_netbuf_write_u8(&b, AETHER_MSG_KILL);
+    aether_netbuf_write_u32(&b, killer_id);
+    aether_netbuf_write_string(&b, killer_name ? killer_name : "", AETHER_NET_MAX_NAME);
+    aether_netbuf_write_u32(&b, victim_id);
+    aether_netbuf_write_string(&b, victim_name ? victim_name : "", AETHER_NET_MAX_NAME);
+    u32 n = aether_netbuf_size(&b);
+    if (n > cap || b.overflow) return 0;
+    memcpy(out, b.data, n);
+    return n;
 }

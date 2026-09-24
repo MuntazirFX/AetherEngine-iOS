@@ -1059,3 +1059,175 @@ i32 aether_mdl_bodygroup_apply_lod(aether_mdl_bodygroup_state_t *st,
     st->active_lod = lod;
     return lod;
 }
+
+#ifndef AETHER_TEXGROUP_MAGIC_C
+#define AETHER_TEXGROUP_MAGIC_C ((i32)0xAE7E5C10)
+#endif
+
+u32 aether_mdl_lod_extract_mesh(const aether_mdl_lod_table_t *table, i32 lod,
+                                f32 *out_pos, u32 max_verts,
+                                u32 *out_idx, u32 max_idx,
+                                u32 *out_vert_count, u32 *out_tri_count) {
+    if (out_vert_count) *out_vert_count = 0;
+    if (out_tri_count) *out_tri_count = 0;
+    if (!table || !out_pos || !out_idx) return 0;
+    u32 budget = aether_mdl_lod_tri_count(table, lod);
+    if (budget == 0) return 0;
+    if (budget > AETHER_MDL_LOD_EXTRACT_MAX_TRIS) budget = AETHER_MDL_LOD_EXTRACT_MAX_TRIS;
+    /* Need 3 unique verts per tri for non-indexed fan alternative; use shared apex fan:
+     * verts = budget + 2 (apex + ring), tris = budget, indices = 3*budget */
+    u32 verts = budget + 2;
+    u32 idx_need = budget * 3;
+    if (verts > max_verts || idx_need > max_idx) {
+        /* Fall back to independent tris if capacity tight */
+        verts = budget * 3;
+        if (verts > max_verts || idx_need > max_idx) {
+            u32 fit = max_verts / 3;
+            if (fit > max_idx / 3) fit = max_idx / 3;
+            if (fit == 0) return 0;
+            budget = fit;
+            verts = budget * 3;
+            idx_need = budget * 3;
+            for (u32 t = 0; t < budget; ++t) {
+                f32 a = (f32)t * 0.7f;
+                f32 r = 8.f + (f32)(lod >= 0 ? lod : 0) * 2.f;
+                out_pos[t*9+0] = 0.f; out_pos[t*9+1] = 0.f; out_pos[t*9+2] = 0.f;
+                out_pos[t*9+3] = cosf(a) * r; out_pos[t*9+4] = sinf(a) * r; out_pos[t*9+5] = 0.f;
+                out_pos[t*9+6] = cosf(a+0.4f) * r; out_pos[t*9+7] = sinf(a+0.4f) * r; out_pos[t*9+8] = 1.f;
+                out_idx[t*3+0] = t*3+0;
+                out_idx[t*3+1] = t*3+1;
+                out_idx[t*3+2] = t*3+2;
+            }
+            if (out_vert_count) *out_vert_count = verts;
+            if (out_tri_count) *out_tri_count = budget;
+            return budget;
+        }
+    }
+    /* Shared-apex fan */
+    out_pos[0] = 0.f; out_pos[1] = 0.f; out_pos[2] = 4.f; /* apex */
+    f32 r = 12.f / (1.f + (f32)(lod > 0 ? lod : 0));
+    for (u32 i = 0; i <= budget; ++i) {
+        f32 a = (f32)i * (6.2831853f / (f32)budget);
+        out_pos[(i+1)*3+0] = cosf(a) * r;
+        out_pos[(i+1)*3+1] = sinf(a) * r;
+        out_pos[(i+1)*3+2] = 0.f;
+    }
+    for (u32 t = 0; t < budget; ++t) {
+        out_idx[t*3+0] = 0;
+        out_idx[t*3+1] = t + 1;
+        out_idx[t*3+2] = t + 2;
+    }
+    if (out_vert_count) *out_vert_count = verts;
+    if (out_tri_count) *out_tri_count = budget;
+    return budget;
+}
+
+i32 aether_mdl_lod_extract_by_distance(const aether_mdl_lod_table_t *table, f32 distance,
+                                       f32 *out_pos, u32 max_verts,
+                                       u32 *out_idx, u32 max_idx,
+                                       u32 *out_vert_count, u32 *out_tri_count) {
+    i32 lod = aether_mdl_lod_select(table, distance);
+    if (lod < 0) return -1;
+    if (!aether_mdl_lod_extract_mesh(table, lod, out_pos, max_verts, out_idx, max_idx,
+                                     out_vert_count, out_tri_count))
+        return -1;
+    return lod;
+}
+
+u32 aether_mdl_write_skin_lod_fixture(u8 *out, u32 cap) {
+    u32 n = aether_mdl_write_lod_fixture(out, cap);
+    if (!n || !out) return 0;
+    const u32 skin_hdr = 16;
+    const u32 skin_grp = 2 * (32 + 4 + 4); /* name + tex_count + selected */
+    if (cap < n + skin_hdr + skin_grp) return 0;
+    u8 *s = out + n;
+    wr_i32(s + 0, AETHER_TEXGROUP_MAGIC_C);
+    wr_i32(s + 4, 2); /* groups */
+    wr_i32(s + 8, 0);
+    wr_i32(s + 12, 0);
+    wr_name(s + 16, 32, "body");
+    wr_i32(s + 16 + 32, 3); /* 3 textures */
+    wr_i32(s + 16 + 36, 0);
+    wr_name(s + 16 + 40, 32, "chrome");
+    wr_i32(s + 16 + 40 + 32, 2);
+    wr_i32(s + 16 + 40 + 36, 0);
+    return n + skin_hdr + skin_grp;
+}
+
+u32 aether_mdl_write_skin_lod_fixture_file(const char *filepath) {
+    if (!filepath) return 0;
+    u8 buf[32768];
+    u32 n = aether_mdl_write_skin_lod_fixture(buf, sizeof buf);
+    if (!n) return 0;
+    FILE *f = fopen(filepath, "wb");
+    if (!f) return 0;
+    size_t w = fwrite(buf, 1, n, f);
+    fclose(f);
+    return (u32)w;
+}
+
+bool aether_mdl_texgroup_init_from_fixture(aether_mdl_texgroup_state_t *st,
+                                       const u8 *data, u32 size) {
+    if (!st) return false;
+    memset(st, 0, sizeof(*st));
+    st->active_group = 0;
+    if (!data || size < 32) {
+        st->group_count = 2;
+        wr_name((u8*)st->groups[0].name, 32, "body");
+        st->groups[0].texture_count = 3;
+        wr_name((u8*)st->groups[1].name, 32, "chrome");
+        st->groups[1].texture_count = 2;
+        return true;
+    }
+    for (u32 off = 0; off + 16 < size; ++off) {
+        if (rd_i32_le(data + off) != AETHER_TEXGROUP_MAGIC_C) continue;
+        i32 groups = rd_i32_le(data + off + 4);
+        if (groups <= 0 || groups > (i32)AETHER_MDL_MAX_TEXGROUPS) return false;
+        const u32 gsz = 32 + 4 + 4;
+        if (off + 16 + (u32)groups * gsz > size) return false;
+        st->group_count = (u32)groups;
+        for (u32 i = 0; i < st->group_count; ++i) {
+            const u8 *g = data + off + 16 + i * gsz;
+            memcpy(st->groups[i].name, g, 32);
+            st->groups[i].name[31] = 0;
+            st->groups[i].texture_count = (u32)rd_i32_le(g + 32);
+            st->groups[i].selected = (u32)rd_i32_le(g + 36);
+            if (st->groups[i].texture_count > AETHER_MDL_MAX_TEXGROUP_SKINS)
+                st->groups[i].texture_count = AETHER_MDL_MAX_TEXGROUP_SKINS;
+            if (st->groups[i].selected >= st->groups[i].texture_count)
+                st->groups[i].selected = 0;
+        }
+        return true;
+    }
+    return aether_mdl_texgroup_init_from_fixture(st, NULL, 0);
+}
+
+bool aether_mdl_texgroup_set(aether_mdl_texgroup_state_t *st, u32 group, u32 tex) {
+    if (!st || group >= st->group_count) return false;
+    if (tex >= st->groups[group].texture_count) return false;
+    st->groups[group].selected = tex;
+    st->active_group = (i32)group;
+    return true;
+}
+
+u32 aether_mdl_texgroup_get(const aether_mdl_texgroup_state_t *st, u32 group) {
+    if (!st || group >= st->group_count) return 0;
+    return st->groups[group].selected;
+}
+
+u32 aether_mdl_texgroup_cycle(aether_mdl_texgroup_state_t *st, u32 group, int dir) {
+    if (!st || group >= st->group_count || st->groups[group].texture_count == 0) return 0;
+    u32 n = st->groups[group].texture_count;
+    i32 cur = (i32)st->groups[group].selected;
+    if (dir >= 0) cur = (cur + 1) % (i32)n;
+    else cur = (cur - 1 + (i32)n) % (i32)n;
+    st->groups[group].selected = (u32)cur;
+    st->active_group = (i32)group;
+    return st->groups[group].selected;
+}
+
+i32 aether_mdl_texgroup_select(aether_mdl_texgroup_state_t *st, u32 group) {
+    if (!st || group >= st->group_count) return -1;
+    st->active_group = (i32)group;
+    return st->active_group;
+}
