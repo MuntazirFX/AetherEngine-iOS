@@ -127,6 +127,35 @@ final class AetherAudioiOS {
         players.removeAll()
     }
 
+    /// Procedural / engine PCM16 buffer (beep stub path).
+    func submitPCM16(samples: UnsafePointer<Int16>, frames: Int,
+                     sampleRate: Double, channels: AVAudioChannelCount, volume: Float) {
+        guard initialized, let eng = engine else { return }
+        guard frames > 0, channels > 0 else { return }
+        guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16,
+                                         sampleRate: sampleRate,
+                                         channels: channels,
+                                         interleaved: true) else { return }
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format,
+                                            frameCapacity: AVAudioFrameCount(frames)) else { return }
+        buffer.frameLength = AVAudioFrameCount(frames)
+        if let dst = buffer.int16ChannelData {
+            let total = frames * Int(channels)
+            dst[0].update(from: samples, count: total)
+        }
+        let node = AVAudioPlayerNode()
+        eng.attach(node)
+        eng.connect(node, to: eng.mainMixerNode, format: format)
+        node.volume = max(0, min(1, volume))
+        node.scheduleBuffer(buffer, at: nil, options: []) {
+            DispatchQueue.main.async {
+                node.stop()
+                eng.detach(node)
+            }
+        }
+        node.play()
+    }
+
     // MARK: - Asset resolution
     private func resolve(_ virtualPath: String) -> URL? {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]

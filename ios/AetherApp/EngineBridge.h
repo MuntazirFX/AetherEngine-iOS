@@ -344,6 +344,48 @@ int  engine_vgui_item_type(int index);
 int  engine_vgui_activate_item(int index);
 int  engine_vgui_new_game(void);
 
+/* ---------- Map load (FS → synthetic) ---------- */
+int  engine_map_load(const char *vpath);           /* 1=ok; uses FS then synthetic */
+int  engine_map_load_named(const char *map_name);
+int  engine_map_last_source(void);                 /* 1=file, 2=synthetic, 0=none */
+int  engine_map_write_fixture(const char *abspath);/* host/CI fixture writer */
+
+/* ---------- Audio platform / beep / WAV ---------- */
+void engine_audio_set_platform_callback(void *fn, void *user); /* optional; Swift */
+int  engine_audio_play_beep(float freq_hz, float duration_sec, float volume);
+int  engine_audio_submit_pcm16(const short *samples, int frames,
+                               int sample_rate, int channels, float volume);
+int  engine_wav_parse_header(const unsigned char *data, int size,
+                             unsigned *out_rate, unsigned *out_channels,
+                             unsigned *out_bits, unsigned *out_data_bytes);
+
+/* ---------- Decals / dynamic lights (Metal slice) ---------- */
+int  engine_decals_add(float x, float y, float z,
+                       float nx, float ny, float nz, float size, float life);
+int  engine_decals_active_count(void);
+int  engine_decals_copy_render(float *out_xyz_n_size_fade, int max_decals);
+#define ENGINE_CMD_DRAW_DECALS 9
+
+int  engine_dynlights_add(float x, float y, float z,
+                          float r, float g, float b, float radius, float intensity);
+int  engine_dynlights_active_count(void);
+int  engine_dynlights_copy_render(float *out_xyz_radius_rgb_i, int max_lights);
+int  engine_dynlights_from_map_lights(void); /* spawn dynlights from light entities */
+
+/* ---------- Save / load smoke (host + bridge) ---------- */
+int  engine_save_game(const char *filepath);
+int  engine_load_game(const char *filepath);
+
+/* ---------- Net listen/connect smoke ---------- */
+int  engine_net_listen(int port);
+int  engine_net_connect_localhost(int port);
+int  engine_net_handshake_tick(float dt); /* pump server+client; 1 if connected */
+int  engine_net_is_connected(void);
+void engine_net_shutdown(void);
+
+/* Lightmap: prefer BSP lighting lump when present */
+int  engine_lightmap_bake_from_active_bsp(void);
+
 /* ---------- Utility ---------- */
 const char *engine_base_path(void);
 const char *engine_version(void);

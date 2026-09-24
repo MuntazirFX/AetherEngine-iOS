@@ -44,6 +44,13 @@ bool aether_lightmap_is_stub(const aether_lightmap_t *lm);
 /* Copy RGBA8 atlas bytes. Returns bytes copied, or 0 on failure. */
 u32  aether_lightmap_copy_rgba(const aether_lightmap_t *lm, u8 *out, u32 max_bytes);
 
+/* If BSP has a non-empty LIGHTING lump, bake face samples into atlas (stub=false).
+ * Otherwise fall back to procedural stub and leave stub=true. */
+struct aether_bsp;
+aether_result_t aether_lightmap_bake_from_bsp(aether_lightmap_t *lm,
+                                              const struct aether_bsp *bsp,
+                                              struct aether_mesh *mesh);
+
 #ifdef __cplusplus
 }
 #endif

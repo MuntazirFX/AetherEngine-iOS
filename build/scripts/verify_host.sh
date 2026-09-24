@@ -26,6 +26,7 @@ CFLAGS=(
   -Iengine/game/dll -Iengine/game/ai -Iengine/physics
   -Iengine/save -Iengine/net -Iengine/input -Iengine/config
   -Iengine/fs -Iengine/audio -Iengine/render -Iengine/bsp
+  -Iengine/map
   -Iengine/player -Iengine/texture -Iengine/model -Iengine/entity
   -Iengine/client/hud -Iengine/client/menu -Iengine/vgui
 )
@@ -42,6 +43,9 @@ REQUIRED=(
   engine/config/AetherSettings.c
   engine/console/AetherCVar.c
   engine/bsp/AetherBSP.c
+  engine/map/AetherMapLoad.c
+  engine/audio/AetherWav.c
+  engine/render/AetherDynLight.c
   ios/AetherApp/EngineBridge.c
   ios/AetherApp/EngineBridge.h
   ios/AetherApp/AetherApp.swift
@@ -109,6 +113,15 @@ grep -q "engine_host_frame" ios/AetherApp/EngineBridge.h || fail "missing engine
 grep -q "engine_game_select" ios/AetherApp/EngineBridge.h || fail "missing engine_game_select"
 grep -q "engine_settings_apply" ios/AetherApp/EngineBridge.h || fail "missing engine_settings_apply"
 grep -q "aether_game_manager_as_subsystem" engine/game/AetherGameManager.h || fail "missing game subsystem glue"
-ok "STEP 3–7 API symbols present"
+grep -q "aether_map_load" engine/map/AetherMapLoad.h || fail "missing aether_map_load"
+grep -q "aether_audio_play_beep" engine/audio/AetherAudio.h || fail "missing aether_audio_play_beep"
+grep -q "aether_wav_parse_header" engine/audio/AetherWav.h || fail "missing aether_wav_parse_header"
+grep -q "aether_lightmap_bake_from_bsp" engine/render/AetherLightmap.h || fail "missing lightmap bake_from_bsp"
+grep -q "aether_decals_copy_render" engine/render/AetherDecal.h || fail "missing decals_copy_render"
+grep -q "aether_dyn_lights_add" engine/render/AetherDynLight.h || fail "missing dyn_lights_add"
+grep -q "aether_save_write" engine/save/AetherSave.h || fail "missing aether_save_write"
+grep -q "aether_net_client_connect" engine/net/AetherNetClient.h || fail "missing net client connect"
+grep -q "engine_map_load" ios/AetherApp/EngineBridge.h || fail "missing engine_map_load"
+ok "STEP 3–7 + batch map/audio/ci API symbols present"
 
 info "All host verification checks passed."

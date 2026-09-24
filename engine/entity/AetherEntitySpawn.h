@@ -11,10 +11,24 @@
 extern "C" {
 #endif
 
+typedef struct aether_entity_spawn_stats {
+    u32 total;
+    u32 worldspawn;
+    u32 player_starts;
+    u32 monsters;
+    u32 lights;
+    u32 other;
+} aether_entity_spawn_stats_t;
+
 /* Spawn all entities from a BSP's ENTITIES lump into the manager.
- * Returns number of entities spawned. */
+ * Returns number of entities spawned. Lights are spawned (for dynlight bridge). */
 u32 aether_entity_spawn_from_bsp(aether_entity_mgr_t *mgr,
                                   const aether_bsp_t *bsp);
+
+/* Same as spawn_from_bsp but fills optional stats (may be NULL). */
+u32 aether_entity_spawn_from_bsp_ex(aether_entity_mgr_t *mgr,
+                                    const aether_bsp_t *bsp,
+                                    aether_entity_spawn_stats_t *stats);
 
 /* Find first player start entity, return its origin + angles. */
 aether_result_t aether_entity_get_player_start(const aether_entity_mgr_t *mgr,

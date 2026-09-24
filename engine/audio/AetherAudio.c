@@ -12,6 +12,9 @@ struct aether_audio {
 
     aether_audio_platform_fn  platform_fn;
     void                     *platform_user;
+
+    aether_audio_buffer_fn    buffer_fn;
+    void                     *buffer_user;
 };
 
 /* ---------- Lifecycle ---------- */
@@ -185,4 +188,72 @@ void aether_audio_flush(aether_audio_t *a) {
         }
     }
     a->voice_count = write;
+}
+
+
+#include <math.h>
+
+void aether_audio_set_buffer_callback(aether_audio_t *a,
+                                      aether_audio_buffer_fn fn,
+                                      void *user) {
+    if (!a) return;
+    a->buffer_fn = fn;
+    a->buffer_user = user;
+}
+
+aether_result_t aether_audio_submit_buffer(aether_audio_t *a,
+                                           const aether_audio_buffer_t *buf) {
+    if (!a || !buf || !buf->samples || buf->frame_count == 0)
+        return AETHER_ERR_INVALID_ARG;
+    if (a->state != AETHER_AUDIO_STATE_READY) return AETHER_ERR_NOT_READY;
+    if (a->muted) return AETHER_OK;
+    if (a->buffer_fn) {
+        aether_audio_buffer_t local = *buf;
+        f32 master = a->volume[AETHER_AUDIO_CHANNEL_MASTER];
+        local.volume = buf->volume * master;
+        a->buffer_fn(&local, a->buffer_user);
+    }
+    aether_log(AETHER_LOG_DEBUG, "audio",
+               "submit_buffer frames=%u rate=%u ch=%u vol=%.2f",
+               buf->frame_count, buf->sample_rate, buf->channels, buf->volume);
+    return AETHER_OK;
+}
+
+aether_result_t aether_audio_play_beep(aether_audio_t *a, f32 freq_hz,
+                                       f32 duration_sec, f32 volume) {
+    if (!a) return AETHER_ERR_INVALID_ARG;
+    if (a->state != AETHER_AUDIO_STATE_READY) return AETHER_ERR_NOT_READY;
+    if (freq_hz < 20.f) freq_hz = 20.f;
+    if (freq_hz > 8000.f) freq_hz = 8000.f;
+    if (duration_sec <= 0.f) duration_sec = 0.05f;
+    if (duration_sec > 2.f) duration_sec = 2.f;
+    if (volume < 0.f) volume = 0.f;
+    if (volume > 1.f) volume = 1.f;
+
+    const u32 rate = 22050;
+    const u16 ch = 1;
+    u32 frames = (u32)(rate * duration_sec + 0.5f);
+    if (frames < 1) frames = 1;
+    i16 *pcm = (i16 *)malloc(sizeof(i16) * frames);
+    if (!pcm) return AETHER_ERR_OUT_OF_MEM;
+    for (u32 i = 0; i < frames; ++i) {
+        f32 t = (f32)i / (f32)rate;
+        f32 env = 1.f;
+        if (i < 64) env = (f32)i / 64.f;
+        if (i + 64 > frames) env = (f32)(frames - i) / 64.f;
+        f32 s = sinf(6.2831853f * freq_hz * t) * volume * env;
+        pcm[i] = (i16)(s * 32767.f);
+    }
+    aether_audio_buffer_t buf = {
+        .samples = pcm,
+        .frame_count = frames,
+        .sample_rate = rate,
+        .channels = ch,
+        .volume = 1.f,
+    };
+    aether_result_t r = aether_audio_submit_buffer(a, &buf);
+    /* Also enqueue a logical voice so platform voice callback sees a "beep". */
+    (void)aether_audio_play_effect(a, "procedural:beep", volume, false);
+    free(pcm);
+    return r;
 }

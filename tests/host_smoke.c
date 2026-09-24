@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 /* host_smoke.c — Linux/macOS host smoke test for AetherEngine C core.
  * AetherEngine-iOS · Clean-room. No game assets required.
  */
@@ -42,6 +43,14 @@
 #include "AetherSettings.h"
 #include "AetherAudio.h"
 #include "AetherFS.h"
+#include "AetherMapLoad.h"
+#include "AetherWav.h"
+#include "AetherSave.h"
+#include "AetherNetClient.h"
+#include "AetherNetServer.h"
+#include "AetherDecal.h"
+#include "AetherDynLight.h"
+#include <unistd.h>
 #include "AetherMath.h"
 
 /* Host stubs for Metal backend entry points (Swift provides these on iOS). */
@@ -59,6 +68,12 @@ aether_result_t aether_metal_shutdown(void *user) {
 }
 
 static int g_failures = 0;
+static int g_batch_buf_cb = 0;
+static void batch_audio_buf_cb(const aether_audio_buffer_t *b, void *u) {
+    (void)u;
+    if (b && b->frame_count > 0) g_batch_buf_cb++;
+}
+
 
 static void expect(int cond, const char *msg) {
     if (!cond) {
@@ -1088,6 +1103,151 @@ int main(void) {
     expect(aether_renderer_width(rend) == 640 && aether_renderer_height(rend) == 360,
            "renderer_size");
     aether_renderer_destroy(rend);
+
+    /* ========== batch_map_audio_ci ========== */
+    printf("--- batch_map_audio_ci ---\n");
+    {
+        aether_map_load_result_t mr;
+        expect(aether_map_load(NULL, "maps/missing.bsp", &mr) == AETHER_OK, "map_load_synthetic_fallback");
+        expect(mr.bsp != NULL && mr.source == AETHER_MAP_SOURCE_SYNTHETIC, "map_load_source_synth");
+        aether_bsp_free(mr.bsp);
+
+        char tmpdir[256];
+        snprintf(tmpdir, sizeof tmpdir, "/tmp/aether_map_smoke_%d", (int)getpid());
+        expect(tmpdir[0] != 0, "map_tmpdir");
+        char mapsdir[512], fixture[512];
+        snprintf(mapsdir, sizeof mapsdir, "%s/valve/maps", tmpdir);
+        snprintf(fixture, sizeof fixture, "%s/aether_demo.bsp", mapsdir);
+        {
+            char cmd[640];
+            snprintf(cmd, sizeof cmd, "mkdir -p '%s'", mapsdir);
+            expect(system(cmd) == 0, "map_mkdir");
+        }
+        expect(aether_map_write_minimal_fixture(fixture) > 0, "map_write_fixture");
+
+        aether_fs_t *fs = aether_fs_create(tmpdir);
+        expect(fs != NULL, "map_fs_create");
+        expect(aether_fs_setup_game(fs, tmpdir, "valve") == AETHER_OK, "map_fs_setup");
+        aether_map_load_result_t fr;
+        expect(aether_map_load(fs, "maps/aether_demo.bsp", &fr) == AETHER_OK, "map_load_file");
+        expect(fr.source == AETHER_MAP_SOURCE_FILE && fr.bsp != NULL, "map_load_source_file");
+
+        aether_entity_mgr_t *em = aether_entity_mgr_create();
+        aether_entity_spawn_stats_t st;
+        u32 spawned = aether_entity_spawn_from_bsp_ex(em, fr.bsp, &st);
+        expect(spawned >= 3u, "entity_spawn_from_file_bsp");
+        expect(st.player_starts >= 1u, "entity_spawn_player_start");
+        expect(st.lights >= 1u, "entity_spawn_lights");
+        expect(st.monsters + st.other + st.worldspawn >= 1u, "entity_spawn_misc");
+
+        {
+            aether_bsp_t *syn = aether_bsp_create_synthetic_room();
+            aether_mesh_t *sm = NULL;
+            expect(syn && aether_mesh_from_bsp(syn, NULL, &sm) == AETHER_OK && sm, "lm_synth_mesh");
+            aether_lightmap_t lm;
+            expect(aether_lightmap_init(&lm, 64, 64, 1) == AETHER_OK, "lm_init_batch");
+            expect(aether_lightmap_bake_from_bsp(&lm, syn, sm) == AETHER_OK, "lm_bake_from_bsp_synth");
+            expect(aether_lightmap_is_stub(&lm), "lm_stub_when_no_lighting");
+            aether_lightmap_shutdown(&lm);
+            /* Fixture with lighting lump */
+            aether_mesh_t *fm = NULL;
+            if (aether_mesh_from_bsp(fr.bsp, NULL, &fm) == AETHER_OK && fm) {
+                aether_lightmap_t lm2;
+                expect(aether_lightmap_init(&lm2, 64, 64, 1) == AETHER_OK, "lm2_init");
+                expect(aether_lightmap_bake_from_bsp(&lm2, fr.bsp, fm) == AETHER_OK, "lm_bake_fixture");
+                /* Prefer non-stub when lighting present; accept stub if mesh empty */
+                if (aether_bsp_lump_size(fr.bsp, AETHER_BSP_LUMP_LIGHTING) >= 3)
+                    expect(!aether_lightmap_is_stub(&lm2) || fm->vertex_count == 0, "lm_fixture_path");
+                aether_lightmap_shutdown(&lm2);
+                aether_mesh_free(fm);
+            }
+            aether_mesh_free(sm);
+            aether_bsp_free(syn);
+        }
+
+        aether_entity_mgr_destroy(em);
+        aether_bsp_free(fr.bsp);
+        aether_fs_destroy(fs);
+
+        /* Audio platform + beep + WAV header */
+        g_batch_buf_cb = 0;
+        aether_audio_t *au = aether_audio_create();
+        expect(au && aether_audio_init(au) == AETHER_OK, "audio_batch_init");
+        aether_audio_set_buffer_callback(au, batch_audio_buf_cb, NULL);
+        expect(aether_audio_play_beep(au, 880.f, 0.05f, 0.2f) == AETHER_OK, "audio_play_beep");
+        expect(g_batch_buf_cb >= 1, "audio_buffer_callback_fired");
+        u8 wav[4096];
+        u32 wn = aether_wav_write_tone_pcm(wav, sizeof wav, 22050, 1, 440.f, 0.05f, 0.3f);
+        expect(wn > 44, "wav_write_tone");
+        aether_wav_info_t wi;
+        expect(aether_wav_parse_header(wav, wn, &wi) == AETHER_OK && wi.valid, "wav_parse_header");
+        expect(wi.sample_rate == 22050 && wi.channels == 1 && wi.bits_per_sample == 16, "wav_header_fields");
+        aether_audio_shutdown(au);
+        aether_audio_destroy(au);
+
+        /* Decals + dyn lights Metal slice */
+        aether_decals_t dec;
+        expect(aether_decals_init(&dec) == AETHER_OK, "decals_init");
+        f32 dp[3] = {1,2,3}, dn[3] = {0,0,1};
+        expect(aether_decals_add(&dec, dp, dn, 16.f, 2.f) == AETHER_OK, "decals_add");
+        aether_decal_vertex_t dv[4];
+        expect(aether_decals_copy_render(&dec, dv, 4) == 1, "decals_copy_render");
+        aether_dyn_lights_t dl;
+        expect(aether_dyn_lights_init(&dl) == AETHER_OK, "dynlights_init");
+        f32 lp[3] = {0,0,64}, lc[3] = {1,1,0.8f};
+        expect(aether_dyn_lights_add(&dl, lp, lc, 128.f, 1.f) == AETHER_OK, "dynlights_add");
+        aether_dyn_light_vertex_t lv[4];
+        expect(aether_dyn_lights_copy_render(&dl, lv, 4) == 1, "dynlights_copy_render");
+
+        /* Save/load roundtrip */
+        {
+            aether_player_health_t ph; aether_player_inventory_t pi;
+            aether_player_health_init(&ph); aether_player_inv_init(&pi);
+            ph.health = 77.f; ph.armor = 25.f;
+            aether_save_ctx_t ctx; memset(&ctx, 0, sizeof ctx);
+            ctx.game_id = 1; ctx.map_name = "aether_demo"; ctx.game_name = "valve";
+            ctx.play_time_seconds = 42;
+            ctx.player_health = &ph; ctx.player_inventory = &pi;
+            ctx.player_origin = (aether_vec3_t){10,20,30};
+            ctx.player_angles = (aether_vec3_t){0,90,0};
+            ctx.world_time = 3.5f; ctx.world_flags = 7;
+            char spath[512];
+            snprintf(spath, sizeof spath, "%s/smoke.sav", tmpdir);
+            expect(aether_save_write(spath, &ctx) == AETHER_OK, "save_write");
+            aether_player_health_t ph2; aether_player_inventory_t pi2;
+            aether_player_health_init(&ph2); aether_player_inv_init(&pi2);
+            aether_save_ctx_t ctx2; memset(&ctx2, 0, sizeof ctx2);
+            ctx2.player_health = &ph2; ctx2.player_inventory = &pi2;
+            expect(aether_save_read(spath, &ctx2) == AETHER_OK, "save_read");
+            expect(fabsf(ph2.health - 77.f) < 0.1f, "save_health_roundtrip");
+            expect(fabsf(ctx2.player_origin.x - 10.f) < 0.1f, "save_origin_roundtrip");
+        }
+
+        /* Net listen/connect localhost handshake */
+        {
+            const u16 port = 28111;
+            aether_net_server_t *srv = aether_net_server_create(port, 4);
+            expect(srv != NULL, "net_server_create");
+            aether_net_server_set_info(srv, "Smoke", "aether_demo", 10, 5);
+            aether_net_client_t *cli = aether_net_client_create();
+            expect(cli != NULL, "net_client_create");
+            expect(aether_net_client_connect(cli, "127.0.0.1", port) == AETHER_OK, "net_client_connect");
+            int connected = 0;
+            for (int i = 0; i < 60; ++i) {
+                aether_net_server_tick(srv, 0.016f);
+                aether_net_client_tick(cli, 0.016f);
+                aether_net_state_t stt = aether_net_client_state(cli);
+                if (stt == AETHER_NET_STATE_CONNECTED || stt == AETHER_NET_STATE_ACTIVE) {
+                    connected = 1; break;
+                }
+            }
+            expect(connected, "net_handshake_connected");
+            aether_net_client_disconnect(cli);
+            aether_net_client_destroy(cli);
+            aether_net_server_destroy(srv);
+        }
+    }
+
 
     if (g_failures) {
         fprintf(stderr, "\n%d smoke check(s) failed\n", g_failures);

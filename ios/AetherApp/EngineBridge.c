@@ -15,6 +15,13 @@
 #include "../../engine/config/AetherSettings.h"
 #include "../../engine/fs/AetherFS.h"
 #include "../../engine/audio/AetherAudio.h"
+#include "../../engine/audio/AetherWav.h"
+#include "../../engine/map/AetherMapLoad.h"
+#include "../../engine/render/AetherDecal.h"
+#include "../../engine/render/AetherDynLight.h"
+#include "../../engine/save/AetherSave.h"
+#include "../../engine/net/AetherNetClient.h"
+#include "../../engine/net/AetherNetServer.h"
 #include "../../engine/render/AetherRender.h"
 #include "../../engine/render/AetherRenderFeatures.h"
 #include "../../engine/render/AetherParticle.h"
@@ -55,6 +62,11 @@ static aether_input_t          *g_input        = NULL;
 static aether_settings_t       *g_settings     = NULL;
 static aether_fs_t             *g_fs           = NULL;
 static aether_audio_t          *g_audio        = NULL;
+static int                     g_map_source    = 0; /* 1=file 2=synth */
+static aether_dyn_lights_t     g_dynlights;
+static int                     g_dynlights_init = 0;
+static aether_net_server_t    *g_net_server   = NULL;
+static aether_net_client_t    *g_net_client   = NULL;
 static aether_renderer_t       *g_renderer     = NULL;
 static aether_mesh_t           *g_active_mesh  = NULL;
 static aether_bsp_t            *g_active_bsp   = NULL; /* kept for leaf/VIS queries + collision borrow */
@@ -1868,3 +1880,234 @@ int engine_vgui_new_game(void) {
 /* ---------- Utility ---------- */
 const char *engine_base_path(void) { return g_base_path; }
 const char *engine_version(void)   { return AETHER_VERSION_STRING; }
+
+
+
+
+/* ===== Batch: map / audio / decals / dynlights / save / net ===== */
+
+static void ensure_dynlights(void) {
+    if (!g_dynlights_init) {
+        aether_dyn_lights_init(&g_dynlights);
+        g_dynlights_init = 1;
+    }
+}
+
+int engine_map_load(const char *vpath) {
+    aether_map_load_result_t res;
+    if (aether_map_load(g_fs, vpath, &res) != AETHER_OK || !res.bsp) return 0;
+    if (g_active_bsp) { aether_bsp_free(g_active_bsp); g_active_bsp = NULL; }
+    g_active_bsp = res.bsp;
+    g_map_source = (res.source == AETHER_MAP_SOURCE_FILE) ? 1 : 2;
+    g_mesh_is_synthetic = (g_map_source == 2);
+    if (g_entity_mgr) { aether_entity_mgr_destroy(g_entity_mgr); g_entity_mgr = NULL; }
+    g_entity_mgr = aether_entity_mgr_create();
+    if (g_entity_mgr) {
+        aether_entity_spawn_stats_t st;
+        (void)aether_entity_spawn_from_bsp_ex(g_entity_mgr, g_active_bsp, &st);
+        aether_log(AETHER_LOG_INFO, "bridge",
+                   "map spawn total=%u lights=%u monsters=%u starts=%u world=%u",
+                   st.total, st.lights, st.monsters, st.player_starts, st.worldspawn);
+    }
+    if (g_renderer && g_active_mesh) {
+        aether_render_features_t *feat = aether_renderer_features(g_renderer);
+        if (feat)
+            (void)aether_lightmap_bake_from_bsp(&feat->lightmap, g_active_bsp, g_active_mesh);
+    }
+    return 1;
+}
+
+int engine_map_load_named(const char *map_name) {
+    aether_map_load_result_t res;
+    if (aether_map_load_named(g_fs, map_name, &res) != AETHER_OK || !res.bsp) return 0;
+    if (g_active_bsp) { aether_bsp_free(g_active_bsp); g_active_bsp = NULL; }
+    g_active_bsp = res.bsp;
+    g_map_source = (res.source == AETHER_MAP_SOURCE_FILE) ? 1 : 2;
+    g_mesh_is_synthetic = (g_map_source == 2);
+    if (g_entity_mgr) { aether_entity_mgr_destroy(g_entity_mgr); g_entity_mgr = NULL; }
+    g_entity_mgr = aether_entity_mgr_create();
+    if (g_entity_mgr)
+        (void)aether_entity_spawn_from_bsp(g_entity_mgr, g_active_bsp);
+    return 1;
+}
+
+int engine_map_last_source(void) { return g_map_source; }
+
+int engine_map_write_fixture(const char *abspath) {
+    return aether_map_write_minimal_fixture(abspath) > 0 ? 1 : 0;
+}
+
+void engine_audio_set_platform_callback(void *fn, void *user) {
+    if (!g_audio) return;
+    aether_audio_set_platform_callback(g_audio, (aether_audio_platform_fn)fn, user);
+}
+
+int engine_audio_play_beep(float freq_hz, float duration_sec, float volume) {
+    if (!g_audio) return 0;
+    return aether_audio_play_beep(g_audio, freq_hz, duration_sec, volume) == AETHER_OK ? 1 : 0;
+}
+
+int engine_audio_submit_pcm16(const short *samples, int frames,
+                              int sample_rate, int channels, float volume) {
+    if (!g_audio || !samples || frames <= 0) return 0;
+    aether_audio_buffer_t buf;
+    buf.samples = samples;
+    buf.frame_count = (u32)frames;
+    buf.sample_rate = (u32)sample_rate;
+    buf.channels = (u16)channels;
+    buf.volume = volume;
+    return aether_audio_submit_buffer(g_audio, &buf) == AETHER_OK ? 1 : 0;
+}
+
+int engine_wav_parse_header(const unsigned char *data, int size,
+                            unsigned *out_rate, unsigned *out_channels,
+                            unsigned *out_bits, unsigned *out_data_bytes) {
+    aether_wav_info_t info;
+    if (aether_wav_parse_header(data, (u32)size, &info) != AETHER_OK || !info.valid)
+        return 0;
+    if (out_rate) *out_rate = info.sample_rate;
+    if (out_channels) *out_channels = info.channels;
+    if (out_bits) *out_bits = info.bits_per_sample;
+    if (out_data_bytes) *out_data_bytes = info.data_size;
+    return 1;
+}
+
+static aether_decals_t *bridge_decals(void) {
+    if (!g_renderer) return NULL;
+    aether_render_features_t *f = aether_renderer_features(g_renderer);
+    return f ? &f->decals : NULL;
+}
+
+int engine_decals_add(float x, float y, float z,
+                      float nx, float ny, float nz, float size, float life) {
+    aether_decals_t *d = bridge_decals();
+    if (!d) return 0;
+    f32 p[3] = {x, y, z};
+    f32 n[3] = {nx, ny, nz};
+    return aether_decals_add(d, p, n, size, life) == AETHER_OK ? 1 : 0;
+}
+
+int engine_decals_active_count(void) {
+    aether_decals_t *d = bridge_decals();
+    return d ? (int)aether_decals_active_count(d) : 0;
+}
+
+int engine_decals_copy_render(float *out_xyz_n_size_fade, int max_decals) {
+    aether_decals_t *d = bridge_decals();
+    if (!d || !out_xyz_n_size_fade || max_decals <= 0) return 0;
+    return (int)aether_decals_copy_render(d, (aether_decal_vertex_t *)out_xyz_n_size_fade,
+                                          (u32)max_decals);
+}
+
+int engine_dynlights_add(float x, float y, float z,
+                         float r, float g, float b, float radius, float intensity) {
+    ensure_dynlights();
+    f32 p[3] = {x, y, z};
+    f32 c[3] = {r, g, b};
+    return aether_dyn_lights_add(&g_dynlights, p, c, radius, intensity) == AETHER_OK ? 1 : 0;
+}
+
+int engine_dynlights_active_count(void) {
+    ensure_dynlights();
+    return (int)aether_dyn_lights_active_count(&g_dynlights);
+}
+
+int engine_dynlights_copy_render(float *out_xyz_radius_rgb_i, int max_lights) {
+    ensure_dynlights();
+    if (!out_xyz_radius_rgb_i || max_lights <= 0) return 0;
+    return (int)aether_dyn_lights_copy_render(&g_dynlights,
+        (aether_dyn_light_vertex_t *)out_xyz_radius_rgb_i, (u32)max_lights);
+}
+
+int engine_dynlights_from_map_lights(void) {
+    ensure_dynlights();
+    aether_dyn_lights_clear(&g_dynlights);
+    if (!g_entity_mgr) return 0;
+    u32 n = 0;
+    for (u32 i = 0; i < aether_entity_mgr_count(g_entity_mgr); ++i) {
+        const aether_entity_t *e = aether_entity_mgr_at(g_entity_mgr, i);
+        if (!e || strncmp(e->classname, "light", 5) != 0) continue;
+        f32 p[3] = {e->origin.x, e->origin.y, e->origin.z};
+        f32 c[3] = {1.f, 0.95f, 0.8f};
+        if (aether_dyn_lights_add(&g_dynlights, p, c, 200.f, 1.f) == AETHER_OK) n++;
+    }
+    return (int)n;
+}
+
+int engine_lightmap_bake_from_active_bsp(void) {
+    if (!g_renderer || !g_active_bsp || !g_active_mesh) return 0;
+    aether_render_features_t *f = aether_renderer_features(g_renderer);
+    if (!f) return 0;
+    return aether_lightmap_bake_from_bsp(&f->lightmap, g_active_bsp, g_active_mesh) == AETHER_OK ? 1 : 0;
+}
+
+int engine_save_game(const char *filepath) {
+    if (!filepath) return 0;
+    aether_save_ctx_t ctx;
+    memset(&ctx, 0, sizeof ctx);
+    ctx.game_id = 0;
+    ctx.map_name = g_mesh_is_synthetic ? "synthetic:demo" : "maps/loaded.bsp";
+    ctx.game_name = "aether";
+    ctx.play_time_seconds = 12;
+    ctx.player_health = &g_player_health;
+    ctx.player_inventory = &g_player_inventory;
+    ctx.player_origin = g_player.position;
+    ctx.player_angles = (aether_vec3_t){g_player.pitch, g_player.yaw, 0};
+    ctx.entities = g_entity_mgr;
+    ctx.world_time = 1.0f;
+    ctx.world_flags = 0;
+    return aether_save_write(filepath, &ctx) == AETHER_OK ? 1 : 0;
+}
+
+int engine_load_game(const char *filepath) {
+    if (!filepath) return 0;
+    aether_save_ctx_t ctx;
+    memset(&ctx, 0, sizeof ctx);
+    ctx.player_health = &g_player_health;
+    ctx.player_inventory = &g_player_inventory;
+    ctx.entities = g_entity_mgr;
+    if (aether_save_read(filepath, &ctx) != AETHER_OK) return 0;
+    g_player.position = ctx.player_origin;
+    g_player.yaw = ctx.player_angles.y;
+    g_player.pitch = ctx.player_angles.x;
+    return 1;
+}
+
+int engine_net_listen(int port) {
+    if (g_net_server) { aether_net_server_destroy(g_net_server); g_net_server = NULL; }
+    g_net_server = aether_net_server_create((u16)port, 4);
+    if (!g_net_server) return 0;
+    aether_net_server_set_info(g_net_server, "AetherSmoke", "aether_demo", 30, 10);
+    return 1;
+}
+
+int engine_net_connect_localhost(int port) {
+    if (g_net_client) { aether_net_client_destroy(g_net_client); g_net_client = NULL; }
+    g_net_client = aether_net_client_create();
+    if (!g_net_client) return 0;
+    return aether_net_client_connect(g_net_client, "127.0.0.1", (u16)port) == AETHER_OK ? 1 : 0;
+}
+
+int engine_net_handshake_tick(float dt) {
+    if (g_net_server) aether_net_server_tick(g_net_server, dt);
+    if (g_net_client) aether_net_client_tick(g_net_client, dt);
+    return engine_net_is_connected();
+}
+
+int engine_net_is_connected(void) {
+    if (!g_net_client) return 0;
+    aether_net_state_t st = aether_net_client_state(g_net_client);
+    return (st == AETHER_NET_STATE_CONNECTED || st == AETHER_NET_STATE_ACTIVE) ? 1 : 0;
+}
+
+void engine_net_shutdown(void) {
+    if (g_net_client) {
+        aether_net_client_disconnect(g_net_client);
+        aether_net_client_destroy(g_net_client);
+        g_net_client = NULL;
+    }
+    if (g_net_server) {
+        aether_net_server_destroy(g_net_server);
+        g_net_server = NULL;
+    }
+}
