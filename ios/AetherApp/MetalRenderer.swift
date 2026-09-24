@@ -631,10 +631,43 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             _ = engine_mdl_skinref_metal_bind_draw(3, &mbFam, &mbRef, &mbSlot, &mbW, &mbH, &mbBytes)
             _ = engine_mdl_skinref_metal_bind_mark()
             let mbBound = engine_mdl_skinref_metal_bind_was_bound()
+            // Batch20: full GPU Hi-Z mipchain after MTK + portal×PVS + skin-lump Metal families
+            var mcLevels: UInt32 = 0, mcPasses: UInt32 = 0
+            var mcNeeded: Int32 = 0
+            _ = engine_depth_hiz_mtk_mipchain_plan(64, 64, 4, &mcLevels, &mcPasses, &mcNeeded)
+            _ = engine_depth_hiz_mtk_mipchain_mark()
+            let mcComplete = engine_depth_hiz_mtk_mipchain_complete()
+            var mcSlices: UInt32 = 0, mcGpuPasses: UInt32 = 0, mcMipLevels: UInt32 = 0
+            var mcReady: Int32 = 0
+            _ = engine_mdl_hiz_gpu_mipchain_after_mtk(64, 64, &mcSlices, &mcGpuPasses, &mcMipLevels, &mcReady)
+            var mqVis: Int32 = 0, mqOcc: Int32 = 0
+            var mqZ: Float = 0
+            _ = engine_mdl_hiz_vis_query_mipchain(0.2, 0.2, 0.8, 0.8, 0.9, 1, &mqVis, &mqOcc, &mqZ)
+            var ppReached: UInt32 = 0, ppHits: UInt32 = 0, ppOnly: UInt32 = 0
+            _ = engine_bsp_portal_pvs_flood_fixture(0, 3, &ppReached, &ppHits, &ppOnly)
+            let ppVis0 = engine_bsp_portal_pvs_leaf_visible(0)
+            var ppViews: UInt32 = 0, ppPvs: UInt32 = 0, ppCull: UInt32 = 0
+            _ = engine_water_reflect_portal_pvs_plan(0, 3, &ppViews, &ppPvs, &ppCull)
+            var slFams: UInt32 = 0
+            var slFix: Int32 = 0
+            _ = engine_mdl_skin_lump_metal_families_fixture(4, 3, &slFams, &slFix)
+            _ = engine_mdl_skin_lump_metal_select_family_name("camo")
+            var slW: UInt32 = 0, slH: UInt32 = 0, slBytes: UInt32 = 0
+            var slProbe = [UInt8](repeating: 0, count: 64 * 64 * 4)
+            _ = engine_mdl_skin_lump_metal_atlas_rgba(&slProbe, UInt32(slProbe.count), &slW, &slH, &slBytes)
+            _ = engine_mdl_skin_lump_metal_bind_mark()
+            let slBound = engine_mdl_skin_lump_metal_bind_was_bound()
+            var slRgba = [Float](repeating: 0, count: 4)
+            _ = engine_mdl_skin_lump_metal_sample(0.25, 0.75, &slRgba)
             _ = mtkPasses; _ = mtkNeeded; _ = mtkReady; _ = mtkSlices; _ = mtkEncPasses
             _ = mtkSamples; _ = mtkEncNeeded; _ = stackCount; _ = stackVerts
             _ = stViews; _ = stStack; _ = stClip
             _ = mbFam; _ = mbRef; _ = mbSlot; _ = mbW; _ = mbH; _ = mbBytes; _ = mbBound
+            _ = mcLevels; _ = mcPasses; _ = mcNeeded; _ = mcComplete
+            _ = mcSlices; _ = mcGpuPasses; _ = mcMipLevels; _ = mcReady
+            _ = mqVis; _ = mqOcc; _ = mqZ
+            _ = ppReached; _ = ppHits; _ = ppOnly; _ = ppVis0; _ = ppViews; _ = ppPvs; _ = ppCull
+            _ = slFams; _ = slFix; _ = slW; _ = slH; _ = slBytes; _ = slBound; _ = slRgba
             _ = arrSlices; _ = arrW; _ = arrH; _ = dhArrSlices; _ = dhArrBound
             _ = aqVis; _ = aqOcc; _ = aqZ; _ = aqMip
             _ = pgLeaves; _ = pgEdges; _ = pgReached; _ = pgDepth; _ = pgViews; _ = pgFlood
@@ -2018,6 +2051,85 @@ struct MetalView: UIViewRepresentable {
         enc.endEncoding()
         _ = engine_depth_hiz_mtk_attach_mark()
         _ = engine_mdl_hiz_live_encode_mark()
+        // Full GPU mipchain after MTK depth attach (batch20)
+        encodeHizGpuMipchainAfterMtk(cmd: cmd, hiz: hiz)
+    }
+
+    private var hizMipchainPipeline: MTLComputePipelineState?
+
+    private func ensureHizMipchainPipeline() {
+        if hizMipchainPipeline != nil { return }
+        guard let lib = device.makeDefaultLibrary(),
+              let fn = lib.makeFunction(name: "aether_hiz_gpu_mipchain") else { return }
+        do { hizMipchainPipeline = try device.makeComputePipelineState(function: fn) }
+        catch { /* host smokes still cover plan */ }
+    }
+
+    /// Full GPU Hi-Z mipchain downsample after MTK depth → slice0 encode.
+    private func encodeHizGpuMipchainAfterMtk(cmd: MTLCommandBuffer, hiz: MTLTexture) {
+        ensureHizMipchainPipeline()
+        var levels: UInt32 = 0, passes: UInt32 = 0
+        var needed: Int32 = 0
+        _ = engine_depth_hiz_mtk_mipchain_plan(UInt32(hiz.width), UInt32(hiz.height),
+                                               UInt32(hiz.arrayLength), &levels, &passes, &needed)
+        guard needed != 0, let pipe = hizMipchainPipeline,
+              let enc = cmd.makeComputeCommandEncoder() else {
+            _ = engine_depth_hiz_mtk_mipchain_mark()
+            return
+        }
+        enc.setComputePipelineState(pipe)
+        enc.setTexture(hiz, index: 0)
+        enc.setTexture(hiz, index: 1)
+        struct MCU {
+            var levels: UInt32; var passes: UInt32
+            var mip0W: UInt32; var mip0H: UInt32
+            var fromMtk: UInt32; var ready: UInt32
+        }
+        var U = MCU(levels: UInt32(max(hiz.arrayLength, 1)), passes: passes,
+                    mip0W: UInt32(hiz.width), mip0H: UInt32(hiz.height),
+                    fromMtk: 1, ready: 1)
+        enc.setBytes(&U, length: MemoryLayout<MCU>.stride, index: 0)
+        let tw = pipe.threadExecutionWidth
+        let th = max(pipe.maxTotalThreadsPerThreadgroup / tw, 1)
+        let tg = MTLSize(width: tw, height: th, depth: 1)
+        let depthSlices = max(hiz.arrayLength, 1)
+        let grid = MTLSize(width: hiz.width, height: hiz.height, depth: depthSlices)
+        enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        enc.endEncoding()
+        _ = engine_depth_hiz_mtk_mipchain_mark()
+        var s: UInt32 = 0, gp: UInt32 = 0, lv: UInt32 = 0; var ready: Int32 = 0
+        _ = engine_mdl_hiz_gpu_mipchain_after_mtk(UInt32(hiz.width), UInt32(hiz.height),
+                                                   &s, &gp, &lv, &ready)
+        // Skin-lump Metal texture family atlas (fixture path when no retail MDL)
+        ensureSkinLumpMetalFamilyAtlas()
+    }
+
+    private var skinLumpFamilyTexture: MTLTexture?
+
+    private func ensureSkinLumpMetalFamilyAtlas() {
+        if skinLumpFamilyTexture != nil { return }
+        var fams: UInt32 = 0; var fix: Int32 = 0
+        _ = engine_mdl_skin_lump_metal_families_fixture(4, 3, &fams, &fix)
+        _ = engine_mdl_skin_lump_metal_select_family_name("camo")
+        var w: UInt32 = 0, h: UInt32 = 0, nbytes: UInt32 = 0
+        let cap: UInt32 = 256 * 64 * 4
+        var rgba = [UInt8](repeating: 0, count: Int(cap))
+        guard engine_mdl_skin_lump_metal_atlas_rgba(&rgba, cap, &w, &h, &nbytes) != 0,
+              w > 0, h > 0, nbytes > 0 else { return }
+        let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba8Unorm,
+                                                          width: Int(w), height: Int(h),
+                                                          mipmapped: false)
+        td.usage = [.shaderRead]
+        td.storageMode = .shared
+        guard let tex = device.makeTexture(descriptor: td) else { return }
+        rgba.withUnsafeBytes { raw in
+            if let base = raw.baseAddress {
+                tex.replace(region: MTLRegionMake2D(0, 0, Int(w), Int(h)),
+                            mipmapLevel: 0, withBytes: base, bytesPerRow: Int(w) * 4)
+            }
+        }
+        skinLumpFamilyTexture = tex
+        _ = engine_mdl_skin_lump_metal_bind_mark()
     }
 
     private func ensureStudioSkinAtlas() {

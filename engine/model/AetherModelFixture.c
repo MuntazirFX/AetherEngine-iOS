@@ -2662,3 +2662,264 @@ void aether_mdl_skinref_metal_bind_mark(aether_mdl_skinref_metal_bind_t *b) {
 bool aether_mdl_skinref_metal_bind_was_bound(const aether_mdl_skinref_metal_bind_t *b) {
     return b && b->bound;
 }
+
+/* ===== Full GPU Hi-Z mipchain after MTK + skin-lump Metal families (batch20) ===== */
+
+void aether_mdl_hiz_gpu_mipchain_init(aether_mdl_hiz_gpu_mipchain_t *m) {
+    if (!m) return;
+    memset(m, 0, sizeof(*m));
+}
+
+u32 aether_mdl_hiz_gpu_mipchain_after_mtk(aether_mdl_hiz_pyramid_t *pyr,
+                                          aether_mdl_hiz_array_t *arr,
+                                          aether_mdl_hiz_array_downsample_t *ds,
+                                          const f32 *depth_lin, u32 depth_count,
+                                          u32 w, u32 h,
+                                          int mtk_attached, int shader_read,
+                                          aether_mdl_hiz_live_encode_plan_t *encode_plan,
+                                          aether_mdl_hiz_gpu_mipchain_t *out) {
+    if (out) aether_mdl_hiz_gpu_mipchain_init(out);
+    if (!mtk_attached || !shader_read) return 0;
+
+    aether_mdl_hiz_live_encode_plan_t local_plan;
+    aether_mdl_hiz_live_encode_plan_t *plan = encode_plan ? encode_plan : &local_plan;
+    u32 slices = aether_mdl_hiz_encode_from_mtk_attach(pyr, arr, ds, depth_lin, depth_count,
+                                                       w, h, mtk_attached, shader_read, plan);
+    if (slices == 0 || !out) return slices;
+
+    /* Full mipchain: ensure downsample chain ran for every slice after mip0. */
+    if (ds && !aether_mdl_hiz_array_downsample_ready(ds) && pyr && arr) {
+        slices = aether_mdl_hiz_array_downsample_chain(pyr, arr, ds);
+    }
+    if (ds) aether_mdl_hiz_array_downsample_set_gpu(ds, true);
+
+    out->from_mtk_attach = true;
+    out->gpu_armed = true;
+    out->mip0_w = w ? w : (plan->mip0_w ? plan->mip0_w : 64);
+    out->mip0_h = h ? h : (plan->mip0_h ? plan->mip0_h : 64);
+    out->slices_filled = slices;
+    out->mip_levels = slices;
+    out->gpu_passes = (slices > 1) ? (slices - 1) : 0;
+    out->chain_complete = (slices >= 2) && ds && aether_mdl_hiz_array_downsample_ready(ds);
+    out->ready = out->chain_complete && out->from_mtk_attach && out->gpu_armed;
+    out->valid = out->ready;
+    if (plan && slices > 0) {
+        plan->downsample_chain = true;
+        plan->needed = true;
+        plan->from_depth_texture = true;
+        plan->slices = slices;
+        plan->encode_passes = 1u + out->gpu_passes;
+    }
+    return slices;
+}
+
+void aether_mdl_hiz_gpu_mipchain_set_gpu(aether_mdl_hiz_gpu_mipchain_t *m, bool armed) {
+    if (!m) return;
+    m->gpu_armed = armed;
+    m->ready = m->chain_complete && m->from_mtk_attach && m->gpu_armed;
+    m->valid = m->ready;
+}
+
+bool aether_mdl_hiz_gpu_mipchain_ready(const aether_mdl_hiz_gpu_mipchain_t *m) {
+    return m && m->ready && m->valid;
+}
+
+int aether_mdl_hiz_vis_query_mipchain(const aether_mdl_hiz_pyramid_t *pyr,
+                                      const aether_mdl_hiz_array_t *arr,
+                                      const aether_mdl_hiz_gpu_mipchain_t *chain,
+                                      f32 x0, f32 y0, f32 x1, f32 y1,
+                                      f32 object_depth, i32 preferred_mip,
+                                      aether_mdl_hiz_vis_query_t *out) {
+    if (!chain || !aether_mdl_hiz_gpu_mipchain_ready(chain)) {
+        if (out) memset(out, 0, sizeof(*out));
+        return 0;
+    }
+    aether_mdl_hiz_array_downsample_t ds;
+    aether_mdl_hiz_array_downsample_init(&ds);
+    ds.slices_written = chain->slices_filled;
+    ds.mip0_w = chain->mip0_w;
+    ds.mip0_h = chain->mip0_h;
+    ds.compute_passes = chain->gpu_passes;
+    ds.from_mip0 = true;
+    ds.gpu_chain = chain->gpu_armed;
+    ds.ready = true;
+    return aether_mdl_hiz_vis_query_downsampled(pyr, arr, &ds, x0, y0, x1, y1,
+                                                object_depth, preferred_mip, out);
+}
+
+void aether_mdl_skin_lump_metal_bind_init(aether_mdl_skin_lump_metal_bind_t *b) {
+    if (!b) return;
+    memset(b, 0, sizeof(*b));
+}
+
+static void skin_lump_fam_name(char *dst, u32 fam) {
+    static const char *names[] = { "default", "camo", "urban", "desert" };
+    const char *n = (fam < 4) ? names[fam] : "skin";
+    size_t i = 0;
+    for (; n[i] && i + 1 < AETHER_MDL_SKINREF_NAME_LEN; ++i) dst[i] = n[i];
+    dst[i] = '\0';
+}
+
+u32 aether_mdl_skin_lump_metal_families_from_lumps(const aether_mdl_skin_lump_set_t *lumps,
+                                                   u32 draw_slot,
+                                                   aether_mdl_skin_lump_metal_bind_t *out) {
+    if (!out) return 0;
+    aether_mdl_skin_lump_metal_bind_init(out);
+    if (!lumps || lumps->count == 0) return 0;
+    u32 n = lumps->count;
+    if (n > AETHER_MDL_SKIN_LUMP_METAL_MAX_FAM) n = AETHER_MDL_SKIN_LUMP_METAL_MAX_FAM;
+    u32 atlas_w = 0, atlas_h = 0, atlas_bytes = 0;
+    for (u32 i = 0; i < n; ++i) {
+        const aether_mdl_skin_lump_t *L = &lumps->lumps[i];
+        if (!L->valid) continue;
+        aether_mdl_skin_lump_metal_family_t *f = &out->families[out->family_count];
+        memset(f, 0, sizeof(*f));
+        f->family_id = out->family_count;
+        if (L->name[0]) {
+            size_t j = 0;
+            for (; L->name[j] && j + 1 < AETHER_MDL_SKINREF_NAME_LEN; ++j)
+                f->name[j] = L->name[j];
+            f->name[j] = '\0';
+        } else {
+            skin_lump_fam_name(f->name, f->family_id);
+        }
+        f->lump_index = i;
+        f->tex_width = L->width ? L->width : 16;
+        f->tex_height = L->height ? L->height : 16;
+        f->rgba_bytes = L->rgba_bytes ? L->rgba_bytes : (f->tex_width * f->tex_height * 4u);
+        f->draw_slot = draw_slot ? draw_slot : 3;
+        f->from_fixture = lumps->used_fixture_fallback || !L->from_asset;
+        f->texture_ready = (f->rgba_bytes > 0);
+        f->valid = true;
+        atlas_w += f->tex_width;
+        if (f->tex_height > atlas_h) atlas_h = f->tex_height;
+        atlas_bytes += f->rgba_bytes;
+        out->family_count++;
+    }
+    if (out->family_count == 0) return 0;
+    out->selected_family = 0;
+    out->draw_slot = draw_slot ? draw_slot : 3;
+    out->atlas_w = atlas_w;
+    out->atlas_h = atlas_h ? atlas_h : 16;
+    out->atlas_bytes = atlas_bytes ? atlas_bytes : (out->atlas_w * out->atlas_h * 4u);
+    out->atlas_ready = true;
+    out->used_fixture = lumps->used_fixture_fallback;
+    out->valid = true;
+    return out->family_count;
+}
+
+u32 aether_mdl_skin_lump_metal_families_fixture(u32 fixture_pages, u32 draw_slot,
+                                                aether_mdl_skin_lump_set_t *out_lumps,
+                                                aether_mdl_skin_lump_metal_bind_t *out) {
+    aether_mdl_skin_lump_set_t local;
+    aether_mdl_skin_lump_set_t *lumps = out_lumps ? out_lumps : &local;
+    if (fixture_pages == 0) fixture_pages = 4;
+    u32 lc = aether_mdl_skin_lumps_load_or_fixture(lumps, NULL, 0, fixture_pages);
+    if (lc == 0) return 0;
+    /* Name lumps as families for Metal bind path. */
+    for (u32 i = 0; i < lumps->count && i < AETHER_MDL_SKIN_LUMP_METAL_MAX_FAM; ++i) {
+        skin_lump_fam_name(lumps->lumps[i].name, i);
+        lumps->lumps[i].valid = true;
+    }
+    return aether_mdl_skin_lump_metal_families_from_lumps(lumps, draw_slot, out);
+}
+
+int aether_mdl_skin_lump_metal_select_family(aether_mdl_skin_lump_metal_bind_t *b,
+                                             u32 family_id) {
+    if (!b || !b->valid || family_id >= b->family_count) return 0;
+    if (!b->families[family_id].valid) return 0;
+    b->selected_family = family_id;
+    return 1;
+}
+
+int aether_mdl_skin_lump_metal_select_family_name(aether_mdl_skin_lump_metal_bind_t *b,
+                                                  const char *name) {
+    if (!b || !b->valid || !name) return 0;
+    for (u32 i = 0; i < b->family_count; ++i) {
+        if (!b->families[i].valid) continue;
+        const char *a = b->families[i].name;
+        const char *c = name;
+        int eq = 1;
+        while (*a || *c) {
+            if (*a != *c) { eq = 0; break; }
+            if (*a) ++a;
+            if (*c) ++c;
+        }
+        if (eq) {
+            b->selected_family = i;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+u32 aether_mdl_skin_lump_metal_atlas_rgba(const aether_mdl_skin_lump_set_t *lumps,
+                                          const aether_mdl_skin_lump_metal_bind_t *b,
+                                          u8 *out_rgba, u32 cap,
+                                          u32 *out_w, u32 *out_h) {
+    if (out_w) *out_w = 0;
+    if (out_h) *out_h = 0;
+    if (!lumps || !b || !b->valid || !out_rgba || b->family_count == 0) return 0;
+    u32 aw = 0, ah = 0;
+    for (u32 i = 0; i < b->family_count; ++i) {
+        aw += b->families[i].tex_width;
+        if (b->families[i].tex_height > ah) ah = b->families[i].tex_height;
+    }
+    if (aw == 0 || ah == 0) return 0;
+    u32 need = aw * ah * 4u;
+    if (cap < need) return 0;
+    memset(out_rgba, 0, need);
+    u32 xoff = 0;
+    for (u32 i = 0; i < b->family_count; ++i) {
+        const aether_mdl_skin_lump_metal_family_t *f = &b->families[i];
+        if (f->lump_index >= lumps->count) continue;
+        const aether_mdl_skin_lump_t *L = &lumps->lumps[f->lump_index];
+        u32 lw = L->width ? L->width : f->tex_width;
+        u32 lh = L->height ? L->height : f->tex_height;
+        if (lw > f->tex_width) lw = f->tex_width;
+        if (lh > f->tex_height) lh = f->tex_height;
+        for (u32 y = 0; y < lh && y < ah; ++y) {
+            for (u32 x = 0; x < lw; ++x) {
+                u32 src = (y * L->width + x) * 4u;
+                if (src + 3 >= L->rgba_bytes && L->rgba_bytes > 0) continue;
+                u32 dst = (y * aw + (xoff + x)) * 4u;
+                if (L->rgba_bytes == 0) {
+                    out_rgba[dst + 0] = (u8)(40 + i * 40);
+                    out_rgba[dst + 1] = (u8)(80 + x);
+                    out_rgba[dst + 2] = (u8)(60 + y);
+                    out_rgba[dst + 3] = 255;
+                } else {
+                    out_rgba[dst + 0] = L->rgba[src + 0];
+                    out_rgba[dst + 1] = L->rgba[src + 1];
+                    out_rgba[dst + 2] = L->rgba[src + 2];
+                    out_rgba[dst + 3] = L->rgba[src + 3];
+                }
+            }
+        }
+        xoff += f->tex_width;
+    }
+    if (out_w) *out_w = aw;
+    if (out_h) *out_h = ah;
+    return need;
+}
+
+void aether_mdl_skin_lump_metal_bind_mark(aether_mdl_skin_lump_metal_bind_t *b) {
+    if (!b) return;
+    b->bound = b->valid && b->atlas_ready && b->draw_slot > 0 && b->family_count > 0;
+    if (b->bound && b->selected_family < b->family_count)
+        b->families[b->selected_family].bound = true;
+}
+
+bool aether_mdl_skin_lump_metal_bind_was_bound(const aether_mdl_skin_lump_metal_bind_t *b) {
+    return b && b->bound;
+}
+
+int aether_mdl_skin_lump_metal_sample(const aether_mdl_skin_lump_set_t *lumps,
+                                      const aether_mdl_skin_lump_metal_bind_t *b,
+                                      f32 u, f32 v, f32 out_rgba[4]) {
+    if (!lumps || !b || !b->valid || !out_rgba) return 0;
+    if (b->selected_family >= b->family_count) return 0;
+    u32 li = b->families[b->selected_family].lump_index;
+    if (li >= lumps->count) return 0;
+    return aether_mdl_skin_lump_sample(&lumps->lumps[li], u, v, out_rgba);
+}

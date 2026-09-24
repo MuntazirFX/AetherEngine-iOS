@@ -168,4 +168,36 @@ int  aether_bsp_portal_winding_to_render(const aether_bsp_portal_winding_t *src,
                                          f32 out_verts[][3], u32 out_cap,
                                          u32 *out_count, f32 out_plane[4]);
 
+/* ---------- Portal × PVS flood for reflect / cull (batch20) ---------- */
+#define AETHER_BSP_PORTAL_PVS_MAX_REACH AETHER_BSP_PORTAL_GRAPH_MAX_FLOOD
+
+typedef struct aether_bsp_portal_pvs_flood {
+    u32 reached_count;      /* portal-reachable leaves */
+    u32 pvs_hit_count;      /* among reached, also in PVS */
+    u32 portal_only_count;  /* reached but outside PVS */
+    u16 reached[AETHER_BSP_PORTAL_PVS_MAX_REACH];
+    u8  in_pvs[AETHER_BSP_PORTAL_PVS_MAX_REACH]; /* 1 if leaf also in PVS */
+    u16 depth[AETHER_BSP_PORTAL_PVS_MAX_REACH];
+    u16 start_leaf;
+    u32 pvs_row_bytes;
+    bool used_pvs;
+    bool valid;
+} aether_bsp_portal_pvs_flood_t;
+
+void aether_bsp_portal_pvs_flood_init(aether_bsp_portal_pvs_flood_t *f);
+/* Flood portal graph then intersect with PVS bitrow (NULL pvs → all portal leaves "in PVS"). */
+u32  aether_bsp_portal_pvs_flood(const aether_bsp_portal_graph_t *g,
+                                 u16 start_leaf, u32 max_depth,
+                                 const u8 *pvs_bits, u32 pvs_byte_count,
+                                 aether_bsp_portal_pvs_flood_t *out);
+/* Fixture: multi-portal graph + synthetic PVS (leaf 0 sees 0,1,2). */
+u32  aether_bsp_portal_pvs_flood_fixture(u16 start_leaf, u32 max_depth,
+                                         aether_bsp_portal_graph_t *out_graph,
+                                         aether_bsp_portal_pvs_flood_t *out);
+/* True if leaf was reached AND marked in_pvs (for cull). */
+int  aether_bsp_portal_pvs_leaf_visible(const aether_bsp_portal_pvs_flood_t *f, u16 leaf);
+/* Collect visible leaf indices into out[]; returns count. */
+u32  aether_bsp_portal_pvs_collect_visible(const aether_bsp_portal_pvs_flood_t *f,
+                                           u16 *out, u32 max_out);
+
 #endif /* AETHER_BSP_VIS_H */

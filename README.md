@@ -743,14 +743,59 @@ ideviceinstaller -i build/out/AetherEngine.ipa
 This Linux/CI host cannot produce or sideload an IPA; checklist is documentation for macOS + device.
 
 ### Known gaps after hiz-depth-attach / portal-stack / studio-draw / ipa-device batch
-- Hi-Z encode from MTK depth fills slice 0 via compute; full mip-chain downsample on GPU still thin vs host pyramid
-- Portal clip stack is clean-room multi-plane buffer (not retail Quake portal BSP stack)
-- Studio skin atlas is fixture pages uploaded as rgba8; retail MDL skinref tables still partial
+- *(addressed in hiz-gpu-mipchain batch: full GPU mipchain after MTK depth attach)*
+- *(addressed in hiz-gpu-mipchain batch: portal × PVS flood for reflect/cull)*
+- *(addressed in hiz-gpu-mipchain batch: skin-lump Metal texture families)*
+- *(addressed in hiz-gpu-mipchain batch: device-run notes — first launch / entitlements / Documents)*
 - IPA still requires macOS + Xcode; device sideload needs a built IPA + trust/resign as applicable
 
 ### Progress toward playable unsigned IPA demo
-Rough overall estimate after this batch: **~81%** (~80–81) toward a playable unsigned IPA demo
-(capped while IPA remains unbuilt on this Linux/CI host). Prior hiz-gpu-encode batch was ~80%.
+Rough overall estimate after hiz-depth-attach batch: **~81%** (superseded by hiz-gpu-mipchain batch below). Prior hiz-gpu-encode batch was ~80%.
+
+IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
+
+
+## Hi-Z GPU mipchain / portal×PVS / skin-lump Metal / device-run (`continue/batch-hiz-gpu-mipchain-portal-pvs-studio-skin-lump-ipa-device-run`)
+
+One PR advances **full GPU Hi-Z mipchain** after MTK depth attach, **portal × PVS flood**
+for reflect/cull, **skin-lump Metal texture families** (fixture + load path), and
+**device-run notes** (first launch, entitlements, Documents game dir) — still clean-room:
+
+| # | Item | Status | What landed |
+|---|------|--------|-------------|
+| 1 | Full GPU Hi-Z mipchain after MTK | **done** | `aether_depth_hiz_mtk_mipchain_*` + `aether_mdl_hiz_gpu_mipchain_after_mtk` + Metal `aether_hiz_gpu_mipchain` |
+| 2 | Portal × PVS flood (reflect/cull) | **done** | `aether_bsp_portal_pvs_flood*` + `aether_water_reflect_portal_pvs_plan` |
+| 3 | Skin-lump Metal texture families | **done** | `aether_mdl_skin_lump_metal_families_*` fixture + load path + atlas bind |
+| 4 | Device-run notes | **done** | First launch / entitlements / `Documents/AetherEngine` game dir in `package_ipa.sh` + README |
+| 5 | Mipchain smoke | **done** | Host plan/mark/complete + after_mtk encode + vis_query_mipchain |
+| 6 | Portal×PVS smoke | **done** | Fixture flood + leaf_visible + reflect plan cull |
+| 7 | Skin family Metal bind smoke | **done** | Fixture families + camo select + atlas + was_bound |
+| 8 | Host smokes + verify | **done** | `verify_host.sh` batch20 greps + smoke |
+| 9 | Fix regressions | **done** | Compile/smoke green on Linux host |
+| 10 | README + honest % | **done** | This table; cap **~82%** while IPA unbuilt on this host |
+
+### Device-run notes (first launch / entitlements / Documents)
+
+```bash
+# After sideload (Apple Configurator / Xcode Devices / ideviceinstaller):
+# 1) Trust developer if prompted; relaunch
+# 2) First launch creates Documents/AetherEngine/ (aether.cfg, optional valve|cstrike|…)
+# 3) Without user game data → synthetic BSP demo room
+# Entitlements: app-id + get-task-allow (debug); Documents sandbox; no Game Center required
+```
+
+This Linux/CI host cannot launch on a device; notes document the on-device path only.
+`DEVICE_RUN_NOTES=first_launch|entitlements|Documents/AetherEngine|game_dir|synthetic_fallback`
+
+### Known gaps after hiz-gpu-mipchain / portal-pvs / studio-skin-lump / ipa-device-run batch
+- Hi-Z mipchain is clean-room min-depth array downsample (not retail GPU occlusion query HW)
+- Portal×PVS uses fixture/graph adjacency ∩ synthetic PVS row (not full Quake portal clip + clustered PVS)
+- Skin-lump Metal families upload fixture/asset lumps as rgba8 atlas; retail MDL skinref tables still partial
+- IPA still requires macOS + Xcode; device-run needs a built IPA + trust/resign as applicable
+
+### Progress toward playable unsigned IPA demo
+Rough overall estimate after this batch: **~82%** (~81–82) toward a playable unsigned IPA demo
+(capped while IPA remains unbuilt on this Linux/CI host). Prior hiz-depth-attach batch was ~81%.
 
 IPA remains unbuilt on this host (needs macOS/Xcode); do not treat host-smoke green as a packaged demo.
 

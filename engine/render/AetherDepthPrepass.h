@@ -226,4 +226,26 @@ void aether_depth_hiz_mtk_attach_mark(aether_depth_hiz_mtk_attach_t *a);
 bool aether_depth_hiz_mtk_attach_was_attached(const aether_depth_hiz_mtk_attach_t *a);
 bool aether_depth_hiz_mtk_attach_encode_ready(const aether_depth_hiz_mtk_attach_t *a);
 
+/* ---------- Full GPU Hi-Z mipchain after MTK depth attach (batch20) ---------- */
+typedef struct aether_depth_hiz_mtk_mipchain {
+    bool after_attach;       /* runs only when MTK attach encode_ready */
+    bool gpu_downsample;     /* Metal compute mipchain armed */
+    bool complete;           /* all mip levels filled */
+    bool needed;
+    bool marked;
+    u32  levels;             /* mip count including mip0 */
+    u32  passes;             /* GPU downsample passes (= levels-1) */
+    u32  mip0_w, mip0_h;
+    u32  slices;
+} aether_depth_hiz_mtk_mipchain_t;
+
+void aether_depth_hiz_mtk_mipchain_init(aether_depth_hiz_mtk_mipchain_t *m);
+/* Plan full GPU mipchain after a ready MTK depth attach. */
+int  aether_depth_hiz_mtk_mipchain_plan(const aether_depth_hiz_mtk_attach_t *attach,
+                                        u32 mip0_w, u32 mip0_h, u32 slices,
+                                        aether_depth_hiz_mtk_mipchain_t *out);
+void aether_depth_hiz_mtk_mipchain_mark(aether_depth_hiz_mtk_mipchain_t *m);
+bool aether_depth_hiz_mtk_mipchain_complete(const aether_depth_hiz_mtk_mipchain_t *m);
+bool aether_depth_hiz_mtk_mipchain_needed(const aether_depth_hiz_mtk_mipchain_t *m);
+
 #endif /* AETHER_DEPTH_PREPASS_H */

@@ -5247,3 +5247,159 @@ int engine_mdl_skinref_metal_bind_mark(void) {
 int engine_mdl_skinref_metal_bind_was_bound(void) {
     return aether_mdl_skinref_metal_bind_was_bound(&g_skinref_metal_bind) ? 1 : 0;
 }
+
+/* ===== Batch20: Hi-Z GPU mipchain / portal×PVS / skin-lump Metal / device-run ===== */
+static aether_depth_hiz_mtk_mipchain_t g_mtk_mipchain;
+static aether_mdl_hiz_gpu_mipchain_t g_hiz_mipchain;
+static aether_bsp_portal_graph_t g_portal_pvs_graph;
+static aether_bsp_portal_pvs_flood_t g_portal_pvs_flood;
+static aether_water_reflect_portal_pvs_plan_t g_portal_pvs_reflect;
+static aether_mdl_skin_lump_set_t g_skin_lump_metal_lumps;
+static aether_mdl_skin_lump_metal_bind_t g_skin_lump_metal_bind;
+
+int engine_depth_hiz_mtk_mipchain_plan(unsigned w, unsigned h, unsigned slices,
+                                       unsigned *out_levels, unsigned *out_passes,
+                                       int *out_needed) {
+    if (!g_mtk_attach.attached) {
+        (void)engine_depth_hiz_mtk_attach_plan(w ? w : 64, h ? h : 64, NULL, NULL);
+        (void)engine_depth_hiz_mtk_attach_wire();
+        (void)engine_depth_hiz_mtk_attach_mark();
+    }
+    int ok = aether_depth_hiz_mtk_mipchain_plan(&g_mtk_attach, w ? w : 64, h ? h : 64,
+                                                slices ? slices : 4, &g_mtk_mipchain);
+    if (out_levels) *out_levels = g_mtk_mipchain.levels;
+    if (out_passes) *out_passes = g_mtk_mipchain.passes;
+    if (out_needed) *out_needed = g_mtk_mipchain.needed ? 1 : 0;
+    return ok;
+}
+
+int engine_depth_hiz_mtk_mipchain_mark(void) {
+    aether_depth_hiz_mtk_mipchain_mark(&g_mtk_mipchain);
+    return aether_depth_hiz_mtk_mipchain_complete(&g_mtk_mipchain) ? 1 : 0;
+}
+
+int engine_depth_hiz_mtk_mipchain_complete(void) {
+    return aether_depth_hiz_mtk_mipchain_complete(&g_mtk_mipchain) ? 1 : 0;
+}
+
+int engine_mdl_hiz_gpu_mipchain_after_mtk(unsigned w, unsigned h,
+                                          unsigned *out_slices, unsigned *out_passes,
+                                          unsigned *out_levels, int *out_ready) {
+    unsigned W = w ? w : 64, H = h ? h : 64;
+    if (!g_mtk_attach.attached) {
+        (void)engine_depth_hiz_mtk_attach_plan(W, H, NULL, NULL);
+        (void)engine_depth_hiz_mtk_attach_wire();
+        (void)engine_depth_hiz_mtk_attach_mark();
+    }
+    f32 depth[64 * 64];
+    u32 n = W * H;
+    if (n > 64 * 64) n = 64 * 64;
+    for (u32 i = 0; i < n; ++i) depth[i] = 1.f;
+    for (u32 y = 8; y < (H > 8 ? H - 8 : H); ++y)
+        for (u32 x = 8; x < (W > 8 ? W - 8 : W); ++x)
+            if (y * W + x < n) depth[y * W + x] = 0.3f;
+    aether_mdl_hiz_live_encode_plan_t plan;
+    u32 slices = aether_mdl_hiz_gpu_mipchain_after_mtk(&g_hiz_pyr, &g_hiz_array, &g_hiz_downsample,
+                                                       depth, n, W, H,
+                                                       g_mtk_attach.attached ? 1 : 0,
+                                                       g_mtk_attach.shader_read_usage ? 1 : 0,
+                                                       &plan, &g_hiz_mipchain);
+    if (out_slices) *out_slices = slices;
+    if (out_passes) *out_passes = g_hiz_mipchain.gpu_passes;
+    if (out_levels) *out_levels = g_hiz_mipchain.mip_levels;
+    if (out_ready) *out_ready = aether_mdl_hiz_gpu_mipchain_ready(&g_hiz_mipchain) ? 1 : 0;
+    return slices > 0 ? 1 : 0;
+}
+
+int engine_mdl_hiz_vis_query_mipchain(float x0, float y0, float x1, float y1,
+                                      float obj_depth, int preferred_mip,
+                                      int *out_visible, int *out_occluded, float *out_hiz) {
+    aether_mdl_hiz_vis_query_t q;
+    int vis = aether_mdl_hiz_vis_query_mipchain(&g_hiz_pyr, &g_hiz_array, &g_hiz_mipchain,
+                                                x0, y0, x1, y1, obj_depth, preferred_mip, &q);
+    if (out_visible) *out_visible = q.visible ? 1 : 0;
+    if (out_occluded) *out_occluded = q.occluded ? 1 : 0;
+    if (out_hiz) *out_hiz = q.hiz_depth;
+    return vis;
+}
+
+unsigned engine_bsp_portal_pvs_flood_fixture(unsigned start_leaf, unsigned max_depth,
+                                             unsigned *out_reached, unsigned *out_pvs_hits,
+                                             unsigned *out_portal_only) {
+    u32 n = aether_bsp_portal_pvs_flood_fixture((u16)start_leaf, max_depth,
+                                                &g_portal_pvs_graph, &g_portal_pvs_flood);
+    if (out_reached) *out_reached = g_portal_pvs_flood.reached_count;
+    if (out_pvs_hits) *out_pvs_hits = g_portal_pvs_flood.pvs_hit_count;
+    if (out_portal_only) *out_portal_only = g_portal_pvs_flood.portal_only_count;
+    return n;
+}
+
+int engine_bsp_portal_pvs_leaf_visible(unsigned leaf) {
+    return aether_bsp_portal_pvs_leaf_visible(&g_portal_pvs_flood, (u16)leaf);
+}
+
+unsigned engine_water_reflect_portal_pvs_plan(unsigned eye_leaf, unsigned max_depth,
+                                              unsigned *out_views, unsigned *out_pvs_hits,
+                                              unsigned *out_culled) {
+    if (g_portal_pvs_graph.leaf_count == 0)
+        (void)aether_bsp_portal_graph_build_multi_fixture(&g_portal_pvs_graph);
+    aether_water_t w; aether_water_init(&w); aether_water_set_enabled(&w, true);
+    u8 row = (u8)((1u << 0) | (1u << 1) | (1u << 2));
+    u32 views = aether_water_reflect_portal_pvs_plan(&w, &g_portal_pvs_graph,
+                                                     (u16)eye_leaf, max_depth,
+                                                     &row, 1, &g_portal_pvs_flood,
+                                                     &g_portal_pvs_reflect);
+    if (out_views) *out_views = g_portal_pvs_reflect.view_count;
+    if (out_pvs_hits) *out_pvs_hits = g_portal_pvs_reflect.pvs_hits;
+    if (out_culled) *out_culled = g_portal_pvs_reflect.cull_skipped;
+    return views;
+}
+
+unsigned engine_mdl_skin_lump_metal_families_fixture(unsigned pages, unsigned draw_slot,
+                                                     unsigned *out_families, int *out_fixture) {
+    u32 n = aether_mdl_skin_lump_metal_families_fixture(pages ? pages : 4,
+                                                        draw_slot ? draw_slot : 3,
+                                                        &g_skin_lump_metal_lumps,
+                                                        &g_skin_lump_metal_bind);
+    if (out_families) *out_families = g_skin_lump_metal_bind.family_count;
+    if (out_fixture) *out_fixture = g_skin_lump_metal_bind.used_fixture ? 1 : 0;
+    return n;
+}
+
+int engine_mdl_skin_lump_metal_select_family_name(const char *name) {
+    if (g_skin_lump_metal_bind.family_count == 0)
+        (void)engine_mdl_skin_lump_metal_families_fixture(4, 3, NULL, NULL);
+    return aether_mdl_skin_lump_metal_select_family_name(&g_skin_lump_metal_bind, name);
+}
+
+int engine_mdl_skin_lump_metal_atlas_rgba(unsigned char *out_rgba, unsigned cap,
+                                          unsigned *out_w, unsigned *out_h,
+                                          unsigned *out_bytes) {
+    if (g_skin_lump_metal_bind.family_count == 0)
+        (void)engine_mdl_skin_lump_metal_families_fixture(4, 3, NULL, NULL);
+    u32 w = 0, h = 0;
+    u32 n = aether_mdl_skin_lump_metal_atlas_rgba(&g_skin_lump_metal_lumps,
+                                                   &g_skin_lump_metal_bind,
+                                                   out_rgba, cap, &w, &h);
+    if (out_w) *out_w = w;
+    if (out_h) *out_h = h;
+    if (out_bytes) *out_bytes = n;
+    return n > 0 ? 1 : 0;
+}
+
+int engine_mdl_skin_lump_metal_bind_mark(void) {
+    aether_mdl_skin_lump_metal_bind_mark(&g_skin_lump_metal_bind);
+    return aether_mdl_skin_lump_metal_bind_was_bound(&g_skin_lump_metal_bind) ? 1 : 0;
+}
+
+int engine_mdl_skin_lump_metal_bind_was_bound(void) {
+    return aether_mdl_skin_lump_metal_bind_was_bound(&g_skin_lump_metal_bind) ? 1 : 0;
+}
+
+int engine_mdl_skin_lump_metal_sample(float u, float v, float *out_rgba4) {
+    if (!out_rgba4) return 0;
+    if (g_skin_lump_metal_bind.family_count == 0)
+        (void)engine_mdl_skin_lump_metal_families_fixture(4, 3, NULL, NULL);
+    return aether_mdl_skin_lump_metal_sample(&g_skin_lump_metal_lumps,
+                                             &g_skin_lump_metal_bind, u, v, out_rgba4);
+}

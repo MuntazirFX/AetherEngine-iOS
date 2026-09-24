@@ -1211,3 +1211,101 @@ fragment float4 aether_mdl_skinref_bind_fragment(MdlVertexOut in [[stage_in]],
     rgb += float3(float(R.drawSlot) * 0.01, float(R.family) * 0.02, float(R.refIndex) * 0.015);
     return float4(rgb, tint.a);
 }
+
+/* ===== Batch20: Hi-Z GPU mipchain / portal×PVS / skin-lump Metal families ===== */
+
+struct HizGpuMipchainUniforms {
+    uint levels;
+    uint passes;
+    uint mip0W;
+    uint mip0H;
+    uint fromMtk;
+    uint ready;
+};
+
+/* Full GPU mipchain after MTK depth attach: downsample previous slice → next. */
+kernel void aether_hiz_gpu_mipchain(texture2d_array<float, access::read> src [[texture(0)]],
+                                    texture2d_array<float, access::write> dst [[texture(1)]],
+                                    constant HizGpuMipchainUniforms &U [[buffer(0)]],
+                                    uint3 gid [[thread_position_in_grid]]) {
+    uint slice = gid.z;
+    if (slice == 0 || slice >= U.levels) return;
+    uint x = gid.x, y = gid.y;
+    uint sw = max(U.mip0W >> slice, 1u);
+    uint sh = max(U.mip0H >> slice, 1u);
+    if (x >= sw || y >= sh) return;
+    uint prev = slice - 1;
+    uint2 p0 = uint2(x * 2, y * 2);
+    float z00 = src.read(p0, prev).r;
+    float z10 = src.read(p0 + uint2(1, 0), prev).r;
+    float z01 = src.read(p0 + uint2(0, 1), prev).r;
+    float z11 = src.read(p0 + uint2(1, 1), prev).r;
+    float zmin = min(min(z00, z10), min(z01, z11));
+    dst.write(float4(zmin, zmin, zmin, 1.0), uint2(x, y), slice);
+}
+
+fragment float4 aether_hiz_gpu_mipchain_fragment(constant HizGpuMipchainUniforms &U [[buffer(0)]],
+                                                 texture2d_array<float> hiz [[texture(0)]],
+                                                 sampler samp [[sampler(0)]],
+                                                 float2 uv [[stage_in]]) {
+    float z0 = hiz.sample(samp, uv, 0).r;
+    float z1 = (U.levels > 1) ? hiz.sample(samp, uv, 1).r : z0;
+    float ready = (U.ready != 0 && U.fromMtk != 0) ? 1.0 : 0.0;
+    return float4(z0, z1, float(U.passes) / 8.0, ready);
+}
+
+struct PortalPvsFloodUniforms {
+    uint reached;
+    uint pvsHits;
+    uint portalOnly;
+    uint views;
+    uint usedPvs;
+    uint eyeLeaf;
+};
+
+fragment float4 aether_portal_pvs_flood_fragment(constant PortalPvsFloodUniforms &U [[buffer(0)]],
+                                                 float2 uv [[stage_in]]) {
+    float vis = float(U.pvsHits) / max(float(U.reached), 1.0);
+    float cull = float(U.portalOnly) / max(float(U.reached), 1.0);
+    return float4(vis, cull, float(U.views) / 4.0, (U.usedPvs != 0) ? 1.0 : 0.0);
+}
+
+struct SkinLumpMetalFamilyUniforms {
+    uint familyCount;
+    uint selected;
+    uint drawSlot;
+    uint atlasW;
+    uint atlasH;
+    uint bound;
+    uint usedFixture;
+};
+
+fragment float4 aether_mdl_skin_lump_metal_family_fragment(MdlVertexOut in [[stage_in]],
+                                                           constant Uniforms &U [[buffer(1)]],
+                                                           constant SkinLumpMetalFamilyUniforms &F [[buffer(2)]],
+                                                           constant float4 &tint [[buffer(3)]],
+                                                           texture2d<float> skinAtlas [[texture(3)]],
+                                                           sampler skinSamp [[sampler(3)]]) {
+    float2 uv = float2(in.normal.x * 0.5 + 0.5, in.normal.y * 0.5 + 0.5);
+    /* Horizontal family strip: select family band. */
+    float fam = float(F.selected) / max(float(F.familyCount), 1.0);
+    float2 mapped = float2(fam + uv.x / max(float(F.familyCount), 1.0), uv.y);
+    float4 tex = skinAtlas.sample(skinSamp, mapped);
+    float3 N = normalize(in.normal);
+    float3 L = normalize(U.light_dir);
+    float ndl = max(abs(dot(N, L)), 0.0);
+    float3 lit = tint.rgb * (0.55 + 0.45 * ndl);
+    float3 rgb = mix(lit, tex.rgb * lit, (U.use_texture > 0.5) ? 0.85 : 0.0);
+    rgb += float3(float(F.drawSlot) * 0.01, float(F.selected) * 0.02, float(F.usedFixture) * 0.03);
+    float bound = (F.bound != 0) ? 1.0 : 0.0;
+    return float4(rgb, bound);
+}
+
+fragment float4 aether_depth_hiz_mtk_mipchain_fragment(constant HizGpuMipchainUniforms &U [[buffer(0)]],
+                                                      depth2d<float> depthTex [[texture(0)]],
+                                                      sampler samp [[sampler(0)]],
+                                                      float2 uv [[stage_in]]) {
+    float z = depthTex.sample(samp, uv);
+    float ready = (U.ready != 0 && U.fromMtk != 0) ? 1.0 : 0.0;
+    return float4(z, float(U.levels) / 8.0, float(U.passes) / 8.0, ready);
+}
